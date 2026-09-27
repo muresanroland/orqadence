@@ -23,7 +23,7 @@ use crate::tools::fake::Fake;
 use crate::tools::Tools;
 use crate::update::{binary, FakeReleases, EVERY};
 use chrono::TimeZone;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier};
@@ -226,6 +226,16 @@ fn asked_pane(s: &Screen) -> String {
 
 pub(super) fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
+}
+
+/// A wheel notch at a column and row.
+fn wheel(kind: MouseEventKind, (column, row): (u16, u16)) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
 }
 
 pub(super) fn type_line(s: &mut Screen, line: &str) {
@@ -1019,6 +1029,84 @@ fn up_and_down_scroll_recent_and_its_rule_counts_older_and_newer() {
     assert_eq!(shown(&s).0, " ── RECENT");
 }
 
+/// The Shell captures the mouse, so the wheel comes as itself and not as ↑
+/// or ↓ (harness-7lz): it scrolls the box under the pointer, the docked
+/// Question or RECENT, and never moves a Question's answer.
+#[test]
+fn the_wheel_scrolls_the_box_under_the_pointer_and_never_moves_an_answer() {
+    let (up, down) = (MouseEventKind::ScrollUp, MouseEventKind::ScrollDown);
+    let repo = TempDir::new();
+    let mut s = screen_at(Fake::quiet(), repo.path());
+    for n in 0..30 {
+        s.push(event(None, &format!("line {n}"), true));
+    }
+    s.push(asking(
+        "harness-kqe.11",
+        "stuck in fix 1: went idle without a result (pane 2-1)",
+        Ask::Wake {
+            pane: "w1:p7".to_string(),
+            tail: "Ran the tests: 12 passed.\n".to_string(),
+            file: PathBuf::from("/r/.orqadence/runs/harness-kqe.11/fix-1.md"),
+            actions: Action::ALL[..4].to_vec(),
+            judged: None,
+        },
+    ));
+    let buf = render(&s, 120, 40);
+    let options = find(&buf, "retry with a fresh session").unwrap();
+    s.mouse(wheel(down, options));
+    s.mouse(wheel(down, options));
+    assert_eq!(s.questions[0].cursor, 0, "the wheel moved the answer");
+    s.mouse(wheel(up, find(&buf, "line 29").unwrap()));
+    let buf = render(&s, 120, 40);
+    assert!(find(&buf, "↓ 1 newer").is_some(), "{:#?}", rows(&buf));
+    assert_eq!(s.questions[0].cursor, 0, "the wheel moved the answer");
+
+    // Over a docked Wake it reads up from its tail's end, over a Stage's
+    // question down from its top.
+    let long: String = (0..40).map(|n| format!("row {n}\n")).collect();
+    let About::Asked(Ask::Wake { tail, .. }) = &mut s.questions[0].about else {
+        unreachable!()
+    };
+    *tail = long.clone();
+    let buf = render(&s, 120, 40);
+    let (x, y) = find(&buf, "row 39").unwrap();
+    s.mouse(wheel(up, (x, y)));
+    let buf = render(&s, 120, 40);
+    assert_eq!(find(&buf, "row 38"), Some((x, y)), "{:#?}", rows(&buf));
+    s.questions[0].about = About::Asked(Ask::StageQuestion {
+        pane: "w1:p7".to_string(),
+        question: long,
+        options: vec!["yes".to_string(), "no".to_string()],
+    });
+    s.questions[0].scroll.set(0); // as a new Question comes
+    let buf = render(&s, 120, 40);
+    let (x, y) = find(&buf, "row 0").unwrap();
+    s.mouse(wheel(down, (x, y)));
+    let buf = render(&s, 120, 40);
+    assert_eq!(find(&buf, "row 1"), Some((x, y)), "{:#?}", rows(&buf));
+    assert_eq!(s.questions[0].cursor, 0, "the wheel moved the answer");
+
+    // Docked: over the plan it scrolls the plan, over the Shell beside it
+    // RECENT.
+    let mut s = plan_screen(repo.path());
+    for n in 0..30 {
+        s.push(event(None, &format!("line {n}"), true));
+    }
+    let top = plan_body(&s);
+    let buf = render(&s, 160, 45);
+    s.mouse(wheel(down, find(&buf, "Plan: the docked modal").unwrap()));
+    assert_eq!(plan_body(&s)[0], top[1], "the wheel over the plan");
+    s.mouse(wheel(up, find(&buf, "line 29").unwrap()));
+    let buf = render(&s, 160, 45);
+    assert!(find(&buf, "↓ 1 newer").is_some(), "{:#?}", rows(&buf));
+    assert_eq!(
+        plan_body(&s)[0],
+        top[1],
+        "the wheel over RECENT scrolled the plan"
+    );
+    assert_eq!(s.questions[0].cursor, 0);
+}
+
 #[test]
 fn the_idle_tree_renders_from_a_fake_bd_with_the_saved_epic_resumable() {
     let repo = TempDir::new();
@@ -1675,6 +1763,17 @@ fn a_tall_tree_scrolls_to_its_last_epic_and_one_that_fits_never_scrolls() {
     let buf = render(&s, 80, 24);
     assert_eq!(s.scroll.get(), 9);
     assert!(find(&buf, "… 11 more, PgDn").is_some(), "{:#?}", rows(&buf));
+    // The wheel over it scrolls it a row.
+    s.mouse(wheel(
+        MouseEventKind::ScrollDown,
+        find(&buf, "… 11 more").unwrap(),
+    ));
+    render(&s, 80, 24);
+    assert_eq!(s.scroll.get(), 10);
+    s.mouse(wheel(
+        MouseEventKind::ScrollUp,
+        find(&buf, "… 11 more").unwrap(),
+    ));
     // Typing takes the keys back for the input line.
     s.key(key(KeyCode::Char('/')));
     s.key(key(KeyCode::PageUp));
@@ -4862,6 +4961,14 @@ fn the_summary_pages_over_the_whole_terminal_and_esc_closes_it() {
     );
     assert!(
         row(&buf, 11).starts_with(" rows 13–18 of 21 · 85%"),
+        "{:?}",
+        row(&buf, 11)
+    );
+    // The wheel scrolls it a row, wherever the pointer is.
+    s.mouse(wheel(MouseEventKind::ScrollUp, (0, 0)));
+    let buf = render(&s, 90, 12);
+    assert!(
+        row(&buf, 11).starts_with(" rows 12–17 of 21"),
         "{:?}",
         row(&buf, 11)
     );

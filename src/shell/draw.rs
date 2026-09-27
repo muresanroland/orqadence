@@ -157,6 +157,8 @@ fn shell(f: &mut Frame, area: Rect, s: &Screen) -> u16 {
             Constraint::Length(1),
         ])
         .areas(area);
+    s.tickets_area.set(tickets);
+    s.recent_area.set(recent);
     if beside {
         let [left, right] =
             Layout::horizontal([Constraint::Length(HEADER_W), Constraint::Min(0)]).areas(head);

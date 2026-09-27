@@ -68,6 +68,7 @@ pub(super) fn dock(f: &mut Frame, s: &Screen) -> (Rect, Block<'static>) {
         };
         (rect, BorderType::Rounded)
     };
+    s.dock_area.set(rect);
     f.render_widget(Clear, rect);
     let block = Block::bordered()
         .border_type(border)
