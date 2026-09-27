@@ -422,21 +422,16 @@ fn facts(s: &Screen, q: &Question, at: &str) -> String {
                 },
             };
             facts.push(format!("result file {path} {state}"));
-            let left: Vec<String> = [
-                actions
-                    .iter()
-                    .any(|a| a.is_nudge())
-                    .then(|| "a nudge".to_string()),
-                actions
-                    .contains(&Action::Retry)
-                    .then(|| "a retry".to_string()),
-                actions
-                    .contains(&Action::Wait)
-                    .then(|| plural(WAITS.saturating_sub(ts.waits), "wait")),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
+            let mut left = vec![];
+            if actions.iter().any(|a| a.is_nudge()) {
+                left.push("a nudge".to_string());
+            }
+            if actions.contains(&Action::Retry) {
+                left.push("a retry".to_string());
+            }
+            if actions.contains(&Action::Wait) {
+                left.push(plural(WAITS.saturating_sub(ts.waits), "wait"));
+            }
             if !left.is_empty() {
                 facts.push(format!("left for this session: {}", left.join(", ")));
             }
