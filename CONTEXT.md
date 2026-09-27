@@ -33,8 +33,12 @@ Where init puts the skills Orqadence installs, as the user answers: this checkou
 The beads epic handed to Orqadence. Its child Tickets are the whole scope of one run.
 
 **Ticket**:
-A beads issue, and the unit that moves through the Pipeline. Most are children of the Epic; a Ticket can also run on its own, whether it has an Epic or not. It ends as one pull request and closes only when that pull request is merged.
+A beads issue, and the unit that moves through the Pipeline. Most are children of the Epic; a Ticket can also run in a Ticket run, whether it has an Epic or not. It ends as one pull request and closes only when that pull request is merged.
 _Avoid_: Task, issue, story
+
+**Ticket run**:
+A run over Tickets the user names instead of an Epic: its scope is a queue they add to and take from while it runs, and it ends once every Ticket in it is merged (or none is left). Like an Epic run it takes at most max_tickets at once, polls for merges and resumes; only one run, of either kind, is live in a Target repo.
+_Avoid_: Batch, single-Ticket run
 
 **Pipeline**:
 The fixed sequence of Stages every Ticket passes through: Implement, Review, Debate, Fix, then a pull request.
@@ -72,7 +76,7 @@ The Debate's result: every Finding marked fix or skip, with a severity and the r
 _Avoid_: Synthesis, summary, report
 
 **Epic summary**:
-The Shell's read-only page over one Epic's run: each Ticket's pull request, Rounds and Findings fixed, skipped and left on the pull request, then the Parked Tickets with their reasons. It opens by itself once every Ticket has its pull request or is Parked, and /summary opens it again, built fresh from bd, the state file and the Run directories.
+The Shell's read-only page over one run, an Epic's or a Ticket run's: each Ticket's pull request, Rounds and Findings fixed, skipped and left on the pull request, then the Parked Tickets with their reasons, with the run's cost and time. It opens by itself once every Ticket has its pull request or is Parked, and /summary opens it again, built fresh from bd, the state file and the Run directories.
 _Avoid_: Report, recap
 
 **Wake**:

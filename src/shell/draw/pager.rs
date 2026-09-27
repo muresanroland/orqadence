@@ -38,10 +38,16 @@ pub(super) fn pager(f: &mut Frame, s: &Screen, summary: &Summary) {
     // as Screen::all_prs_open, which opens it by itself
     let done = listed().next().is_some() && listed().all(|t| !t.pr.is_empty() || t.merged);
 
-    let word = if done { "EPIC DONE" } else { "EPIC SUMMARY" };
+    let run = if summary.epic.is_empty() {
+        "TICKET RUN"
+    } else {
+        "EPIC"
+    };
+    let word = if done { "DONE" } else { "SUMMARY" };
+    let name = format!("{} {}", summary.epic, summary.title);
     let mut bar = vec![
         Span::styled(
-            format!(" {word} · {} {} ", summary.epic, summary.title),
+            format!(" {run} {word} · {} ", name.trim_start()),
             bold(Color::Black).bg(PURPLE),
         ),
         Span::styled(format!("  {prs}"), fg(GREEN)),

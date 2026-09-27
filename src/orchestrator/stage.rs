@@ -169,7 +169,7 @@ pub(crate) struct Event {
 }
 
 /// What the Shell knows when it starts a run: kept whole by the Shell and
-/// cloned for each run, which sets exe, max, log and events.
+/// cloned for each run, which sets exe, log and events.
 #[derive(Clone)]
 pub(crate) struct Config {
     /// The seam to every external tool.
@@ -194,8 +194,6 @@ pub(crate) struct Config {
     pub(crate) tick: Duration,
     /// How often gh is asked about open PRs.
     pub(crate) poll_prs: Duration,
-    /// Tickets in the Pipeline at once.
-    pub(crate) max: usize,
     /// The user is Away: a Stage's question parks its Ticket. The Shell's
     /// /away flips it, shared with every run; off when the Shell opens.
     pub(crate) away: Arc<AtomicBool>,
@@ -225,6 +223,9 @@ pub(crate) struct Orchestrator {
     /// A long usage limit ended the run: each Ticket closes its tab as it
     /// leaves.
     pub(crate) closed: AtomicBool,
+    /// The scheduler has seen every Ticket of the run closed and is ending:
+    /// set and read under the state lock, so no Ticket joins a finished run.
+    pub(super) done: AtomicBool,
     /// The Shell's commands waiting to be consumed: retry-<ticket>,
     /// park-<ticket>, address-<ticket>, continue-<ticket>. Stop is the flag
     /// above.
@@ -271,6 +272,7 @@ impl Orchestrator {
             state: Mutex::new(state),
             stop: AtomicBool::new(false),
             closed: AtomicBool::new(false),
+            done: AtomicBool::new(false),
             commands: Mutex::new(Vec::new()),
             answers: Mutex::new(Vec::new()),
             active: Mutex::new(BTreeSet::new()),
@@ -1503,8 +1505,8 @@ fn short_duration(d: Duration) -> String {
 }
 
 impl Config {
-    /// A Config for the fake world: every duration a millisecond, three
-    /// Tickets at once, events to nowhere.
+    /// A Config for the fake world: every duration a millisecond, events to
+    /// nowhere.
     #[cfg(test)]
     pub(crate) fn for_tests(
         tools: Arc<dyn Tools>,
@@ -1521,7 +1523,6 @@ impl Config {
             home: home.to_path_buf(),
             tick: Duration::from_millis(1),
             poll_prs: Duration::from_millis(1),
-            max: 3,
             away: Arc::new(AtomicBool::new(false)),
             log: Arc::new(Mutex::new(Box::new(io::sink()))),
             events: std::sync::mpsc::channel().0,

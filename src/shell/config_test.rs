@@ -371,7 +371,7 @@ fn the_pipeline_list_a_stage_page_and_a_pick_list_render() {
             "  Apps      6 of 6 installed",
             "  Skills    0 installed",
             "  TypeSafe  on",
-            "",
+            "  Run       3 at once",
         ]
     );
     assert_eq!(buf[(71, 2)].fg, PURPLE, "the picked section is not marked");
@@ -1602,6 +1602,75 @@ fn a_floor_that_is_not_a_number_from_0_to_1_is_flagged() {
         find(
             &buf,
             "✗ wake_floor is not a number from 0 to 1: its Judgments"
+        )
+        .is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+}
+
+/// The Run page keeps the Tickets a run takes at once: its default while
+/// config.json has none; Enter types it, saved at once; anything but a
+/// whole number of at least 1 is refused, the text kept to mend; nothing
+/// typed puts the default back. A bad one in config.json is flagged.
+#[test]
+fn the_run_page_keeps_the_tickets_a_run_takes_at_once() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    type_line(&mut s, "/config");
+    keys(&mut s, &[KeyCode::Down; 8]);
+    s.key(key(KeyCode::Enter));
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "▸ tickets at once       3  default").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+
+    s.key(key(KeyCode::Enter));
+    type_in(&mut s, "0");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        note(&s),
+        "Refused: 0 is not a whole number of at least 1. Nothing changed."
+    );
+    s.key(key(KeyCode::Backspace));
+    type_in(&mut s, "5");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(config_json(repo.path()), json!({"max_tickets": 5}));
+    assert_eq!(note(&s), "5 Tickets at once");
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "▸ Run       5 at once").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+
+    keys(&mut s, &[KeyCode::Enter, KeyCode::Enter]);
+    assert_eq!(config_json(repo.path()), json!({}));
+    assert_eq!(note(&s), "3 Tickets at once, its default");
+
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"max_tickets": "lots"}"#,
+    );
+    keys(&mut s, &[KeyCode::Esc, KeyCode::Esc]);
+    type_line(&mut s, "/config");
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "Run       \"lots\" ✗").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    keys(&mut s, &[KeyCode::Down; 8]);
+    let buf = render(&s, 160, 45);
+    let (x, y) =
+        find(&buf, "tickets at once       \"lots\"").unwrap_or_else(|| panic!("{:#?}", rows(&buf)));
+    assert_eq!(buf[(x + 22, y)].fg, RED);
+    assert!(
+        find(
+            &buf,
+            "✗ max_tickets is not a whole number of at least 1: a run"
         )
         .is_some(),
         "{:#?}",

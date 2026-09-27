@@ -48,21 +48,24 @@ const IDLE_TICK: Duration = Duration::from_millis(250);
 /// How long 'press Ctrl-C again to exit' stands.
 const CTRL_C_WINDOW: Duration = Duration::from_secs(2);
 const NOTICE_WINDOW: Duration = Duration::from_secs(5);
-/// Tickets in the Pipeline at once, without --max.
-const DEFAULT_MAX: usize = 3;
 /// RECENT keeps this many Events; older ones are in the log.
 const KEPT_EVENTS: usize = 1000;
 /// An update another process's run keeps from installing is tried this often.
 const RETRY: Duration = Duration::from_secs(60);
 /// Every command the Shell takes: its name, arguments and what it does. The
 /// / list shows it, and the README's table.
-const COMMANDS: [(&str, &str, &str); 14] = [
+const COMMANDS: [(&str, &str, &str); 15] = [
+    ("/start-epic", "<epic>", "run every Ticket of an open Epic"),
     (
-        "/start-epic",
-        "<epic> [--max N]",
-        "run every Ticket of an open Epic",
+        "/start-ticket",
+        "<ticket>…",
+        "run Tickets, or add them to the live Ticket run",
     ),
-    ("/start-ticket", "<ticket>", "run one Ticket"),
+    (
+        "/remove-ticket",
+        "<ticket>",
+        "take a Ticket out of the live Ticket run",
+    ),
     (
         "/continue",
         "[<ticket>]",
@@ -115,21 +118,22 @@ struct Run {
     o: Arc<Orchestrator>,
     /// None once joined: the run is stopping, its Ticket threads leaving.
     scheduler: Option<JoinHandle<Result<(), String>>>,
-    /// An Epic run, which a finished Epic clears from the state file.
+    /// An Epic run; otherwise a Ticket run, over the State's queue. A
+    /// finished run clears the state file.
     epic: bool,
-    /// A Ticket run's Tickets, which alone show live; none in an Epic run.
-    tickets: Vec<String>,
     /// The scheduler returned an error: the state file is read back.
     failed: bool,
-    /// The Epic summary has opened by itself, which it does once a run.
+    /// The summary has opened by itself, which it does once a run, again
+    /// after a Ticket joins a Ticket run.
     summarized: bool,
     _lock: Lock,
 }
 
 /// What a yes/no confirmation does on yes.
 pub(crate) enum Pending {
-    /// Discard the saved run and start this Epic or Ticket.
-    Start { id: String, max: usize, epic: bool },
+    /// Discard the saved run and start this Epic, or a Ticket run on these
+    /// Tickets.
+    Start { ids: Vec<String>, epic: bool },
     /// Stop the run and exit.
     Exit,
     /// Close the done Epic in bd: its completed State, which poll has
@@ -252,9 +256,9 @@ pub(crate) struct Screen {
     pub(crate) reexec: bool,
     /// The Epic summary, over the whole terminal while open.
     pub(crate) summary: Option<Summary>,
-    /// The Epic of the last run to finish, whose done Epic cleared the
-    /// State: what /summary alone shows next. In memory only.
-    last_epic: String,
+    /// The State of the last run to finish, which its end cleared: what
+    /// /summary alone shows next. In memory only.
+    last: State,
     /// /demo's scripted run, in place of the Shell's Epics, State and RECENT.
     pub(crate) demo: Option<demo::Demo>,
 }
@@ -308,7 +312,7 @@ impl Screen {
             retry: Instant::now(),
             reexec: false,
             summary: None,
-            last_epic: String::new(),
+            last: State::default(),
             demo: None,
         }
     }
@@ -335,7 +339,6 @@ impl Screen {
             home: PathBuf::from(&home),
             tick: Duration::from_secs(5),
             poll_prs: Duration::from_secs(30),
-            max: DEFAULT_MAX,
             away: Arc::default(), // off each time the Shell opens
             log: Arc::new(Mutex::new(Box::new(io::sink()))),
             events: mpsc::channel().0,
@@ -448,7 +451,7 @@ impl Screen {
     /// closes, when a run ends and before the Epic summary opens by
     /// itself. Whether bd answered.
     fn reload_epics(&mut self) -> bool {
-        match load_epics(&self.cfg.repo, &*self.cfg.tools) {
+        match load_epics(&self.cfg.repo, &*self.cfg.tools, &self.state.queue) {
             Ok(epics) => {
                 self.epics = epics;
                 true
@@ -461,13 +464,13 @@ impl Screen {
     }
 
     /// Takes the Events and snapshots the live run's State, after the
-    /// scheduler's end so a finished run's snapshot is its last; in an Epic
-    /// run the summary opens by itself once every Ticket has its PR. Once
-    /// the scheduler thread has returned the run is stopping until every
-    /// Ticket thread has left (each sees stop at its next sleep, and still
-    /// saves state after its current Tools call); then the run is over, the
-    /// lock goes, a stopped run says so, and a done Epic clears the saved
-    /// run and asks whether to close the Epic.
+    /// scheduler's end so a finished run's snapshot is its last; the summary
+    /// opens by itself once every Ticket of the run has its PR. Once the
+    /// scheduler thread has returned the run is stopping until every Ticket
+    /// thread has left (each sees stop at its next sleep, and still saves
+    /// state after its current Tools call); then the run is over, the lock
+    /// goes, a stopped run says so, and a done run clears the saved run, a
+    /// done Epic asking whether to close the Epic.
     pub(crate) fn poll(&mut self) {
         while let Ok(event) = self.receiver.try_recv() {
             self.push(event);
@@ -497,15 +500,10 @@ impl Screen {
         let run = self.run.as_ref().unwrap();
         self.state = run.o.state.lock().unwrap().clone();
         // the cache again once it says done: a Ticket added since has no PR
-        if run.epic
-            && !run.summarized
-            && self.all_prs_open()
-            && self.reload_epics()
-            && self.all_prs_open()
-        {
+        if !run.summarized && self.all_prs_open() && self.reload_epics() && self.all_prs_open() {
             self.run.as_mut().unwrap().summarized = true;
-            let epic = self.state.epic.clone();
-            self.summarize(&epic);
+            let state = self.state.clone();
+            self.summarize(&state, &state.epic);
         }
         let over = self
             .run
@@ -526,45 +524,50 @@ impl Screen {
             }
         } else if run.failed {
             self.state = load_state(&self.cfg.repo).unwrap_or_default();
-        } else if run.epic {
-            let done = std::mem::take(&mut self.state); // Epic done: nothing to resume
-            let epic = done.epic.clone();
+        } else {
+            let done = std::mem::take(&mut self.state); // run done: nothing to resume
             if let Err(err) = self.state.save(&self.cfg.repo) {
                 self.notice(&format!("state not saved: {err}"), NOTICE_WINDOW);
             }
-            let text = match self.epics.iter().find(|e| e.id == epic) {
-                Some(e) => format!("close Epic {epic} {}?", e.title),
-                None => format!("close Epic {epic}?"),
-            };
-            self.confirm(
-                &text,
-                Pending::Close {
+            self.last = done.clone();
+            if run.epic {
+                let epic = &done.epic;
+                let text = match self.epics.iter().find(|e| e.id == *epic) {
+                    Some(e) => format!("close Epic {epic} {}?", e.title),
+                    None => format!("close Epic {epic}?"),
+                };
+                let pending = Pending::Close {
                     done,
                     commented: false,
-                },
-            );
-            self.last_epic = epic;
+                };
+                self.confirm(&text, pending);
+            }
         }
         self.reload_epics();
         drop(run); // the lock goes
         self.install(false); // the last act of /stop-work
     }
 
-    /// Whether every Ticket of the run's Epic on the bd tree has its PR open
-    /// or merged or is Parked, one at least with its PR: the Epic summary's
-    /// EPIC DONE, from the live State.
+    /// Whether every Ticket of the run (its Epic's on the bd tree, or the
+    /// Ticket run's queue) has its PR open or merged or is Parked, one at
+    /// least with its PR: the summary's DONE, from the live State.
     fn all_prs_open(&self) -> bool {
-        let Some(epic) = self.saved() else {
-            return false;
+        let ids: Vec<&str> = match self.saved() {
+            Some(epic) => epic.tickets.iter().map(|t| t.id.as_str()).collect(),
+            None => self.state.queue.iter().map(String::as_str).collect(),
         };
-        let status = |t: &BdIssue| match self.state.tickets.get(&t.id) {
-            _ if t.status == "closed" => STATUS_MERGED,
+        let closed = |id: &str| {
+            let mut all = self.epics.iter().flat_map(|e| &e.tickets);
+            all.any(|t| t.id == id && t.status == "closed")
+        };
+        let status = |id: &str| match self.state.tickets.get(id) {
+            _ if closed(id) => STATUS_MERGED,
             Some(ts) => ts.status.as_str(),
             None => "",
         };
         let out = [STATUS_PR_OPEN, STATUS_MERGED, STATUS_PARKED];
-        epic.tickets.iter().all(|t| out.contains(&status(t)))
-            && epic.tickets.iter().any(|t| status(t) != STATUS_PARKED)
+        ids.iter().all(|id| out.contains(&status(id)))
+            && ids.iter().any(|id| status(id) != STATUS_PARKED)
     }
 
     /// The saved run's Epic on the tree; never the no-Epic group.
@@ -1226,7 +1229,7 @@ impl Screen {
                     unreachable!()
                 };
                 match pending {
-                    Pending::Start { id, max, epic } => self.start(&id, max, epic, true),
+                    Pending::Start { ids, epic } => self.start(&ids, epic, true),
                     Pending::Exit => self.quit(),
                     Pending::Close { done, commented } => self.close_epic(&q.text, done, commented),
                 }
@@ -1358,7 +1361,7 @@ impl Screen {
     /// Ticket starts Implement over, a Parked one set to resume is unparked
     /// at its Stage, and the rest resume as saved.
     fn resume(&mut self, rows: &[(String, bool)]) {
-        let Some(prepared) = self.prepare(DEFAULT_MAX) else {
+        let Some(prepared) = self.prepare() else {
             return;
         };
         let o = prepared.1.clone();
@@ -1372,15 +1375,7 @@ impl Screen {
             }
         }
         let epic = o.state.lock().unwrap().epic.clone();
-        if !epic.is_empty() {
-            self.spawn(prepared, true, Vec::new(), move |o| o.run(&epic));
-        } else {
-            let tickets = o.resumable();
-            self.spawn(prepared, false, tickets.clone(), move |o| {
-                o.run_tickets(&tickets);
-                Ok(())
-            });
-        }
+        self.spawn(prepared, !epic.is_empty(), move |o| o.run(&epic));
     }
 
     /// One input line: a slash command, or y/n typed at a confirmation.
@@ -1409,20 +1404,53 @@ impl Screen {
             return self.refuse("refused: the demo is on, /stop-demo ends it");
         }
         match name {
-            "/start-epic" | "/start-ticket" => {
+            "/start-epic" => {
                 if self.busy() {
                     return;
                 }
-                let epic = name == "/start-epic";
-                let (query, max) = match parse_args(query) {
-                    Ok(parsed) => parsed,
-                    Err(err) => return self.notice(&err, NOTICE_WINDOW),
-                };
                 self.reload_epics();
-                if let Some(id) = self.resolve(&query, epic) {
-                    self.start(&id, max, epic, false);
+                if let Some(id) = self.resolve(query, true) {
+                    self.start(&[id], true, false);
                 }
             }
+            // on a live Ticket run it adds to the run
+            "/start-ticket" => {
+                let adding = self.run.as_ref().is_some_and(|r| !r.epic) && !self.stopping();
+                if !adding && self.busy() {
+                    return;
+                }
+                self.reload_epics();
+                let Some(ids) = self.tickets_named(query) else {
+                    return;
+                };
+                match adding {
+                    true => self.add(&ids),
+                    false => self.start(&ids, false, false),
+                }
+            }
+            "/remove-ticket" => match self.run.as_ref().map(|r| (r.epic, r.o.clone())) {
+                _ if query.is_empty() => {
+                    self.notice("usage: /remove-ticket <ticket>", NOTICE_WINDOW)
+                }
+                None => self.refuse("refused: no Ticket run is live"),
+                Some(_) if self.stopping() => self.refuse("refused: a run is stopping"),
+                Some((true, _)) => {
+                    self.refuse("refused: an Epic run takes every Ticket of its Epic")
+                }
+                Some(_) if !self.state.queue.iter().any(|t| t == query) => self.refuse(&format!(
+                    "refused: Ticket {} is not in the run",
+                    suffix(query)
+                )),
+                Some((false, o)) => {
+                    self.reload_epics();
+                    match self.waits_on(query) {
+                        Some(w) => {
+                            self.refuse(&format!("refused: {w} waits on {query}, remove {w} first"))
+                        }
+                        None => o.command(&format!("remove-{query}")),
+                    }
+                }
+            },
             "/continue" if !query.is_empty() => self.continue_ticket(query),
             "/continue" => {
                 if self.busy() {
@@ -1436,7 +1464,14 @@ impl Screen {
                     .map(|(id, _)| (id.clone(), false))
                     .collect();
                 rows.sort_by_key(|(id, _)| suffix_order(id));
-                if rows.is_empty() && self.state.epic.is_empty() {
+                // a Ticket run whose Tickets all wait on their merges resumes too
+                let waiting = !self.state.queue.is_empty()
+                    || self
+                        .state
+                        .tickets
+                        .values()
+                        .any(|ts| ts.status == STATUS_PR_OPEN);
+                if rows.is_empty() && self.state.epic.is_empty() && !waiting {
                     self.refuse("refused: no saved Ticket to continue");
                 } else if rows.is_empty() {
                     self.resume(&rows);
@@ -1453,18 +1488,20 @@ impl Screen {
                 }
             }
             // An Epic by its id, as the @ list fills it in; closed ones too.
+            // Alone: the live or saved run, or the last to finish.
             "/summary" => {
-                let epic = if !query.is_empty() {
-                    query.to_string()
-                } else if !self.state.epic.is_empty() {
-                    self.state.epic.clone()
-                } else if !self.last_epic.is_empty() {
-                    self.last_epic.clone()
+                let ran = |state: &State| !state.epic.is_empty() || !state.queue.is_empty();
+                let (state, epic) = if !query.is_empty() {
+                    (self.state.clone(), query.to_string())
+                } else if ran(&self.state) {
+                    (self.state.clone(), self.state.epic.clone())
+                } else if ran(&self.last) {
+                    (self.last.clone(), self.last.epic.clone())
                 } else {
                     return self
-                        .notice("no Epic run yet, /summary @<epic> shows one", NOTICE_WINDOW);
+                        .notice("no run yet, /summary @<epic> shows an Epic", NOTICE_WINDOW);
                 };
-                self.summarize(&epic);
+                self.summarize(&state, &epic);
             }
             "/questions" => match self.questions.is_empty() {
                 true => self.notice("no questions waiting", NOTICE_WINDOW),
@@ -1492,7 +1529,7 @@ impl Screen {
                     .questions
                     .iter()
                     .any(|q| q.ticket.as_deref() == Some(query));
-                match self.run.as_ref().map(|run| (run.epic, run.o.clone())) {
+                match self.run.as_ref().map(|run| run.o.clone()) {
                     _ if query.is_empty() => {
                         self.notice(&format!("usage: {name} <ticket>"), NOTICE_WINDOW)
                     }
@@ -1503,11 +1540,7 @@ impl Screen {
                         "refused: Ticket {} has a Question waiting",
                         suffix(query)
                     )),
-                    // ponytail: a single-Ticket run has no scheduler to consume it
-                    Some((false, _)) if name == "/address" => {
-                        self.tell(Some(query), "address refused: not an Epic run")
-                    }
-                    Some((_, o)) => o.command(&format!("{}-{query}", &name[1..])),
+                    Some(o) => o.command(&format!("{}-{query}", &name[1..])),
                 }
             }
             "/exit" => match &self.run {
@@ -1521,22 +1554,20 @@ impl Screen {
     /// /continue @ticket: unparks that one Ticket at its Stage, watching its
     /// live session, and puts its next Question first; Away goes off, the
     /// user being back. With no run live the saved run resumes; in a live
-    /// Epic run it is the scheduler's command, as /retry is.
+    /// run it is the scheduler's command, as /retry is.
     fn continue_ticket(&mut self, id: &str) {
         let parked = self
             .state
             .tickets
             .get(id)
             .is_some_and(|ts| ts.status == STATUS_PARKED);
-        match self.run.as_ref().map(|run| (run.epic, run.o.clone())) {
+        match self.run.as_ref().map(|run| run.o.clone()) {
             _ if !parked => {
                 return self.refuse(&format!("refused: Ticket {} is not parked", suffix(id)))
             }
             None => {}
             Some(_) if self.stopping() => return self.refuse("refused: a run is stopping"),
-            // ponytail: a single-Ticket run has no scheduler to consume it
-            Some((false, _)) => return self.tell(Some(id), "continue refused: not an Epic run"),
-            Some((true, o)) => o.command(&format!("continue-{id}")),
+            Some(o) => o.command(&format!("continue-{id}")),
         }
         self.first = Some(id.to_string());
         if self.cfg.away.swap(false, Ordering::SeqCst) {
@@ -1551,7 +1582,7 @@ impl Screen {
     /// its id exactly, or the only one whose id or title contains it.
     /// Anything else is a notice.
     fn resolve(&mut self, query: &str, epics: bool) -> Option<String> {
-        let query = query.strip_prefix('@').unwrap_or(query); // after --max N
+        let query = query.strip_prefix('@').unwrap_or(query);
         let candidates: Vec<(&str, &str)> = if epics {
             self.epics
                 .iter()
@@ -1591,12 +1622,56 @@ impl Screen {
         }
     }
 
-    /// /start-epic and /start-ticket: over a different saved Epic (the
-    /// Ticket's parent, as the tree has it; one with none differs from any)
-    /// it asks before discarding the saved run, which goes only once the lock
-    /// is held. An Epic run resumes every running Ticket, so over a saved
-    /// Ticket run it asks too when one running or Parked is not the Epic's.
-    fn start(&mut self, id: &str, max: usize, epic: bool, discard: bool) {
+    /// The open Tickets /start-ticket names: every word an open Ticket's id
+    /// exactly, as the @ list fills them in, or else the one Ticket resolve
+    /// finds. A Ticket blocked by an open one that is neither named nor in
+    /// the run would never start: refused.
+    fn tickets_named(&mut self, query: &str) -> Option<Vec<String>> {
+        let words: Vec<&str> = query
+            .split_whitespace()
+            .map(|w| w.strip_prefix('@').unwrap_or(w))
+            .collect();
+        // one off the tree is closed: the tree keeps every open Ticket
+        let open = |epics: &[Epic], id: &str| find(epics, id).is_some_and(|t| t.status != "closed");
+        let ids = match words.len() > 1 && words.iter().all(|w| open(&self.epics, w)) {
+            true => config::distinct(words.iter().map(|w| w.to_string())),
+            false => vec![self.resolve(query, false)?],
+        };
+        let theirs = |b: &str| ids.iter().chain(&self.state.queue).any(|t| t == b);
+        let waits = ids.iter().find_map(|id| {
+            let mut blockers = find(&self.epics, id).into_iter().flat_map(|t| t.blockers());
+            let b = blockers.find(|b| open(&self.epics, b) && !theirs(b))?;
+            Some(format!(
+                "refused: {id} waits on {b}, which is not in the run"
+            ))
+        });
+        match waits {
+            Some(text) => {
+                self.refuse(&text);
+                None
+            }
+            None => Some(ids),
+        }
+    }
+
+    /// An open Ticket of the Ticket run that waits on `ticket`, itself open:
+    /// removed, its merge would go unpolled and that one never start.
+    fn waits_on(&self, ticket: &str) -> Option<String> {
+        let open = |id: &str| find(&self.epics, id).filter(|t| t.status != "closed");
+        open(ticket)?;
+        let mut queue = self.state.queue.iter();
+        let waits = |t: &&String| open(t).is_some_and(|t| t.blockers().any(|b| b == ticket));
+        queue.find(waits).cloned()
+    }
+
+    /// /start-epic, and /start-ticket with no run live, which starts a Ticket
+    /// run on its Tickets, or adds them to the saved one's queue. Over a
+    /// different saved Epic, or any saved Epic for a Ticket run, it asks
+    /// before discarding the saved run, which goes only once the lock is
+    /// held. An Epic run resumes every running Ticket, so over a saved Ticket
+    /// run it asks too when one running, Parked (removed from the run or not)
+    /// or queued is not the Epic's.
+    fn start(&mut self, ids: &[String], epic: bool, discard: bool) {
         let parent = |ticket: &str| {
             self.epics
                 .iter()
@@ -1605,55 +1680,86 @@ impl Screen {
                 .map(|t| t.parent.clone())
                 .unwrap_or_default()
         };
-        let mine = if epic { id.to_string() } else { parent(id) };
         let saved = if epic && self.state.epic.is_empty() {
-            let stray: Vec<&str> = self
-                .state
-                .tickets
-                .iter()
-                .filter(|(_, ts)| ts.status == STATUS_RUNNING || ts.status == STATUS_PARKED)
-                .filter(|(t, _)| parent(t) != mine)
-                .map(|(t, _)| t.as_str())
+            // running or Parked, removed from the run too, or queued and
+            // not started: the Epic run takes up the removed and clears the
+            // queue
+            let (tickets, removed) = (&self.state.tickets, &self.state.removed);
+            let unfinished = |t: &str| match tickets.get(t).or(removed.get(t)) {
+                Some(ts) => ts.status == STATUS_RUNNING || ts.status == STATUS_PARKED,
+                None => true,
+            };
+            let mut stray: Vec<&str> = tickets
+                .keys()
+                .chain(removed.keys())
+                .chain(&self.state.queue)
+                .map(String::as_str)
+                .filter(|t| unfinished(t) && parent(t) != ids[0])
                 .collect();
+            stray.sort();
+            stray.dedup();
             stray.join(", ")
         } else {
             self.state.epic.clone()
         };
-        let other = !saved.is_empty() && saved != mine;
+        let other = !saved.is_empty() && !(epic && saved == ids[0]);
         if other && !discard {
             let pending = Pending::Start {
-                id: id.to_string(),
-                max,
+                ids: ids.to_vec(),
                 epic,
             };
             return self.confirm(&format!("discard the saved run on {saved}?"), pending);
         }
-        let Some(prepared) = self.prepare(max) else {
+        let Some(prepared) = self.prepare() else {
             return;
         };
+        let o = prepared.1.clone();
         if other {
             if let Err(err) = State::default().save(&self.cfg.repo) {
                 return self.notice(&format!("state not saved: {err}"), NOTICE_WINDOW);
             }
-            *prepared.1.state.lock().unwrap() = State::default();
+            *o.state.lock().unwrap() = State::default();
         }
-        let id = id.to_string();
         if epic {
-            self.spawn(prepared, true, Vec::new(), move |o| o.run(&id));
+            let id = ids[0].clone();
+            self.spawn(prepared, true, move |o| o.run(&id));
         } else {
-            self.spawn(prepared, false, vec![id.clone()], move |o| {
-                o.run_ticket(&id);
-                Ok(())
-            });
+            o.enqueue(ids);
+            self.spawn(prepared, false, |o| o.run(""));
         }
     }
 
-    /// Opens the Epic summary, built fresh from bd, the State and the Run
-    /// directories; a failure, or an Epic with no evidence, is a notice.
-    fn summarize(&mut self, epic: &str) {
+    /// /start-ticket on a live Ticket run: its Tickets join the queue, and
+    /// the summary opens by itself again once every one has its PR.
+    fn add(&mut self, ids: &[String]) {
+        let new: Vec<String> = ids
+            .iter()
+            .filter(|id| !self.state.queue.contains(id))
+            .cloned()
+            .collect();
+        if new.is_empty() {
+            return self.notice("already in the run", NOTICE_WINDOW);
+        }
+        let Some(run) = &mut self.run else {
+            return;
+        };
+        if !run.o.enqueue(&new) {
+            return self.refuse("refused: the Ticket run is ending, /start-ticket once it has");
+        }
+        run.summarized = false;
+        self.state = run.o.state.lock().unwrap().clone();
+        for id in &new {
+            self.tell(Some(id), "added to the run");
+        }
+    }
+
+    /// Opens the summary of an Epic, or with none of the State's Ticket
+    /// run, built fresh from bd, that State and the Run directories; a
+    /// failure, or a run with no evidence, is a notice.
+    fn summarize(&mut self, state: &State, epic: &str) {
         let repo = &self.cfg.repo;
         let built = bd_list(repo, &*self.cfg.tools)
-            .and_then(|issues| Summary::build(repo, &self.cfg.home, &issues, &self.state, epic));
+            .and_then(|issues| Summary::build(repo, &self.cfg.home, &issues, state, epic));
         match built {
             Ok(summary) => self.summary = Some(summary),
             Err(err) => self.notice(&err, NOTICE_WINDOW),
@@ -1663,7 +1769,7 @@ impl Screen {
     /// Takes the lock and makes the run's Orchestrator over the state
     /// file; None, said in a notice, when a run cannot start. The callers
     /// have checked that no run is live.
-    fn prepare(&mut self, max: usize) -> Option<(Lock, Arc<Orchestrator>)> {
+    fn prepare(&mut self) -> Option<(Lock, Arc<Orchestrator>)> {
         if let Some(missing) = self.missing.first() {
             self.notice(&format!("refused: {missing}"), NOTICE_WINDOW);
             return None;
@@ -1685,7 +1791,6 @@ impl Screen {
             Err(_) => Box::new(io::sink()),
         };
         match Orchestrator::new(Config {
-            max,
             log: Arc::new(Mutex::new(log)),
             events: self.sender.clone(),
             ..self.cfg.clone()
@@ -1704,7 +1809,6 @@ impl Screen {
         &mut self,
         (lock, o): (Lock, Arc<Orchestrator>),
         epic: bool,
-        tickets: Vec<String>,
         work: impl FnOnce(&Arc<Orchestrator>) -> Result<(), String> + Send + 'static,
     ) {
         self.state = o.state.lock().unwrap().clone();
@@ -1716,7 +1820,6 @@ impl Screen {
             o,
             scheduler: Some(scheduler),
             epic,
-            tickets,
             failed: false,
             summarized: false,
             _lock: lock,
@@ -1799,26 +1902,9 @@ fn suffix_order(id: &str) -> usize {
     suffix(id).parse().unwrap_or(usize::MAX)
 }
 
-/// '<query words> [--max N]' in any order: the words joined, and N or the default.
-fn parse_args(rest: &str) -> Result<(String, usize), String> {
-    let mut words = Vec::new();
-    let mut max = DEFAULT_MAX;
-    let mut args = rest.split_whitespace();
-    while let Some(arg) = args.next() {
-        let value = match arg.strip_prefix("--max") {
-            Some("") => args.next(),
-            Some(eq) => eq.strip_prefix('='),
-            None => {
-                words.push(arg);
-                continue;
-            }
-        };
-        max = value
-            .and_then(|v| v.parse().ok())
-            .filter(|n| *n >= 1)
-            .ok_or("--max wants a number of at least 1")?;
-    }
-    Ok((words.join(" "), max))
+/// A Ticket on the tree by its id.
+fn find<'a>(epics: &'a [Epic], id: &str) -> Option<&'a BdIssue> {
+    epics.iter().flat_map(|e| &e.tickets).find(|t| t.id == id)
 }
 
 /// Every issue, Epics and closed ones too, from one bd list call.
@@ -1832,8 +1918,9 @@ fn bd_list(repo: &Path, tools: &dyn Tools) -> Result<Vec<BdIssue>, String> {
 }
 
 /// Every open Epic expanded into its Tickets, then the no-Epic group when it
-/// has one, from one bd list call.
-fn load_epics(repo: &Path, tools: &dyn Tools) -> Result<Vec<Epic>, String> {
+/// has one, from one bd list call. A closed Ticket with no open Epic is left
+/// out, but for one still in the Ticket run's queue.
+fn load_epics(repo: &Path, tools: &dyn Tools, queue: &[String]) -> Result<Vec<Epic>, String> {
     let mut issues = bd_list(repo, tools)?;
     let mut epics: Vec<Epic> = issues
         .iter()
@@ -1856,7 +1943,9 @@ fn load_epics(repo: &Path, tools: &dyn Tools) -> Result<Vec<Epic>, String> {
         }
         match epics.iter_mut().find(|e| e.id == issue.parent) {
             Some(epic) => epic.tickets.push(issue),
-            None if issue.status != "closed" => no_epic.tickets.push(issue),
+            None if issue.status != "closed" || queue.contains(&issue.id) => {
+                no_epic.tickets.push(issue)
+            }
             None => {}
         }
     }

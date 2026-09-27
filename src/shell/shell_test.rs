@@ -4,6 +4,7 @@ use super::brand::{
 };
 use super::draw::{draw, ticket_color};
 use super::{About, Epic, Pending, Screen};
+use crate::orchestrator::app::set_max_tickets;
 use crate::orchestrator::judgment::fake::Fake as TypeSafeFake;
 use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
 use crate::orchestrator::limit_test::hits;
@@ -16,7 +17,7 @@ use crate::orchestrator::state::{
     STATUS_PR_OPEN, STATUS_RUNNING,
 };
 use crate::orchestrator::trust::claude_slug;
-use crate::orchestrator::world::{new_world, set_clock, succeed, BdTicket, World};
+use crate::orchestrator::world::{new_world, set_clock, succeed, wait_until, BdTicket, World};
 use crate::orchestrator::write_file;
 use crate::tempdir::TempDir;
 use crate::tools::fake::Fake;
@@ -138,6 +139,15 @@ pub(super) fn line(e: &Event) -> String {
         Some(id) => format!("{id} {}", e.text),
         None => e.text.clone(),
     }
+}
+
+/// Waits for the run's Ticket threads to leave: a Ticket's last line comes
+/// before its thread ends, and /remove-ticket refuses a working one.
+fn await_threads(s: &Screen) {
+    let o = s.run.as_ref().expect("no run").o.clone();
+    wait_until("the Ticket threads leaving", || {
+        o.active.lock().unwrap().is_empty()
+    });
 }
 
 /// Polls the Shell until the run is over.
@@ -722,7 +732,7 @@ fn the_at_list_ranks_open_epics_and_tickets_narrowed_by_the_command() {
     s.key(key(KeyCode::Tab));
     assert_eq!(s.input, "harness-7nq.5 ");
     // A space after the query closes it; no list in the argument slot.
-    s.input = "/start-epic @0s --max".to_string();
+    s.input = "/start-epic @0s x".to_string();
     assert!(list_keys(&s).is_empty());
     s.input = "/start-epic 0s".to_string();
     assert!(list_keys(&s).is_empty());
@@ -750,7 +760,7 @@ fn up_and_down_move_an_open_lists_cursor_and_scroll_recent_when_none_is() {
     for _ in 0..20 {
         s.key(key(KeyCode::Down));
     }
-    assert_eq!(s.pick, 13, "past the last row");
+    assert_eq!(s.pick, 14, "past the last row");
     s.key(key(KeyCode::Up));
     s.key(key(KeyCode::Up));
     s.key(key(KeyCode::Enter));
@@ -814,14 +824,14 @@ fn the_slash_list_renders_above_the_input_with_its_hint() {
     type_in(&mut s, "/");
     let buf = render(&s, 120, 40);
     let want = [
-        " › /start-epic    <epic> [--max N]  run every Ticket of an open Epic",
-        "   /start-ticket  <ticket>          run one Ticket",
-        "   /continue      [<ticket>]        resume the saved run, or unpark one Ticket",
-        "   /stop-work                       stop the run, the panes stay",
-        "   /retry         <ticket>          the Ticket's Stage again, in a fresh session",
-        "   /park          <ticket>          take a Ticket out to wait for you",
-        "   /address       <ticket>          resolve a PR's conflicts or review comments",
-        "   /questions                       show the hidden Questions",
+        " › /start-epic     <epic>      run every Ticket of an open Epic",
+        "   /start-ticket   <ticket>…   run Tickets, or add them to the live Ticket run",
+        "   /remove-ticket  <ticket>    take a Ticket out of the live Ticket run",
+        "   /continue       [<ticket>]  resume the saved run, or unpark one Ticket",
+        "   /stop-work                  stop the run, the panes stay",
+        "   /retry          <ticket>    the Ticket's Stage again, in a fresh session",
+        "   /park           <ticket>    take a Ticket out to wait for you",
+        "   /address        <ticket>    resolve a PR's conflicts or review comments",
         "   ↑↓ pick · Tab or Enter fills in · Esc clears",
     ];
     let shown: Vec<String> = (29..38)
@@ -839,9 +849,9 @@ fn the_slash_list_renders_above_the_input_with_its_hint() {
     assert_eq!(at("/start-ticket"), (PURPLE, false));
     assert_eq!(at("<epic>").0, MUTED);
     assert_eq!(at("run every Ticket").0, TEXT);
-    assert_eq!(at("run one Ticket").0, MUTED);
+    assert_eq!(at("run Tickets, or add").0, MUTED);
     // The window follows the cursor to the last row.
-    for _ in 0..13 {
+    for _ in 0..14 {
         s.key(key(KeyCode::Down));
     }
     let buf = render(&s, 120, 40);
@@ -1264,7 +1274,7 @@ const SECTIONS: &str = r#"[
 /// `running`, the run is live and 4 is blocked on a question.
 fn sections_screen(running: bool) -> Screen {
     let fake = Fake::new(|_, _| Ok(SECTIONS.to_string()));
-    let epics = super::load_epics(Path::new(""), &*fake).unwrap();
+    let epics = super::load_epics(Path::new(""), &*fake, &[]).unwrap();
     let mut state = State {
         epic: "harness-a".to_string(),
         ..Default::default()
@@ -1583,6 +1593,7 @@ fn a_long_limit_ends_the_run_and_continue_after_the_reset_resumes_it() {
     s.key(key(KeyCode::Enter));
     await_line(&mut s, "hx-1 implement resumed: claude (pane");
     await_line(&mut s, "hx-1 PR #hx-1 opened");
+    s.command("/stop-work");
     await_end(&mut s);
     let starts = w.called("herdr agent start h-hx-1-implement ");
     assert!(
@@ -1847,9 +1858,10 @@ fn exit_command_ctrl_c_twice_and_an_unknown_command() {
 fn start_epic_runs_the_tickets_to_prs_and_a_done_epic_clears_the_saved_run() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
     w.lock().merged = true;
+    set_max_tickets(&w.repo, Some(1)).unwrap();
     let mut s = shell(&w);
     s.ticks = 45;
-    s.command("/start-epic hx --max 1");
+    s.command("/start-epic hx");
     assert_eq!(notice(&s), "", "start refused");
     assert!(s.running && s.run.is_some());
     assert_eq!(
@@ -1868,7 +1880,7 @@ fn start_epic_runs_the_tickets_to_prs_and_a_done_epic_clears_the_saved_run() {
     assert!(acquire_lock(&w.repo).is_ok(), "the lock outlived the run");
     assert_eq!(s.state, State::default(), "a done Epic is still saved");
     assert_eq!(load_state(&w.repo).unwrap(), State::default());
-    assert_eq!(w.lock().peak, 1, "--max 1 was not obeyed");
+    assert_eq!(w.lock().peak, 1, "max_tickets 1 was not obeyed");
     s.key(key(KeyCode::Esc)); // the Epic summary
     assert!(
         log(&w).contains(" hx-1 PR #hx-1 opened after 1 round (https://example.test/pr/hx-1)\n")
@@ -2114,8 +2126,6 @@ fn start_epic_resolves_its_argument_from_the_bd_cache_and_asks_before_discarding
 
     s.command("/start-epic nothing-like-it");
     assert_eq!(notice(&s), "no open Epic matches \"nothing-like-it\"");
-    s.command("/start-epic hx --max 0");
-    assert_eq!(notice(&s), "--max wants a number of at least 1");
     s.command("/start-ticket hx-");
     assert_eq!(notice(&s), "matches: hx-1 Ticket hx-1  ·  hx-2 Ticket hx-2");
     s.notice = None;
@@ -2165,28 +2175,31 @@ fn start_epic_resolves_its_argument_from_the_bd_cache_and_asks_before_discarding
             && w.called("herdr agent start h-hx-2-implement").len() == 1
     );
 
-    // /start-ticket runs one Ticket's Pipeline without an Epic to schedule.
+    // /start-ticket runs a Ticket run over its Tickets alone, never the Epic's.
     let (w, _) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
     let mut s = shell(&w);
     s.command("/start-ticket");
     assert_eq!(notice(&s), "matches: hx-1 Ticket hx-1  ·  hx-2 Ticket hx-2");
     s.command("/start-ticket hx-2");
     assert!(s.run.is_some(), "{:?}", s.notice);
-    s.command("/address hx-2");
-    await_line(&mut s, "hx-2 address refused: not an Epic run");
     await_line(&mut s, "hx-2 PR #hx-2 opened after 1 round");
+    s.command("/stop-work");
     await_end(&mut s);
     assert!(
-        w.called("bd ready").is_empty(),
-        "a single Ticket was scheduled"
+        w.called("bd ready --parent").is_empty(),
+        "the Epic was scheduled"
     );
     assert!(w.called("herdr agent start h-hx-1-implement").is_empty());
     assert!(s.state.epic.is_empty());
+    assert_eq!(s.state.queue, ["hx-2"]);
     assert_eq!(s.state.tickets["hx-2"].status, STATUS_PR_OPEN);
 }
 
+/// A Ticket run and an Epic run never share the state file: over a saved
+/// Epic run, even one whose Epic the Ticket is of, /start-ticket asks
+/// before discarding it.
 #[test]
-fn start_ticket_keeps_a_saved_epic_run_and_asks_over_a_different_one() {
+fn start_ticket_over_a_saved_epic_run_asks_before_discarding_it() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
     let mut s = shell(&w);
     let mut saved = State {
@@ -2199,34 +2212,285 @@ fn start_ticket_keeps_a_saved_epic_run_and_asks_over_a_different_one() {
     saved.save(&w.repo).unwrap();
     s.state = saved.clone();
 
-    // A Ticket of the saved Epic: no question, and the saved run stays.
     s.command("/start-ticket hx-2");
-    assert!(s.run.is_some(), "{:?}", s.notice);
-    await_line(&mut s, "hx-2 PR #hx-2 opened after 1 round");
-    await_end(&mut s);
-    let after = load_state(&w.repo).unwrap();
-    assert!(
-        after.epic == "hx"
-            && after.tickets["hx-1"] == saved.tickets["hx-1"]
-            && after.tickets["hx-2"].status == STATUS_PR_OPEN,
-        "a single-Ticket run touched the saved Epic run: {after:?}"
-    );
-    assert_eq!(s.state, after);
-
-    // A Ticket of another Epic asks, as /start-epic does.
-    s.state.epic = "old".to_string();
-    s.command("/start-ticket hx-1");
-    assert_eq!(question(&s), "discard the saved run on old?");
+    assert_eq!(question(&s), "discard the saved run on hx?");
+    s.command("n");
     assert!(s.run.is_none());
+    assert_eq!(load_state(&w.repo).unwrap(), saved);
+
+    s.command("/start-ticket hx-2");
     s.command("y"); // typed, as well as pressed
     assert!(s.run.is_some(), "{:?}", s.notice);
+    await_line(&mut s, "hx-2 PR #hx-2 opened after 1 round");
+    s.command("/stop-work");
     await_end(&mut s);
     assert!(s.state.epic.is_empty(), "{:?}", s.state);
+    assert_eq!(s.state.queue, ["hx-2"]);
+    assert!(!s.state.tickets.contains_key("hx-1"), "{:?}", s.state);
+}
+
+/// /start-ticket takes several Tickets, the ids the @ list fills in, into
+/// one Ticket run, which stays live while their PRs wait on the merges and
+/// takes more Tickets meanwhile. The summary opens by itself once every one
+/// has its PR, again after one joins; the run ends when the last is merged.
+#[test]
+fn a_ticket_run_takes_several_tickets_and_more_while_live_and_ends_on_the_merges() {
+    let (w, _) = new_world(vec![
+        BdTicket::new("hx-1"),
+        BdTicket::new("hx-2"),
+        BdTicket::new("hx-3"),
+    ]);
+    let mut s = shell(&w);
+    s.command("/start-ticket hx-1 hx-2");
+    assert!(s.run.is_some(), "{:?}", s.notice);
+    assert_eq!(s.state.queue, ["hx-1", "hx-2"]);
+    await_line(&mut s, "hx-1 PR #hx-1 opened after 1 round");
+    await_line(&mut s, "hx-2 PR #hx-2 opened after 1 round");
+    await_summary(&mut s);
+    let sum = s.summary.take().unwrap();
+    assert_eq!((sum.epic.as_str(), sum.title.as_str()), ("", "2 Tickets"));
+    assert!(s.running, "the Ticket run ended on open PRs");
+
+    s.command("/start-epic hx");
+    assert_eq!(notice(&s), "refused: a run is live, /stop-work first");
+    s.command("/start-ticket hx-2");
+    assert_eq!(notice(&s), "already in the run");
+    s.command("/start-ticket hx-3");
+    await_line(&mut s, "hx-3 added to the run");
+    assert_eq!(s.state.queue, ["hx-1", "hx-2", "hx-3"]);
+    await_line(&mut s, "hx-3 PR #hx-3 opened after 1 round");
+    await_summary(&mut s);
+    let buf = render(&s, 120, 40);
+    assert!(
+        row(&buf, 0).starts_with(" TICKET RUN DONE · 3 Tickets   3 PRs"),
+        "{:?}",
+        row(&buf, 0)
+    );
+    s.key(key(KeyCode::Esc));
+
+    w.lock().merged = true;
+    for t in ["hx-1", "hx-2", "hx-3"] {
+        await_line(&mut s, &format!("{t} merged, Ticket closed"));
+    }
+    await_line(&mut s, "Ticket run done, every Ticket closed");
+    await_end(&mut s);
+    assert!(
+        s.questions.is_empty(),
+        "a Ticket run asked to close an Epic"
+    );
+    assert_eq!(load_state(&w.repo).unwrap(), State::default());
+    assert!(
+        w.called("bd ready --parent").is_empty(),
+        "the Epic was scheduled"
+    );
+    // /summary alone shows the finished run.
+    s.command("/summary");
+    let sum = s.summary.as_ref().expect("no summary of the finished run");
+    assert_eq!(sum.tickets.len(), 3);
+    assert!(sum.tickets.iter().all(|t| t.merged));
+}
+
+/// /remove-ticket takes a queued or Parked Ticket out of the live Ticket
+/// run and refuses a working one; a run with none left ends.
+#[test]
+fn remove_ticket_takes_a_queued_or_parked_ticket_out_and_refuses_a_working_one() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    w.session(|_| (String::new(), "working".to_string()));
+    set_max_tickets(&w.repo, Some(1)).unwrap();
+    let mut s = shell(&w);
+    s.command("/remove-ticket hx-1");
+    assert_eq!(notice(&s), "refused: no Ticket run is live");
+    s.command("/start-ticket hx-1 hx-2");
+    await_line(&mut s, "hx-1 implement started: claude (pane 1-1)");
+    s.command("/remove-ticket hx-1");
+    await_line(&mut s, "hx-1 remove refused: working, /park it first");
+    s.command("/remove-ticket hx-9");
+    assert_eq!(notice(&s), "refused: Ticket hx-9 is not in the run");
+    s.command("/remove-ticket hx-2");
+    await_line(&mut s, "hx-2 removed from the run");
+    assert_eq!(s.state.queue, ["hx-1"]);
+
+    s.command("/park hx-1");
+    await_line(&mut s, "hx-1 parked: by you at implement");
+    await_threads(&s);
+    s.command("/remove-ticket hx-1");
+    await_line(&mut s, "hx-1 removed from the run");
+    await_line(&mut s, "Ticket run done, no Ticket left in it");
+    await_end(&mut s);
+    assert!(
+        w.called("herdr agent start h-hx-2-implement").is_empty(),
+        "the removed Ticket started"
+    );
+    assert_eq!(load_state(&w.repo).unwrap(), State::default());
+}
+
+/// A Ticket another of the run waits on stays in: removed, its merge would
+/// go unpolled and the other never start. Once that one is out, it goes.
+#[test]
+fn remove_ticket_refuses_one_another_of_the_run_waits_on() {
+    let waits = BdTicket {
+        deps: vec!["hx-1".to_string()],
+        ..BdTicket::new("hx-2")
+    };
+    let (w, _) = new_world(vec![BdTicket::new("hx-1"), waits]);
+    let mut s = shell(&w);
+    s.command("/start-ticket hx-1 hx-2");
+    await_line(&mut s, "hx-1 PR #hx-1 opened after 1 round");
+    s.command("/remove-ticket hx-1");
+    assert_eq!(notice(&s), "refused: hx-2 waits on hx-1, remove hx-2 first");
+    assert_eq!(s.state.queue, ["hx-1", "hx-2"]);
+    s.command("/remove-ticket hx-2");
+    await_line(&mut s, "hx-2 removed from the run");
+    await_threads(&s);
+    s.command("/remove-ticket hx-1");
+    await_line(&mut s, "hx-1 removed from the run, its PR stays open");
+    await_line(&mut s, "Ticket run done, no Ticket left in it");
+    await_end(&mut s);
+}
+
+/// A Ticket removed with its PR open keeps its state aside: added back, its
+/// PR is polled again, and its merge ends the run.
+#[test]
+fn a_removed_ticket_added_back_has_its_open_pr_polled_again() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    let mut s = shell(&w);
+    s.command("/start-ticket hx-1 hx-2");
+    await_line(&mut s, "hx-1 PR #hx-1 opened after 1 round");
+    await_line(&mut s, "hx-2 PR #hx-2 opened after 1 round");
+    await_threads(&s);
+    s.command("/remove-ticket hx-1");
+    await_line(&mut s, "hx-1 removed from the run, its PR stays open");
+    s.command("/start-ticket hx-1");
+    await_line(&mut s, "hx-1 added to the run");
+    assert_eq!(s.state.queue, ["hx-2", "hx-1"]);
+    assert_eq!(s.state.tickets["hx-1"].status, STATUS_PR_OPEN);
+    w.lock().merged = true;
+    await_line(&mut s, "hx-1 merged, Ticket closed");
+    await_line(&mut s, "Ticket run done, every Ticket closed");
+    await_end(&mut s);
+}
+
+/// A Ticket removed from a Ticket run is still in progress in bd: the
+/// Epic's run takes it up where it left off, and ends on its merge.
+#[test]
+fn an_epic_run_takes_up_its_ticket_removed_from_a_ticket_run() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    let mut s = shell(&w);
+    s.command("/start-ticket hx-1 hx-2");
+    await_line(&mut s, "hx-1 PR #hx-1 opened after 1 round");
+    await_line(&mut s, "hx-2 PR #hx-2 opened after 1 round");
+    await_threads(&s);
+    s.command("/remove-ticket hx-1");
+    await_line(&mut s, "hx-1 removed from the run, its PR stays open");
+    s.command("/stop-work");
+    await_end(&mut s);
+
+    s.command("/start-epic hx");
+    assert_eq!(question(&s), "", "both are the Epic's");
+    assert!(s.run.is_some(), "{:?}", s.notice);
+    w.lock().merged = true;
+    await_line(&mut s, "hx-1 merged, Ticket closed");
+    await_line(&mut s, "Epic done, every Ticket closed");
+    await_end(&mut s);
+}
+
+/// An Epic run clears a saved Ticket run's queue and takes up the Tickets
+/// removed from it, so one queued and not started, or removed and Parked,
+/// not the Epic's asks first, as a running one does.
+#[test]
+fn start_epic_asks_over_a_saved_queued_or_removed_ticket_not_the_epics() {
+    let loose = BdTicket {
+        no_epic: true,
+        ..BdTicket::new("lx")
+    };
+    let (w, _) = new_world(vec![BdTicket::new("hx-1"), loose]);
+    let saved = State {
+        queue: vec!["lx".to_string()],
+        ..Default::default()
+    };
+    saved.save(&w.repo).unwrap();
+    let mut s = shell(&w);
+    s.command("/start-epic hx");
+    assert_eq!(question(&s), "discard the saved run on lx?");
+    s.command("n");
+    assert!(s.run.is_none());
+    assert_eq!(load_state(&w.repo).unwrap(), saved);
+
+    let mut saved = State::default();
+    let parked = TicketState {
+        status: STATUS_PARKED.to_string(),
+        ..Default::default()
+    };
+    saved.removed.insert("lx".to_string(), parked);
+    saved.save(&w.repo).unwrap();
+    s.state = saved.clone();
+    s.command("/start-epic hx");
+    assert_eq!(question(&s), "discard the saved run on lx?");
+    s.command("n");
+    assert_eq!(load_state(&w.repo).unwrap(), saved);
+}
+
+/// A Ticket that waits on an open one outside the run would never start:
+/// refused. Named together, it starts once the other's PR is merged and its
+/// Ticket closed.
+#[test]
+fn start_ticket_refuses_one_waiting_on_a_ticket_outside_the_run() {
+    let waits = BdTicket {
+        deps: vec!["hx-1".to_string()],
+        ..BdTicket::new("hx-2")
+    };
+    let (w, _) = new_world(vec![BdTicket::new("hx-1"), waits]);
+    w.lock().merged = true;
+    let mut s = shell(&w);
+    s.command("/start-ticket hx-2");
+    assert_eq!(
+        notice(&s),
+        "refused: hx-2 waits on hx-1, which is not in the run"
+    );
+    assert!(s.run.is_none());
+
+    s.command("/start-ticket hx-2 hx-1");
+    await_line(&mut s, "hx-2 waiting for PR #hx-1 to merge (Ticket hx-1)");
+    await_line(&mut s, "Ticket run done, every Ticket closed");
+    await_end(&mut s);
+    let order = w.calls().join("\n");
+    let closed = order.find("bd close hx-1");
+    let started = order.find("herdr agent start h-hx-2-implement");
+    assert!(
+        matches!((closed, started), (Some(c), Some(s)) if s > c),
+        "hx-2 started before hx-1 closed ({closed:?}, {started:?})"
+    );
+}
+
+/// A single-Ticket run saved before the queue, its PR open, was never
+/// polled: /continue resumes it as a Ticket run, whose merge closes it.
+#[test]
+fn continue_polls_the_merge_of_a_ticket_saved_before_the_queue() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
+    w.lock().merged = true;
+    let mut saved = State::default();
+    saved.tickets.insert(
+        "hx-1".to_string(),
+        TicketState {
+            status: STATUS_PR_OPEN.to_string(),
+            pr: "https://example.test/pr/hx-1".to_string(),
+            ..Default::default()
+        },
+    );
+    saved.save(&w.repo).unwrap();
+    let mut s = shell(&w);
+    s.command("/continue");
+    assert!(s.run.is_some(), "{:?}", s.notice);
+    await_line(&mut s, "hx-1 merged, Ticket closed");
+    await_line(&mut s, "Ticket run done, every Ticket closed");
+    await_end(&mut s);
+    let reason = "bd close hx-1 --reason PR merged: https://example.test/pr/hx-1";
+    assert_eq!(w.called(reason).len(), 1);
 }
 
 /// A Ticket with no Epic lists idle in a section of its own; /start-ticket
-/// picks it and runs it, and live it shows alone, as a /start-ticket run on
-/// an Epic's Ticket shows that Ticket under its Epic and not the others.
+/// picks it and runs it, and live it shows alone, as a Ticket run shows
+/// only its Tickets, an Epic's under its Epic and not the others.
 #[test]
 fn a_ticket_with_no_epic_lists_starts_and_shows_alone_live() {
     let loose = BdTicket {
@@ -2297,8 +2561,10 @@ fn a_ticket_with_no_epic_lists_starts_and_shows_alone_live() {
     s.command("/stop-work");
     await_end(&mut s);
 
+    // Over the saved Ticket run a Ticket joins its queue, and both run.
     s.command("/start-ticket hx-1");
     assert!(s.run.is_some(), "{:?}", s.notice);
+    assert_eq!(s.state.queue, ["lx", "hx-1"]);
     await_line(&mut s, "hx-1 implement started: claude");
     let buf = render(&s, 120, 40);
     assert!(
@@ -2311,7 +2577,12 @@ fn a_ticket_with_no_epic_lists_starts_and_shows_alone_live() {
         "{:#?}",
         rows(&buf)
     );
-    assert!(find(&buf, "Ticket hx-2").is_none() && find(&buf, "▾ no Epic").is_none());
+    assert!(find(&buf, "Ticket hx-2").is_none(), "{:#?}", rows(&buf));
+    assert!(
+        find(&buf, "└─ ● lx Ticket lx").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
     s.command("/stop-work");
     await_end(&mut s);
     idle(&s);
@@ -2331,7 +2602,7 @@ fn a_ticket_with_no_epic_lists_starts_and_shows_alone_live() {
 }
 
 #[test]
-fn continue_resumes_a_saved_single_ticket_run() {
+fn continue_resumes_a_saved_ticket_run_and_its_merge_ends_it() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
     w.session(|_| (String::new(), "working".to_string()));
     let mut s = shell(&w);
@@ -2362,13 +2633,16 @@ fn continue_resumes_a_saved_single_ticket_run() {
         "hx-2 retrying implement with a fresh session (pane 1-1)",
     );
     await_line(&mut s, "hx-2 PR #hx-2 opened after 1 round");
+    assert!(s.running, "the Ticket run ended on an open PR");
+    assert_eq!(s.state.tickets["hx-2"].status, STATUS_PR_OPEN);
+    w.lock().merged = true;
+    await_line(&mut s, "hx-2 merged, Ticket closed");
+    await_line(&mut s, "Ticket run done, every Ticket closed");
     await_end(&mut s);
     assert!(w.called("herdr agent start h-hx-1-implement").is_empty());
     assert_eq!(w.called("herdr agent start h-hx-2-implement").len(), 2);
-    assert_eq!(
-        load_state(&w.repo).unwrap().tickets["hx-2"].status,
-        STATUS_PR_OPEN
-    );
+    assert_eq!(w.called("bd close hx-2 --reason PR merged: ").len(), 1);
+    assert_eq!(load_state(&w.repo).unwrap(), State::default());
 }
 
 /// A Ticket thread sees stop only at its next sleep, after its current Tools
@@ -3600,6 +3874,7 @@ fn park_takes_a_running_ticket_out_at_its_stage() {
     await_line(&mut s, "hx-1 implement started: claude (pane 1-1)");
     s.command("/park hx-1");
     await_line(&mut s, "hx-1 parked: by you at implement");
+    s.command("/stop-work");
     await_end(&mut s);
     let ts = s.state.tickets["hx-1"].clone();
     assert_eq!(
@@ -3628,6 +3903,7 @@ fn park_takes_a_running_ticket_out_at_its_stage() {
     s.key(key(KeyCode::Enter));
     assert!(s.running, "{:?}", s.notice);
     await_line(&mut s, "hx-1 PR #hx-1 opened after 1 round");
+    s.command("/stop-work");
     await_end(&mut s);
     assert_eq!(w.called("herdr agent start h-hx-1-implement").len(), 1);
 }
@@ -3948,6 +4224,7 @@ fn away_parks_a_stage_question_and_continue_at_ticket_puts_it_first() {
     );
     s.command("/start-ticket hx-1");
     await_line(&mut s, "hx-1 parked: asked you while away");
+    s.command("/stop-work");
     await_end(&mut s);
     assert!(s.questions.is_empty(), "Away still asked");
     assert_eq!(w.called("bd comments add hx-1 ").len(), 1);
@@ -3977,6 +4254,7 @@ fn away_parks_a_stage_question_and_continue_at_ticket_puts_it_first() {
     pick(&mut s, 1);
     answered(&mut s, &w, "hx-1");
     await_line(&mut s, "hx-1 PR #hx-1 opened after 1 round");
+    s.command("/stop-work");
     await_end(&mut s);
     assert_eq!(
         w.called("herdr agent start h-hx-1-implement").len(),
@@ -4005,6 +4283,7 @@ fn away_on_parks_a_question_already_waiting() {
         s.questions.is_empty(),
         "the parked Ticket's Question stayed"
     );
+    s.command("/stop-work");
     await_end(&mut s);
     assert_eq!(w.called("bd comments add hx-1 ").len(), 1);
     assert!(w.called("herdr pane close").is_empty());
@@ -5079,7 +5358,7 @@ fn summary_at_an_epic_shows_that_epics_and_one_with_no_evidence_is_a_notice() {
 
     let mut s = lists_screen();
     s.command("/summary");
-    assert_eq!(notice(&s), "no Epic run yet, /summary @<epic> shows one");
+    assert_eq!(notice(&s), "no run yet, /summary @<epic> shows an Epic");
     assert!(s.summary.is_none());
 }
 

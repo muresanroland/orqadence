@@ -486,37 +486,44 @@ impl World {
             w.find(argv[2]).status = "in_progress".to_string();
             return Ok(String::new());
         }
-        // --parent: the Epic's children, a no_epic Ticket not among them
+        // --parent: the Epic's children, a no_epic Ticket not among them;
+        // --id: those Tickets alone
         let parent = cmd.contains("--parent");
+        let ids: Option<Vec<&str>> = argv
+            .iter()
+            .position(|a| *a == "--id")
+            .map(|i| argv[i + 1].split(',').collect());
+        let scoped = |t: &&BdTicket| {
+            !(parent && t.no_epic) && ids.as_ref().is_none_or(|ids| ids.contains(&t.id.as_str()))
+        };
+        let ready = |t: &&BdTicket| {
+            t.status == "open"
+                && t.deps.iter().all(|dep| {
+                    w.tickets
+                        .iter()
+                        .any(|d| d.id == *dep && d.status == "closed")
+                })
+        };
+        if cmd.starts_with("bd list") && cmd.contains("--ready") && ids.is_some() {
+            // as bd 1.3.0 answers it
+            return Err("validation failed: --ready cannot filter on IDFilter (--id)".to_string());
+        }
         if cmd.starts_with("bd list") {
             let mut all: Vec<_> = w
                 .tickets
                 .iter()
-                .filter(|t| !(parent && t.no_epic))
+                .filter(scoped)
                 .map(BdTicket::json)
                 .collect();
-            if !parent {
+            if !parent && ids.is_none() {
                 // the Shell's bd cache: the Epic row too, with its title
                 all.push(json!({ "id": EPIC, "title": "Epic hx", "status": "open", "issue_type": "epic" }));
             }
             return Ok(json!(all).to_string());
         }
         if cmd.starts_with("bd ready") {
-            let ready: Vec<_> = w
-                .tickets
-                .iter()
-                .filter(|t| {
-                    t.status == "open"
-                        && !(parent && t.no_epic)
-                        && t.deps.iter().all(|dep| {
-                            w.tickets
-                                .iter()
-                                .any(|d| d.id == *dep && d.status == "closed")
-                        })
-                })
-                .map(BdTicket::json)
-                .collect();
-            return Ok(json!(ready).to_string());
+            let listed = w.tickets.iter().filter(scoped).filter(ready);
+            return Ok(json!(listed.map(BdTicket::json).collect::<Vec<_>>()).to_string());
         }
 
         if cmd.starts_with("gh pr view") {

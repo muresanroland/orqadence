@@ -406,7 +406,7 @@ fn epic_color(s: &Screen, id: &str) -> Color {
 /// no-Epic group. Live: an Epic run's Epic whole, or a Ticket run's Tickets
 /// alone, each under its Epic or the group.
 fn listed(s: &Screen) -> impl Iterator<Item = (&Epic, Vec<&BdIssue>)> {
-    let run_tickets = s.run.as_ref().filter(|r| !r.epic).map(|r| &r.tickets);
+    let run_tickets = s.run.as_ref().filter(|r| !r.epic).map(|_| &s.state.queue);
     s.epics.iter().filter_map(move |e| {
         let tickets: Vec<&BdIssue> = e
             .tickets
@@ -474,8 +474,13 @@ fn status_parts(s: &Screen, glyphs: bool) -> (Vec<Span<'static>>, Vec<Part>) {
         let text = |t: String| vec![Span::styled(t, fg(TEXT))];
         parts.push((Span::raw("    "), text(plural(epics, "open Epic"))));
         parts.push((dot(), text(plural(tickets, "Ticket"))));
-        if !s.state.epic.is_empty() {
-            let saved = format!("saved run on {}", s.state.epic);
+        let on = match s.state.queue.len() {
+            _ if !s.state.epic.is_empty() => s.state.epic.clone(),
+            0 => String::new(),
+            n => plural(n, "Ticket"),
+        };
+        if !on.is_empty() {
+            let saved = format!("saved run on {on}");
             parts.push((dot(), vec![Span::styled(saved, fg(PURPLE))]));
             let resume = Span::styled("/continue resumes", fg(PURPLE));
             parts.push((Span::styled(", ", fg(PURPLE)), vec![resume]));
@@ -555,10 +560,14 @@ fn status_box(f: &mut Frame, area: Rect, s: &Screen) {
 }
 
 /// Filled cells over empty, labelled N/M PRs; purple blending to green by the
-/// share of the saved Epic's Tickets (every child on the bd tree, started or
-/// not) with a PR open or merged.
+/// share of the saved run's Tickets (every child of its Epic on the bd tree,
+/// or every one in its queue, started or not) with a PR open or merged.
 fn overall(s: &Screen, width: u16) -> Line<'static> {
-    let total = s.saved().map_or(s.state.tickets.len(), |e| e.tickets.len());
+    let total = match s.saved() {
+        Some(e) => e.tickets.len(),
+        None if !s.state.queue.is_empty() => s.state.queue.len(),
+        None => s.state.tickets.len(),
+    };
     let prs = s
         .state
         .tickets

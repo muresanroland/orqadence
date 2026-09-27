@@ -91,17 +91,18 @@ orqa init
 
 | Command | What it does |
 |---|---|
-| `/start-epic <epic> [--max N]` | Run every Ticket of the Epic, at most N at once (default 3) |
-| `/start-ticket <ticket>` | Run one Ticket |
+| `/start-epic <epic>` | Run every Ticket of the Epic, at most `max_tickets` at once (3 unless `/config` says otherwise) |
+| `/start-ticket <ticket>…` | Start a Ticket run over one or more Tickets (`/start-ticket @a @b @c`), with or without an Epic. It stays live until every PR is merged, closing each Ticket as its PR merges; while it runs, `/start-ticket` adds Tickets to it |
+| `/remove-ticket <ticket>` | Take a Ticket out of the live Ticket run: a queued or Parked one, or one whose PR is open (the PR stays open). `/start-ticket` adds it back where it left off. A working one is refused: `/park` it first; so is one another Ticket of the run waits on |
 | `/continue [<ticket>]` | Resume the saved run, e.g. after `/stop-work` or a restart. With a Ticket: unpark that Ticket at its Stage and put its question to you first |
 | `/stop-work` | Stop scheduling. Agent panes keep running and the state is saved |
 | `/retry <ticket>` | Rerun the Ticket's failed Stage with a fresh session |
 | `/park <ticket>` | Take the Ticket out of the pipeline; the others keep going |
 | `/address <ticket>` | Act on the review comments or merge conflicts on the Ticket's open PR |
 | `/questions` | Show the Questions waiting for you |
-| `/config` | Pick the App, model and effort each Stage runs on, and a plan model other than Implement's; every change saves at once to `.orqadence/config.json`, and during a run the Stages that start after it use it. A change that breaks a check (the Review on Implement's model, the Debate's sides in one family) is refused; the Apps page shows which Apps are installed. Each Stage's page also picks its jobs' Delegate skills; the Skills page adds (`a`), updates (`u`, `U` for all) and removes (`d`) the skills Orqadence installed; the TypeSafe page turns TypeSafe on or off and asks the key when there is none |
+| `/config` | Pick the App, model and effort each Stage runs on, and a plan model other than Implement's; every change saves at once to `.orqadence/config.json`, and during a run the Stages that start after it use it. A change that breaks a check (the Review on Implement's model, the Debate's sides in one family) is refused; the Apps page shows which Apps are installed. Each Stage's page also picks its jobs' Delegate skills; the Skills page adds (`a`), updates (`u`, `U` for all) and removes (`d`) the skills Orqadence installed; the TypeSafe page turns TypeSafe on or off and asks the key when there is none; the Run page sets how many Tickets a run has in the Pipeline at once, which the live run takes up at once |
 | `/away` | Toggle Away: a Stage's question parks its Ticket, with a bd comment, until you `/continue @ticket` it |
-| `/summary [<epic>]` | Show the Epic's PRs, Rounds and Findings; it also opens by itself once every Ticket has its PR or is Parked |
+| `/summary [<epic>]` | Show the run's PRs, Rounds, Findings, cost and time (an Epic's, or alone the live, saved or last run's, Ticket runs too); it also opens by itself once every Ticket has its PR or is Parked |
 | `/demo` | Play a made-up run to see the Shell at work: Tickets moving through their Stages, RECENT filling, each kind of Question waiting for your answer, a Ticket waiting on a merge, a usage limit, and the Epic summary at the end. Nothing starts and nothing is written |
 | `/stop-demo` | End the demo; the Shell is back as it was. `/stop-work` does the same |
 | `/exit` | Leave the Shell (asks first during a run). Ctrl-C twice does the same |
