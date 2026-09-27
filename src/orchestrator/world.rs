@@ -30,6 +30,8 @@ pub(crate) struct BdTicket {
     /// Ids that must be closed first.
     pub(crate) deps: Vec<String>,
     pub(crate) close_reason: String,
+    /// No parent Epic: a Ticket bd lists on its own.
+    pub(crate) no_epic: bool,
 }
 
 impl BdTicket {
@@ -52,14 +54,14 @@ impl BdTicket {
             "title": format!("Ticket {}", self.id),
             "status": self.status,
             "issue_type": self.issue_type,
-            "parent": EPIC,
+            "parent": if self.no_epic { "" } else { EPIC },
             "dependencies": deps,
             "close_reason": self.close_reason,
         })
     }
 }
 
-/// The one Epic of the fake world, the parent of every Ticket.
+/// The one Epic of the fake world, the parent of every Ticket but a no_epic one.
 pub(crate) const EPIC: &str = "hx";
 
 /// A Stage prompt as the fake session sees it.
@@ -484,9 +486,16 @@ impl World {
             w.find(argv[2]).status = "in_progress".to_string();
             return Ok(String::new());
         }
+        // --parent: the Epic's children, a no_epic Ticket not among them
+        let parent = cmd.contains("--parent");
         if cmd.starts_with("bd list") {
-            let mut all: Vec<_> = w.tickets.iter().map(BdTicket::json).collect();
-            if !cmd.contains("--parent") {
+            let mut all: Vec<_> = w
+                .tickets
+                .iter()
+                .filter(|t| !(parent && t.no_epic))
+                .map(BdTicket::json)
+                .collect();
+            if !parent {
                 // the Shell's bd cache: the Epic row too, with its title
                 all.push(json!({ "id": EPIC, "title": "Epic hx", "status": "open", "issue_type": "epic" }));
             }
@@ -498,6 +507,7 @@ impl World {
                 .iter()
                 .filter(|t| {
                     t.status == "open"
+                        && !(parent && t.no_epic)
                         && t.deps.iter().all(|dep| {
                             w.tickets
                                 .iter()

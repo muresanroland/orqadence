@@ -333,7 +333,7 @@ fn waits_on<'a>(s: &'a Screen, t: &'a BdIssue) -> impl Iterator<Item = &'a str> 
 /// every waiting Ticket's suffix, 'merge to unblock 5, 11: <url>'.
 fn unblock_lines(s: &Screen) -> Vec<Line<'static>> {
     let mut prs: Vec<(&str, Vec<&str>)> = Vec::new();
-    for t in listed(s).flat_map(|e| &e.tickets) {
+    for t in listed(s).flat_map(|(_, tickets)| tickets) {
         if status(s, t) != Status::Waiting {
             continue;
         }
@@ -395,18 +395,26 @@ fn held_until(s: &Screen, id: &str) -> Option<String> {
 
 /// An Epic's color by its place on the tree; off the tree, the first.
 fn epic_color(s: &Screen, id: &str) -> Color {
-    let i = listed(s).position(|e| e.id == id).unwrap_or(0);
+    let i = listed(s).position(|(e, _)| e.id == id).unwrap_or(0);
     EPIC_COLORS[i % EPIC_COLORS.len()]
 }
 
-/// Idle: every open Epic. Live: only the Epics with a Ticket in the run.
-fn listed(s: &Screen) -> impl Iterator<Item = &Epic> {
-    s.epics.iter().filter(|e| {
-        !s.running
-            || e.id == s.state.epic
-            || e.tickets
-                .iter()
-                .any(|t| s.state.tickets.contains_key(&t.id))
+/// Each Epic shown and its Tickets shown. Idle: every open Epic, then the
+/// no-Epic group. Live: an Epic run's Epic whole, or a Ticket run's Tickets
+/// alone, each under its Epic or the group.
+fn listed(s: &Screen) -> impl Iterator<Item = (&Epic, Vec<&BdIssue>)> {
+    let run_tickets = s.run.as_ref().filter(|r| !r.epic).map(|r| &r.tickets);
+    s.epics.iter().filter_map(move |e| {
+        let tickets: Vec<&BdIssue> = e
+            .tickets
+            .iter()
+            .filter(|t| run_tickets.is_none_or(|ids| ids.contains(&t.id)))
+            .collect();
+        let shown = match run_tickets {
+            Some(_) => !tickets.is_empty(),
+            None => !s.running || s.saved().is_some_and(|saved| saved.id == e.id),
+        };
+        shown.then_some((e, tickets))
     })
 }
 
@@ -423,7 +431,7 @@ fn status_parts(s: &Screen, glyphs: bool) -> (Vec<Span<'static>>, Vec<Part>) {
     let mut parts: Vec<Part> = Vec::new();
     let head = if s.running {
         let all: Vec<Status> = listed(s)
-            .flat_map(|e| &e.tickets)
+            .flat_map(|(_, tickets)| tickets)
             .map(|t| status(s, t))
             .collect();
         let (word, c) = if s.stopping() {
@@ -459,8 +467,9 @@ fn status_parts(s: &Screen, glyphs: bool) -> (Vec<Span<'static>>, Vec<Part>) {
         ]
     } else {
         let tickets: usize = s.epics.iter().map(|e| e.tickets.len()).sum();
+        let epics = s.epics.iter().filter(|e| !e.id.is_empty()).count();
         let text = |t: String| vec![Span::styled(t, fg(TEXT))];
-        parts.push((Span::raw("    "), text(plural(s.epics.len(), "open Epic"))));
+        parts.push((Span::raw("    "), text(plural(epics, "open Epic"))));
         parts.push((dot(), text(plural(tickets, "Ticket"))));
         if !s.state.epic.is_empty() {
             let saved = format!("saved run on {}", s.state.epic);
@@ -546,11 +555,7 @@ fn status_box(f: &mut Frame, area: Rect, s: &Screen) {
 /// share of the saved Epic's Tickets (every child on the bd tree, started or
 /// not) with a PR open or merged.
 fn overall(s: &Screen, width: u16) -> Line<'static> {
-    let total = s
-        .epics
-        .iter()
-        .find(|e| e.id == s.state.epic)
-        .map_or(s.state.tickets.len(), |e| e.tickets.len());
+    let total = s.saved().map_or(s.state.tickets.len(), |e| e.tickets.len());
     let prs = s
         .state
         .tickets
@@ -580,21 +585,23 @@ fn cut(text: &str, width: usize) -> String {
 
 /// TICKETS, `width` wide: each listed Epic a rule line in its color, the id
 /// and title, the detail and its word; its Tickets hang under it, each with
-/// its indicator, suffix and title, stage and label. Idle the detail counts
-/// closed, in progress and open, and an Epic with every Ticket closed folds
-/// to its rule; live it counts merged, and a working Ticket's dot pulses.
+/// its indicator, suffix (in the no-Epic group its whole id) and title,
+/// stage and label. Idle the detail counts closed, in progress and open, and
+/// an Epic with every Ticket closed folds to its rule; live it counts merged,
+/// and a working Ticket's dot pulses.
 fn sections(s: &Screen, width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    for e in listed(s) {
+    for (e, tickets) in listed(s) {
         let c = epic_color(s, &e.id);
         let dim = lerp((c, BORDER), 0.55);
-        let all: Vec<Status> = e.tickets.iter().map(|t| status(s, t)).collect();
+        let all: Vec<Status> = tickets.iter().map(|t| status(s, t)).collect();
         let count = |want: Status| all.iter().filter(|st| **st == want).count();
         let (n, closed, open) = (all.len(), count(Status::Merged), count(Status::Queued));
-        let folded = !s.running && n > 0 && closed == n && e.id != s.state.epic;
+        let saved = s.saved().is_some_and(|saved| saved.id == e.id);
+        let folded = !s.running && n > 0 && closed == n && !saved;
         let (word, wc) = if s.running {
             ("RUNNING", PURPLE)
-        } else if e.id == s.state.epic {
+        } else if saved {
             ("RESUMABLE", PURPLE)
         } else if folded {
             ("ALL CLOSED", GREEN)
@@ -624,7 +631,8 @@ fn sections(s: &Screen, width: usize) -> Vec<Line<'static>> {
         let right = detail.width() + word.width();
         let arrow = if folded { "▸" } else { "▾" };
         let room = width.saturating_sub(right + 6);
-        let left = cut(&format!("{arrow} {}  {}", e.id, e.title), room);
+        let name = format!("{}  {}", e.id, e.title); // the no-Epic group has no id
+        let left = cut(&format!("{arrow} {}", name.trim_start()), room);
         let fill = width.saturating_sub(left.chars().count() + right + 4);
         lines.push(Line::from(vec![
             Span::styled("━━ ", fg(dim)),
@@ -636,7 +644,7 @@ fn sections(s: &Screen, width: usize) -> Vec<Line<'static>> {
         if folded {
             continue;
         }
-        for (k, (t, &st)) in e.tickets.iter().zip(&all).enumerate() {
+        for (k, (t, &st)) in tickets.iter().zip(&all).enumerate() {
             let color = ticket_color(&t.id);
             let (ind, ic, label, lc, text) = match st {
                 Status::Working if s.running => ("●", color, "WORKING", color, TEXT),
@@ -673,7 +681,12 @@ fn sections(s: &Screen, width: usize) -> Vec<Line<'static>> {
             let label = Span::styled(format!("{label:<11}"), bold(lc));
             let right = stage.width() + label.width();
             let room = width.saturating_sub(right + 10);
-            let name = cut(&format!("{} {}", suffix(&t.id), t.title), room);
+            let id = if e.id.is_empty() {
+                &t.id
+            } else {
+                suffix(&t.id)
+            };
+            let name = cut(&format!("{id} {}", t.title), room);
             let branch = if k + 1 == n {
                 "   └─ "
             } else {
