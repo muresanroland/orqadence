@@ -40,6 +40,22 @@ _Avoid_: Task, issue, story
 A run over Tickets the user names instead of an Epic: its scope is a queue they add to and take from while it runs, and it ends once every Ticket in it is merged (or none is left). Like an Epic run it takes at most max_tickets at once, polls for merges and resumes; only one run, of either kind, is live in a Target repo.
 _Avoid_: Batch, single-Ticket run
 
+**Brainstorm**:
+Planning work with the user before it is built: one session turns the user's idea into Tickets, or into a Map when the work is big. A Map's Map tickets then get a session each, the ones that need the user one after another, the Background Map tickets alongside, until the Map ticket that writes the Epic closes.
+_Avoid_: Wayfinding, grilling, planning run
+
+**Map**:
+The beads epic a Brainstorm charts: where the work is headed, the decisions made so far, and the Map tickets still open. Its last Map ticket writes the Epic that builds what it decided.
+_Avoid_: Brainstorm epic, wayfinder epic, coding epic (that is the Epic)
+
+**Map ticket**:
+One question on a Map, closed by the decision recorded on it rather than by a pull request. It never enters the Pipeline.
+_Avoid_: Ticket, decision ticket
+
+**Background Map ticket**:
+A Map ticket that needs no user to resolve, such as research, so it can run while the user works another Map ticket or is Away.
+_Avoid_: AFK ticket (AFK is avoided for Away), unattended ticket
+
 **Pipeline**:
 The fixed sequence of Stages every Ticket passes through: Implement, Review, Debate, Fix, then a pull request.
 _Avoid_: Workflow, flow
