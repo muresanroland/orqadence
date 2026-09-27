@@ -579,13 +579,52 @@ pub(crate) fn floor_in(doc: &Value, floor: &Floor) -> Result<f64, String> {
 /// default; the rest as it was. A config.json that is not an object is
 /// refused, as set_typesafe refuses it.
 pub(crate) fn set_floor(repo: &Path, floor: &Floor, value: Option<f64>) -> Result<(), String> {
+    set_top(repo, floor.key, value.map(|v| json!(v)))
+}
+
+/// Keeps a top-level key of config.json, or with None takes it out; the
+/// rest as it was.
+fn set_top(repo: &Path, key: &str, value: Option<Value>) -> Result<(), String> {
     let (path, mut doc) = read_object(repo)?;
     let top = doc.as_object_mut().expect("read_object gives an object");
     match value {
-        Some(value) => top.insert(floor.key.to_string(), json!(value)),
-        None => top.remove(floor.key),
+        Some(value) => top.insert(key.to_string(), value),
+        None => top.remove(key),
     };
     write(&path, &doc)
+}
+
+/// Tickets in the Pipeline at once, in an Epic run or a Ticket run: its key
+/// in config.json, and the value missing or empty stands for.
+pub(crate) const MAX_TICKETS: &str = "max_tickets";
+pub(crate) const DEFAULT_MAX_TICKETS: usize = 3;
+
+/// max_tickets in doc: missing or empty is its default; anything but a
+/// whole number of at least 1 is refused.
+pub(crate) fn max_tickets_in(doc: &Value) -> Result<usize, String> {
+    match doc.get(MAX_TICKETS) {
+        None => Ok(DEFAULT_MAX_TICKETS),
+        Some(Value::String(s)) if s.is_empty() => Ok(DEFAULT_MAX_TICKETS),
+        Some(value) => value
+            .as_u64()
+            .filter(|n| *n >= 1)
+            .map(|n| n as usize)
+            .ok_or(format!("{MAX_TICKETS} is not a whole number of at least 1")),
+    }
+}
+
+/// max_tickets as config.json has it, read on every pass of the scheduler
+/// so a change reaches the live run; one that cannot be read is the default,
+/// and /config shows why.
+pub(crate) fn max_tickets(repo: &Path) -> usize {
+    read(repo)
+        .and_then(|(_, doc)| max_tickets_in(&doc))
+        .unwrap_or(DEFAULT_MAX_TICKETS)
+}
+
+/// Keeps max_tickets in config.json, or with None puts its default back.
+pub(crate) fn set_max_tickets(repo: &Path, value: Option<usize>) -> Result<(), String> {
+    set_top(repo, MAX_TICKETS, value.map(|v| json!(v)))
 }
 
 /// The key of every row of config.json.

@@ -15,7 +15,8 @@ use crate::setup;
 use crate::shell::brand::{BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT};
 use crate::shell::config::{
     distinct, family_label, floor_name, job_name, job_said, short, short_commit, Field, Listing,
-    Pick, Settings, Typing, APPS_PAGE, FLOORS, ROWS, SECTIONS, SKILLS_PAGE, TYPESAFE_PAGE,
+    Pick, Settings, Typing, APPS_PAGE, FLOORS, ROWS, RUN_PAGE, SECTIONS, SKILLS_PAGE,
+    TYPESAFE_PAGE,
 };
 use crate::shell::Screen;
 use crate::skills::manifest::{Location, NONE};
@@ -60,6 +61,7 @@ pub(super) fn config(f: &mut Frame, s: &Screen) {
         _ if st.section == APPS_PAGE => apps_page(st, width),
         _ if st.section == SKILLS_PAGE => skills_page(st, width),
         _ if st.section == TYPESAFE_PAGE => typesafe_page(s, st, width),
+        _ if st.section == RUN_PAGE => run_page(st, width),
         _ => page(st, width),
     };
     // the cursor's line in view
@@ -198,6 +200,35 @@ fn skills_page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
         }
     }
     (lines, at)
+}
+
+/// The Run page: the Tickets a run takes at once, a bad value in red with
+/// its check.
+fn run_page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
+    let about = "How many Tickets an Epic run or a Ticket run has in the Pipeline at once.";
+    let mut lines = head("Run", run_summary(st), about, width);
+    lines.push(Line::default());
+    let value = match st.max_tickets() {
+        Ok((n, true)) => vec![
+            Span::styled(n.to_string(), fg(TEXT)),
+            Span::styled("  default", fg(MUTED)),
+        ],
+        Ok((n, false)) => vec![Span::styled(n.to_string(), fg(TEXT))],
+        Err(written) => vec![Span::styled(written, fg(RED))],
+    };
+    let mut at = 0;
+    let label = pad("tickets at once", 22);
+    item(&mut lines, &mut at, st.open, label, value, width);
+    check_lines(&mut lines, st.checks(Some(RUN_PAGE)), width);
+    (lines, at)
+}
+
+/// The Run page's line on the left: "3 at once".
+fn run_summary(st: &Settings) -> String {
+    match st.max_tickets() {
+        Ok((n, _)) => format!("{n} at once"),
+        Err(written) => written,
+    }
 }
 
 /// The TypeSafe page: on or off, its key, masked, and the floors, a bad one
@@ -411,6 +442,12 @@ fn pipeline(s: &Screen, st: &Settings, height: u16, width: usize) -> Vec<Line<'s
         typesafe,
         st.checks(Some(TYPESAFE_PAGE)).iter().any(|c| !c.holds),
         st.section == TYPESAFE_PAGE,
+    ));
+    lines.push(row(
+        "Run",
+        run_summary(st),
+        st.checks(Some(RUN_PAGE)).iter().any(|c| !c.holds),
+        st.section == RUN_PAGE,
     ));
     lines
 }
@@ -645,6 +682,11 @@ fn foot_lines(s: &Screen, st: &Settings, width: usize) -> Vec<Line<'static>> {
                 text.clone(),
                 "A number from 0 to 1, or nothing for the default, saved at once to .orqadence/config.json; the next Judgment reads it.".to_string(),
             ),
+            Typing::MaxTickets => (
+                "tickets at once › ".to_string(),
+                text.clone(),
+                "A whole number of at least 1, or nothing for the default, saved at once to .orqadence/config.json; the live run's next pass reads it.".to_string(),
+            ),
         };
         let (help, color) = st.note.clone().unwrap_or((help, MUTED));
         return vec![
@@ -668,6 +710,7 @@ fn foot_lines(s: &Screen, st: &Settings, width: usize) -> Vec<Line<'static>> {
         (None, None) if st.open && st.section == TYPESAFE_PAGE => {
             (st.typesafe_note(st.setting), MUTED)
         }
+        (None, None) if st.open && st.section == RUN_PAGE => (st.run_note(), MUTED),
         (None, None) if st.open => {
             let (row, field) = st.items()[st.setting];
             (st.note_of(row, field), MUTED)

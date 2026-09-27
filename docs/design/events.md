@@ -12,7 +12,7 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 ## What shows
 
 - Every Ticket event shows on the panel, except `prompted` (log only).
-- Run-level errors show: state not saved, bd list failed, bd ready failed, Epic done, stopped.
+- Run-level errors show: state not saved, bd list failed, bd ready failed, Epic done, Ticket run done, stopped.
 - Housekeeping stays in the log only: dropped a leftover pane, merged but not closed (will retry), scratch left in the run directory, prompted, waiting for the result file, an answer that came after its session moved on (dropped your park: that session has moved on), a Stage that could not be resumed (not resumed: `err`, starting it fresh), a Judgment that could not be had (no Judgment: `err`, the key never in it), a bd comment that could not be added for a question asked while Away (no bd comment: `err`).
 - A Judgment below the floor logs its judged line only: its scores show in the Wake's Question, and a panel line would close that Question.
 
@@ -43,13 +43,16 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 | below the floor, or no TypeSafe | asking you: stuck in fix 1 *(below the floor the judged line goes to the log alone)* |
 | only park left (nudge and retry spent) | parked: fix 1 `reason` again after a retry *(no Judgment asked)* |
 | retry command | retrying fix 1 with a fresh session (pane 2-3) |
-| address | addressed PR #12 · address failed: `err` · address gave up: `err` · address refused: no open PR · address refused: not an Epic run |
+| address | addressed PR #12 · address failed: `err` · address gave up: `err` · address refused: no open PR |
 | retry or park refused | ignored: not waiting on a Wake · refused: not a Ticket of this run |
 | Away | *(orqadence)* away: on, a Stage's question parks its Ticket · away: off *(/away again, or /continue @ticket)* |
-| /continue @ticket refused | *(orqadence)* refused: Ticket 5 is not parked · *(on the Ticket, in a single-Ticket run)* continue refused: not an Epic run |
+| /continue @ticket refused | *(orqadence)* refused: Ticket 5 is not parked |
+| Ticket run's queue | added to the run · removed from the run · removed from the run, its PR stays open · remove refused: working, /park it first |
+| /start-ticket or /remove-ticket refused | *(orqadence)* refused: hx-2 waits on hx-1, which is not in the run · refused: no Ticket run is live · refused: an Epic run takes every Ticket of its Epic · refused: Ticket 5 is not in the run · refused: hx-2 waits on hx-1, remove hx-2 first · refused: the Ticket run is ending, /start-ticket once it has |
 | Shell refuses a command | *(orqadence)* refused: a run is live, /stop-work first · refused: a run is stopping · refused: no run is live, /start-epic or /continue starts one · refused: no saved Ticket to continue |
-| /config saved during a run | *(orqadence)* config: Review codex → codex gpt-6-sol/high · config: Review if limited none → claude sonnet *(the row, then what it was and what it is, as the started line names them; the Stages that start after it use it)* · config: TypeSafe off · config: plan floor 0.60 *(the next Judgment reads it)* |
+| /config saved during a run | *(orqadence)* config: Review codex → codex gpt-6-sol/high · config: Review if limited none → claude sonnet *(the row, then what it was and what it is, as the started line names them; the Stages that start after it use it)* · config: TypeSafe off · config: plan floor 0.60 *(the next Judgment reads it)* · config: 5 Tickets at once *(the scheduler's next pass reads it)* |
 | Epic done | *(orqadence)* Epic done, every Ticket closed |
+| Ticket run done | *(orqadence)* Ticket run done, every Ticket closed · Ticket run done, no Ticket left in it |
 | stopped | *(orqadence)* stopped, panes left running, /continue resumes *(once every Ticket thread has left; the status row reads STOPPING until then)* |
 | errors | *(orqadence)* state not saved: `err` · bd list failed: `err` · bd ready failed: `err` |
 

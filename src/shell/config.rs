@@ -5,8 +5,8 @@
 //! running ones keep theirs. A named model is probed with a one-line prompt
 //! first, off the screen thread; it saves only if the App answers. Also each
 //! job's Delegate skill, the skills Orqadence installed (harness-0sx.7),
-//! cloned off the screen thread too, and TypeSafe on or off with its key
-//! and the Judgments' floors.
+//! cloned off the screen thread too, TypeSafe on or off with its key and
+//! the Judgments' floors, and the Tickets a run takes at once.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -18,8 +18,11 @@ use serde_json::{json, Value};
 
 use super::brand::{CYAN, GREEN, MUTED, ORANGE, RED};
 use super::{Screen, NOTICE_WINDOW};
-use crate::orchestrator::app::{self, app, App, Check, Floor, Model, Row, APPS, IF_LIMITED};
+use crate::orchestrator::app::{
+    self, app, App, Check, Floor, Model, Row, APPS, DEFAULT_MAX_TICKETS, IF_LIMITED, MAX_TICKETS,
+};
 use crate::orchestrator::judgment::{PLAN_FLOOR, WAKE_FLOOR};
+use crate::orchestrator::stage::plural;
 use crate::setup;
 use crate::skills::manifest::{self, job_row, parse_source, Added, Manifest, JOBS, NONE};
 use crate::tools::{RunError, Tools};
@@ -120,10 +123,11 @@ pub(crate) const SECTIONS: [(&str, &str, &str); 5] = [
 ];
 
 /// The Apps page's place on the left, after the Pipeline's sections, and
-/// the Skills and TypeSafe pages' after it.
+/// the Skills, TypeSafe and Run pages' after it.
 pub(crate) const APPS_PAGE: usize = SECTIONS.len();
 pub(crate) const SKILLS_PAGE: usize = APPS_PAGE + 1;
 pub(crate) const TYPESAFE_PAGE: usize = APPS_PAGE + 2;
+pub(crate) const RUN_PAGE: usize = APPS_PAGE + 3;
 
 /// The floors the TypeSafe page shows under the key, in its order.
 pub(crate) const FLOORS: [&Floor; 2] = [&WAKE_FLOOR, &PLAN_FLOOR];
@@ -277,6 +281,8 @@ pub(crate) enum Typing {
     Key,
     /// A floor, on the TypeSafe page.
     Floor(&'static Floor),
+    /// max_tickets, on the Run page.
+    MaxTickets,
 }
 
 /// The skills of a source that holds several: each name, whether it is
@@ -393,13 +399,15 @@ fn rows_of(section: usize) -> impl Iterator<Item = usize> {
     (0..ROWS.len()).filter(move |&r| ROWS[r].section == section)
 }
 
-/// The section a check shows on: its last row's; a floor's, the TypeSafe
-/// page.
+/// The section a check shows on: its last row's; max_tickets's, the Run
+/// page; a floor's, the TypeSafe page.
 pub(crate) fn section_of(check: &Check) -> usize {
     let key = check.rows[check.rows.len() - 1];
-    ROWS.iter()
-        .find(|r| r.key == key)
-        .map_or(TYPESAFE_PAGE, |r| r.section)
+    match ROWS.iter().find(|r| r.key == key) {
+        Some(r) => r.section,
+        None if key == MAX_TICKETS => RUN_PAGE,
+        None => TYPESAFE_PAGE,
+    }
 }
 
 /// Each once, in the order first met.
@@ -500,9 +508,11 @@ impl Settings {
         split(&self.doc)
     }
 
-    /// The rules on the rows as they are, and each floor that is not a
-    /// number from 0 to 1; those of a section when given. A floor is not a
-    /// rule a run refuses to start on: its Judgments ask instead.
+    /// The rules on the rows as they are, each floor that is not a number
+    /// from 0 to 1, and max_tickets when it is not a whole number of at
+    /// least 1; those of a section when given. Neither is a rule a run
+    /// refuses to start on: a floor's Judgments ask instead, and the run
+    /// takes max_tickets's default.
     pub(crate) fn checks(&self, section: Option<usize>) -> Vec<Check> {
         let mut checks = app::checks(&self.doc);
         for floor in FLOORS {
@@ -513,6 +523,13 @@ impl Settings {
                     text: format!("{err}: its Judgments are not acted on"),
                 });
             }
+        }
+        if let Err(err) = app::max_tickets_in(&self.doc) {
+            checks.push(Check {
+                rows: &[MAX_TICKETS],
+                holds: false,
+                text: format!("{err}: a run takes {DEFAULT_MAX_TICKETS}"),
+            });
         }
         checks.retain(|c| section.is_none_or(|s| section_of(c) == s));
         checks
@@ -844,6 +861,21 @@ impl Settings {
         }
     }
 
+    /// The foot's note on the Run page.
+    pub(crate) fn run_note(&self) -> String {
+        "Tickets in the Pipeline at once, in an Epic run or a Ticket run. Enter types a whole number of at least 1, or nothing for the default, saved at once: the live run's next pass reads it.".to_string()
+    }
+
+    /// max_tickets as the Run page shows it: its number, and whether that is
+    /// the default; or config.json's value as written, when it is not a
+    /// whole number of at least 1.
+    pub(crate) fn max_tickets(&self) -> Result<(usize, bool), String> {
+        let set = &self.doc[MAX_TICKETS];
+        app::max_tickets_in(&self.doc)
+            .map(|n| (n, set.is_null() || set == ""))
+            .map_err(|_| set.to_string())
+    }
+
     /// A floor as the TypeSafe page shows it: its number, and whether that
     /// is the default; or config.json's value as written, when it is not a
     /// number from 0 to 1.
@@ -1054,6 +1086,7 @@ impl Screen {
                     let (typing, text) = st.typing.take().unwrap();
                     match (typing, text.trim()) {
                         (Typing::Floor(floor), text) => self.keep_floor(floor, text.to_string()),
+                        (Typing::MaxTickets, text) => self.keep_max_tickets(text.to_string()),
                         (_, "") => {
                             st.note = Some(("Nothing typed: nothing changed.".to_string(), MUTED))
                         }
@@ -1110,7 +1143,7 @@ impl Screen {
         if !st.open {
             match code {
                 KeyCode::Up => st.section = st.section.saturating_sub(1),
-                KeyCode::Down => st.section = (st.section + 1).min(TYPESAFE_PAGE),
+                KeyCode::Down => st.section = (st.section + 1).min(RUN_PAGE),
                 KeyCode::Right | KeyCode::Enter => {
                     st.open = true;
                     st.setting = 0;
@@ -1142,6 +1175,14 @@ impl Screen {
                 KeyCode::Char('d') | KeyCode::Delete if skill.is_some() => {
                     self.ask_remove(skill.unwrap())
                 }
+                _ => {}
+            }
+            return;
+        }
+        if st.section == RUN_PAGE {
+            match code {
+                KeyCode::Left | KeyCode::Esc => st.open = false,
+                KeyCode::Enter => st.typing = Some((Typing::MaxTickets, String::new())),
                 _ => {}
             }
             return;
@@ -1387,6 +1428,36 @@ impl Screen {
                 self.done(match value {
                     Some(value) => format!("{name} {value:.2}"),
                     None => format!("{name} {:.2}, its default", floor.default),
+                });
+            }
+            Err(err) => self.refused(&err),
+        }
+    }
+
+    /// max_tickets typed: a whole number of at least 1 saves at once,
+    /// nothing puts the default back, and the live run's next pass reads it;
+    /// anything else is refused, the text kept to mend.
+    fn keep_max_tickets(&mut self, text: String) {
+        let st = self.settings.as_mut().unwrap();
+        let value = match text.parse::<usize>() {
+            _ if text.is_empty() => None,
+            Ok(n) if n >= 1 => Some(n),
+            _ => {
+                let refused = format!(
+                    "Refused: {text} is not a whole number of at least 1. Nothing changed."
+                );
+                st.note = Some((refused, RED));
+                st.typing = Some((Typing::MaxTickets, text));
+                return;
+            }
+        };
+        let repo = &self.cfg.repo;
+        match app::set_max_tickets(repo, value).and_then(|()| app::read_object(repo)) {
+            Ok((_, doc)) => {
+                self.settings.as_mut().unwrap().doc = doc;
+                self.done(match value {
+                    Some(n) => format!("{} at once", plural(n, "Ticket")),
+                    None => format!("{DEFAULT_MAX_TICKETS} Tickets at once, its default"),
                 });
             }
             Err(err) => self.refused(&err),

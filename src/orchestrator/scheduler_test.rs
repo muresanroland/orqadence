@@ -1,3 +1,4 @@
+use super::app::set_max_tickets;
 use super::result::stage_prompt;
 use super::scheduler::address_inputs;
 use super::stage::{Config, Orchestrator};
@@ -35,8 +36,8 @@ pub(super) fn with_deps(id: &str, deps: &[&str]) -> BdTicket {
 fn scheduler_runs_every_ready_ticket_but_never_more_than_max_at_once() {
     for max in [3, 2] {
         let tickets = (1..=5).map(|i| BdTicket::new(&format!("hx-{i}"))).collect();
-        let (w, mut o) = new_world(tickets);
-        o.cfg.max = max;
+        let (w, o) = new_world(tickets);
+        set_max_tickets(&w.repo, Some(max)).unwrap();
         w.lock().merged = true;
         w.session(|p| {
             thread::sleep(Duration::from_millis(2)); // long enough for Tickets to overlap
@@ -50,13 +51,13 @@ fn scheduler_runs_every_ready_ticket_but_never_more_than_max_at_once() {
         let peak = w.lock().peak;
         assert_eq!(
             peak, max,
-            "most Tickets in the Pipeline at once, want exactly --max {max}"
+            "most Tickets in the Pipeline at once, want exactly max_tickets {max}"
         );
         w.await_line("Epic done, every Ticket closed");
     }
 }
 
-/// A Ticket thread that dies gives its --max slot back, so the Ticket is
+/// A Ticket thread that dies gives its slot back, so the Ticket is
 /// resumed on the next tick instead of holding the Pipeline forever.
 #[test]
 fn a_ticket_thread_that_panics_frees_its_slot() {
@@ -472,4 +473,33 @@ fn command_lines_say_what_was_refused_ignored_or_failed() {
     o.stop();
     run.wait();
     o.wait_in_flight();
+}
+
+/// A Ticket that joins the queue while the scheduler lists the queue it
+/// had, every Ticket of it closed, still runs: the run ends only on the
+/// queue it listed, and once it has ended enqueue refuses.
+#[test]
+fn a_ticket_run_never_ends_over_a_ticket_enqueued_while_it_lists() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    w.lock().tickets[0].status = "closed".to_string();
+    w.lock().merged = true;
+    let o = Arc::new(o);
+    assert!(o.enqueue(&["hx-1".to_string()]));
+    let (armed, run) = (AtomicBool::new(true), o.clone());
+    w.hook(move |_, argv| {
+        if argv.join(" ").starts_with("bd list --id hx-1 ") && armed.swap(false, Ordering::SeqCst) {
+            assert!(run.enqueue(&["hx-2".to_string()]));
+        }
+        None
+    });
+    let mut run = spawn_epic(o.clone(), "");
+    run.wait();
+    o.wait_in_flight();
+    assert_eq!(w.called("bd close hx-2 ").len(), 1, "hx-2 never ran");
+    w.await_line("Ticket run done, every Ticket closed");
+    assert!(
+        !o.enqueue(&["hx-3".to_string()]),
+        "a Ticket joined a finished run"
+    );
+    assert_eq!(o.state.lock().unwrap().queue, ["hx-1", "hx-2"]);
 }

@@ -1,13 +1,17 @@
-//! The scheduler: starts ready Tickets, at most max at once, each on a thread
-//! of its own that is never joined (ADR 0003), resumes the ones a stopped run
-//! left behind, polls PRs for merges (ADR 0002) and obeys the Shell's commands.
+//! The scheduler: starts ready Tickets, at most max_tickets at once, each on
+//! a thread of its own that is never joined (ADR 0003), resumes the ones a
+//! stopped run left behind, polls PRs for merges (ADR 0002) and obeys the
+//! Shell's commands. Its Tickets are an Epic's children, or a Ticket run's
+//! queue, which the Shell adds to while it runs.
 
 use serde::Deserialize;
 use std::fs;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
+use super::app;
 use super::result::ResultRequirements;
 use super::stage::{pr_ref, result_name, Orchestrator, StageError, ADDRESS};
 use super::state::{TicketState, STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
@@ -69,9 +73,22 @@ impl Orchestrator {
             .collect())
     }
 
-    /// The Epic's child Tickets, every status; None says "bd list failed".
+    /// The run's Tickets as bd filters them: the Epic's children, or with
+    /// no Epic the Ticket run's queue by id; None for a queue with none left.
+    fn scope(&self, epic: &str) -> Option<[String; 2]> {
+        if !epic.is_empty() {
+            return Some(["--parent".to_string(), epic.to_string()]);
+        }
+        let queue = self.state.lock().unwrap().queue.join(",");
+        (!queue.is_empty()).then(|| ["--id".to_string(), queue])
+    }
+
+    /// The run's Tickets, every status; None says "bd list failed".
     fn children(&self, epic: &str) -> Option<Vec<BdIssue>> {
-        match self.bd_issues(&["list", "--parent", epic, "--all", "--json"]) {
+        let Some([by, value]) = self.scope(epic) else {
+            return Some(Vec::new());
+        };
+        match self.bd_issues(&["list", &by, &value, "--all", "--limit", "0", "--json"]) {
             Ok(children) => Some(children),
             Err(err) => {
                 self.report("", &format!("bd list failed: {err}"));
@@ -80,12 +97,56 @@ impl Orchestrator {
         }
     }
 
-    /// Drives an Epic: it starts ready Tickets, at most max at once, resumes
-    /// the ones a stopped run left behind, polls PRs for merges, obeys the
-    /// Shell's commands, and returns when every child Ticket is closed or on
-    /// /stop-work.
+    /// The run's Tickets bd has ready: open, every blocker closed; a Ticket
+    /// run's in the order they were added. bd's ready query takes no --id,
+    /// so a Ticket run's is every ready Ticket, kept if queued.
+    fn ready(&self, epic: &str) -> Result<Vec<BdIssue>, String> {
+        if !epic.is_empty() {
+            return self.bd_issues(&["ready", "--parent", epic, "--json"]);
+        }
+        let queue = self.state.lock().unwrap().queue.clone();
+        if queue.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut ready = self.bd_issues(&["ready", "--limit", "0", "--json"])?;
+        ready.retain(|i| queue.contains(&i.id));
+        ready.sort_by_key(|i| queue.iter().position(|id| *id == i.id));
+        Ok(ready)
+    }
+
+    /// Whether the run may end on the Tickets bd listed for `queued`: not
+    /// if a Ticket joined the queue since. Once it says yes enqueue refuses;
+    /// both under the state lock, so no Ticket joins a finished run.
+    fn finish(&self, queued: &[String]) -> bool {
+        let state = self.state.lock().unwrap();
+        let done = state.queue == queued;
+        self.done.store(done, Ordering::SeqCst);
+        done
+    }
+
+    /// Drives an Epic, or with none the Ticket run over the State's queue: it
+    /// starts ready Tickets, at most max_tickets at once, resumes the ones a
+    /// stopped run left behind, polls PRs for merges, obeys the Shell's
+    /// commands, and returns when every one of its Tickets is closed (a
+    /// Ticket run too when none is left in it) or on /stop-work.
     pub(crate) fn run(self: &Arc<Self>, epic: &str) -> Result<(), String> {
-        self.state.lock().unwrap().epic = epic.to_string();
+        self.change_state(|state| {
+            state.epic = epic.to_string();
+            if !epic.is_empty() {
+                // bd has a started Ticket /remove-ticket took out in progress:
+                // it goes on where it left off, or the Epic never ends
+                state.tickets.append(&mut state.removed);
+                return state.queue.clear();
+            }
+            // a Ticket run saved before the queue: its Tickets not merged join first
+            let saved: Vec<String> = state
+                .tickets
+                .iter()
+                .filter(|(id, ts)| ts.status != STATUS_MERGED && !state.queue.contains(id))
+                .map(|(id, _)| id.clone())
+                .collect();
+            state.queue.splice(0..0, saved);
+        });
 
         let launch = |ticket: &str, work: fn(&Orchestrator, &str)| {
             // A Ticket can consume stop while the scheduler is in a bd call.
@@ -112,7 +173,9 @@ impl Orchestrator {
             for command in self.commands() {
                 let (kind, ticket) = command.split_once('-').unwrap_or((&command, ""));
                 let ts = self.ticket(ticket);
-                if busy(ticket) || ticket.is_empty() {
+                if kind == "remove" && self.consume(&command) {
+                    self.remove(ticket, busy(ticket));
+                } else if busy(ticket) || ticket.is_empty() {
                     // a running Ticket's own waits consume its retry and
                     // park, and sleep owns stop, in every mode; a Question's
                     // answers, nudge among them, go by Orchestrator::answer
@@ -144,31 +207,39 @@ impl Orchestrator {
                 last_poll = Some(Instant::now());
             }
 
+            let queued = self.state.lock().unwrap().queue.clone();
             match self.children(epic) {
                 None => {}
-                Some(children) if children.is_empty() => {
+                Some(children) if children.is_empty() && !epic.is_empty() => {
                     return Err(format!(
                         "{epic} has no Tickets: is it the id of a beads Epic in this repo?"
                     ))
                 }
-                Some(children) if children.iter().all(|c| c.status == "closed") => {
-                    self.report("", "Epic done, every Ticket closed");
+                Some(children)
+                    if children.iter().all(|c| c.status == "closed") && self.finish(&queued) =>
+                {
+                    let text = match (epic.is_empty(), children.is_empty()) {
+                        (true, true) => "Ticket run done, no Ticket left in it",
+                        (true, false) => "Ticket run done, every Ticket closed",
+                        (false, _) => "Epic done, every Ticket closed",
+                    };
+                    self.report("", text);
                     return Ok(());
                 }
                 Some(_) => {}
             }
 
+            let max = app::max_tickets(&self.cfg.repo);
             for ticket in self.resumable() {
-                if !busy(&ticket) && in_pipeline() < self.cfg.max {
+                if !busy(&ticket) && in_pipeline() < max {
                     launch(&ticket, Orchestrator::run_ticket);
                 }
             }
-            match self.bd_issues(&["ready", "--parent", epic, "--json"]) {
+            match self.ready(epic) {
                 Err(err) => self.report("", &format!("bd ready failed: {err}")),
                 Ok(ready) => {
                     for issue in ready {
-                        if self.ticket(&issue.id).status.is_empty() && in_pipeline() < self.cfg.max
-                        {
+                        if self.ticket(&issue.id).status.is_empty() && in_pipeline() < max {
                             self.update(&issue.id, |_| {});
                             launch(&issue.id, Orchestrator::run_ticket);
                         }
@@ -181,30 +252,58 @@ impl Orchestrator {
         }
     }
 
-    /// Runs several Tickets' Pipelines at once, without scheduling or merge
-    /// polling, and returns when the last has ended: /continue over the
-    /// Tickets saved by single-Ticket runs.
-    pub(crate) fn run_tickets(self: &Arc<Self>, tickets: &[String]) {
-        let threads: Vec<_> = tickets
-            .iter()
-            .map(|ticket| {
-                let (o, ticket) = (Arc::clone(self), ticket.clone());
-                thread::spawn(move || o.run_ticket(&ticket))
-            })
-            .collect();
-        for thread in threads {
-            let _ = thread.join();
-        }
+    /// Adds Tickets to the Ticket run's queue, each once, a removed one with
+    /// the state it left with; the scheduler starts them as slots free, the
+    /// order kept. False, nothing added, once the run is finishing.
+    pub(crate) fn enqueue(&self, tickets: &[String]) -> bool {
+        let mut added = false;
+        self.change_state(|state| {
+            if self.done.load(Ordering::SeqCst) {
+                return;
+            }
+            added = true;
+            for ticket in tickets {
+                if !state.queue.contains(ticket) {
+                    state.queue.push(ticket.clone());
+                }
+                if let Some(ts) = state.removed.remove(ticket) {
+                    state.tickets.insert(ticket.clone(), ts);
+                }
+            }
+        });
+        added
     }
 
-    /// Tells each open Ticket that depends on `ticket` that it now waits on
-    /// the PR's merge (ADR 0002). A single-Ticket run has no Epic and nothing
+    /// /remove-ticket, on the scheduler's thread, the one that starts
+    /// Tickets: a Ticket with nothing running leaves the Ticket run (a
+    /// queued one, a Parked one, one whose PR is open, which stays open
+    /// unpolled), its state kept aside for a /start-ticket that adds it
+    /// back; a working one is refused.
+    fn remove(&self, ticket: &str, working: bool) {
+        if working {
+            return self.report(ticket, "remove refused: working, /park it first");
+        }
+        let pr = self.ticket(ticket).status == STATUS_PR_OPEN;
+        self.change_state(|state| {
+            state.queue.retain(|t| t != ticket);
+            if let Some(ts) = state.tickets.remove(ticket) {
+                state.removed.insert(ticket.to_string(), ts);
+            }
+        });
+        self.report(
+            ticket,
+            match pr {
+                true => "removed from the run, its PR stays open",
+                false => "removed from the run",
+            },
+        );
+    }
+
+    /// Tells each open Ticket of the run that depends on `ticket` that it now
+    /// waits on the PR's merge (ADR 0002). With no run there is nothing
     /// waiting.
     pub(crate) fn wait_dependents(&self, ticket: &str, pr: &str) {
         let epic = self.state.lock().unwrap().epic.clone();
-        if epic.is_empty() {
-            return;
-        }
         let Some(children) = self.children(&epic) else {
             return;
         };

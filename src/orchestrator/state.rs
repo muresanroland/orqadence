@@ -74,8 +74,15 @@ pub(crate) struct Session {
 pub(crate) struct State {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) epic: String,
+    /// A Ticket run's Tickets, in the order added; empty in an Epic run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) queue: Vec<String>,
     #[serde(default, deserialize_with = "null_is_empty")]
     pub(crate) tickets: BTreeMap<String, TicketState>,
+    /// Tickets /remove-ticket took out of the Ticket run, as they were: bd
+    /// still has a started one in progress, so it rejoins from here.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) removed: BTreeMap<String, TicketState>,
     /// App name -> when its last usage limit resets: no Stage starts on it
     /// until then, in this run or a /continue after Orqadence closed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

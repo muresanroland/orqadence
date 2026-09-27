@@ -1,8 +1,8 @@
-//! The Epic summary: each Ticket's PR, Rounds and Findings, and the Parked
-//! ones with their reasons, built fresh from bd, the State and each
-//! Ticket's Run directory evidence (harness-0sx.5, layout B), with each
-//! Ticket's cost and time (orchestrator/cost.rs). The pager that shows it
-//! is draw/pager.rs.
+//! The summary of an Epic or a Ticket run: each Ticket's PR, Rounds and
+//! Findings, and the Parked ones with their reasons, built fresh from bd,
+//! the State and each Ticket's Run directory evidence (harness-0sx.5,
+//! layout B), with each Ticket's cost and time (orchestrator/cost.rs). The
+//! pager that shows it is draw/pager.rs.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -13,17 +13,19 @@ use crate::orchestrator::cost::{self, Cost, Logged, Span};
 use crate::orchestrator::pipeline::MAX_ROUNDS;
 use crate::orchestrator::result::{read_stage_result, ResultRequirements, StageResult};
 use crate::orchestrator::scheduler::BdIssue;
-use crate::orchestrator::stage::{result_name, run_dir, DEBATE, FIX};
+use crate::orchestrator::stage::{plural, result_name, run_dir, DEBATE, FIX};
 use crate::orchestrator::state::{State, STATUS_MERGED, STATUS_PARKED};
 
-/// One Epic's summary, as it stood when built.
+/// One Epic's or Ticket run's summary, as it stood when built.
 pub(crate) struct Summary {
-    /// The Epic's id and title.
+    /// The Epic's id and title; a Ticket run has no id, and its count of
+    /// Tickets for a title.
     pub(crate) epic: String,
     pub(crate) title: String,
-    /// Its child Tickets, in suffix order.
+    /// The Epic's child Tickets, in suffix order, or the Ticket run's, in
+    /// the order added.
     pub(crate) tickets: Vec<Ticket>,
-    /// Every Ticket's cost summed, and the Epic's time on the wall clock.
+    /// Every Ticket's cost summed, and the run's time on the wall clock.
     pub(crate) cost: Cost,
     pub(crate) time: Option<chrono::TimeDelta>,
     /// The first body row shown; the draw keeps it inside.
@@ -59,9 +61,10 @@ pub(crate) struct Ticket {
 }
 
 impl Summary {
-    /// The Epic's summary from bd's issues, the State, the Run
-    /// directories, the transcripts under home and the orchestrator log; an
-    /// unknown Epic, or one none of whose Tickets has run, is the error.
+    /// The Epic's summary, or with no Epic the State's Ticket run's, from
+    /// bd's issues, the State, the Run directories, the transcripts under
+    /// home and the orchestrator log; an unknown Epic, or a run none of
+    /// whose Tickets has run, is the error.
     pub(crate) fn build(
         repo: &Path,
         home: &Path,
@@ -69,23 +72,40 @@ impl Summary {
         state: &State,
         epic: &str,
     ) -> Result<Summary, String> {
-        let title = issues
-            .iter()
-            .find(|i| i.id == epic && i.issue_type == "epic")
-            .ok_or(format!("no Epic {epic} in bd"))?
-            .title
-            .clone();
-        let mut children: Vec<&BdIssue> = issues
-            .iter()
-            .filter(|i| i.parent == epic && i.issue_type != "epic")
-            .collect();
-        children.sort_by_key(|i| suffix_order(&i.id));
+        let (title, children) = match epic {
+            "" => {
+                let queued = state.queue.iter();
+                let children: Vec<&BdIssue> = queued
+                    .filter_map(|id| issues.iter().find(|i| i.id == *id))
+                    .collect();
+                (plural(children.len(), "Ticket"), children)
+            }
+            _ => {
+                let title = issues
+                    .iter()
+                    .find(|i| i.id == epic && i.issue_type == "epic")
+                    .ok_or(format!("no Epic {epic} in bd"))?
+                    .title
+                    .clone();
+                let mut children: Vec<&BdIssue> = issues
+                    .iter()
+                    .filter(|i| i.parent == epic && i.issue_type != "epic")
+                    .collect();
+                children.sort_by_key(|i| suffix_order(&i.id));
+                (title, children)
+            }
+        };
         let ran = children
             .iter()
             .any(|t| run_dir(repo, &t.id).exists() || state.tickets.contains_key(&t.id));
         if !ran {
+            let run = if epic.is_empty() {
+                "the Ticket run"
+            } else {
+                epic
+            };
             return Err(format!(
-                "no evidence for {epic}: none of its Tickets has run"
+                "no evidence for {run}: none of its Tickets has run"
             ));
         }
         let ids: Vec<&str> = children.iter().map(|t| t.id.as_str()).collect();
