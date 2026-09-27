@@ -483,7 +483,7 @@ fn sends(s: &Screen, q: &Question, at: &str) -> (String, String) {
             Some(Action::Wait) => {
                 does("leaves the session alone ten minutes, then looks again".to_string())
             }
-            Some(nudge) => (word, nudge.nudge(file).map(|(prompt, _)| prompt).unwrap_or_default()),
+            Some(nudge) => (word, nudge.nudge(file).unwrap_or_default()),
             None if q.cursor == actions.len() => open(),
             None => own(),
         },

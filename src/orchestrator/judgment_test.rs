@@ -61,7 +61,7 @@ fn typesafe(answer: impl Fn(usize, &Value) -> Value + Send + Sync + 'static) -> 
 
 /// A canned nudge's prompt over the result file.
 fn prompt(action: Action, file: &Path) -> String {
-    action.nudge(file).unwrap().0
+    action.nudge(file).unwrap()
 }
 
 /// The first Implement session goes idle without a result; a nudge

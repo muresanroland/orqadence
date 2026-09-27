@@ -74,7 +74,7 @@ impl Action {
     }
 
     /// How the judged line names it, and a nudge after "nudge: " and "nudged: ".
-    fn short(self) -> &'static str {
+    pub(crate) fn short(self) -> &'static str {
         match self {
             NudgeWriteResult => "write the result",
             NudgeProceed => "carry on",
@@ -97,17 +97,14 @@ impl Action {
     }
 
     /// A canned nudge from docs/design/judgment-prototype: its prompt over
-    /// the Stage's result file, and the words the line says once it is sent.
-    pub(crate) fn nudge(self, file: &Path) -> Option<(String, &'static str)> {
+    /// the Stage's result file.
+    pub(crate) fn nudge(self, file: &Path) -> Option<String> {
         let prompt = match self {
             NudgeWriteResult => "The Orchestrator is waiting for your result file {result_file} and cannot read anything else. Write it now, the first line exactly 'STATUS: done' (or 'STATUS: failed' and why), then stop.",
             NudgeProceed => "Nobody is watching this pane and no one will answer. The Ticket is the spec: decide yourself, note the decision in the result file, carry on to the end, then write {result_file} with 'STATUS: done' as its first line.",
             _ => return None,
         };
-        Some((
-            prompt.replace("{result_file}", &file.display().to_string()),
-            self.short(),
-        ))
+        Some(prompt.replace("{result_file}", &file.display().to_string()))
     }
 
     /// The Question's option for it: "nudge: write the result".

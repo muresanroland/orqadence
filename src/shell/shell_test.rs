@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 
 /// The two canned nudges' prompts over a result file.
 fn nudges(file: &Path) -> [String; 2] {
-    [Action::NudgeWriteResult, Action::NudgeProceed].map(|a| a.nudge(file).unwrap().0)
+    [Action::NudgeWriteResult, Action::NudgeProceed].map(|a| a.nudge(file).unwrap())
 }
 
 fn issue(id: &str, title: &str, status: &str) -> BdIssue {

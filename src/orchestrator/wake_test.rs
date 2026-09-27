@@ -281,7 +281,7 @@ fn a_nudge_is_sent_to_its_session_and_re_arms_the_hold() {
     assert!(judged.is_none(), "a Judgment while TypeSafe is down");
     assert_eq!(asked, file);
     assert_eq!(actions, Action::ALL, "without a Judgment both nudges show");
-    let nudge = |a: Action, file: &std::path::Path| a.nudge(file).unwrap().0;
+    let nudge = |a: Action, file: &std::path::Path| a.nudge(file).unwrap();
     let offered = [
         nudge(Action::NudgeWriteResult, &file),
         nudge(Action::NudgeProceed, &file),
