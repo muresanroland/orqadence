@@ -265,16 +265,15 @@ fn judged_rows(said: String, short: String, w: usize) -> Vec<Line<'static>> {
 /// A docked option's row, cut to `w`: "› 1. approve" in bold purple under
 /// the cursor, "  2. park" otherwise.
 fn option_row(i: usize, option: &str, on: bool, w: usize) -> Line<'static> {
-    match on {
-        true => Line::from(Span::styled(
-            cut(&format!("› {}. {option}", i + 1), w),
-            bold(PURPLE),
-        )),
-        false => Line::from(Span::styled(
-            cut(&format!("  {}. {option}", i + 1), w),
-            fg(TEXT),
-        )),
-    }
+    let (mark, style) = if on {
+        ("›", bold(PURPLE))
+    } else {
+        (" ", fg(TEXT))
+    };
+    Line::from(Span::styled(
+        cut(&format!("{mark} {}. {option}", i + 1), w),
+        style,
+    ))
 }
 
 /// A Wake or a Stage's own question in the dock (the A+C mix of
