@@ -1,9 +1,10 @@
 //! The modal a plan Question docks in (layout C of harness-0sx.5): the live
 //! Shell keeps the left 42% and the plan takes the right 58%, its markdown
-//! styled; under 110 columns it folds to a box over the dimmed Shell. The
-//! frame is its own, for anything else that docks.
+//! styled; under 110 columns it folds to a box over the dimmed Shell. A Wake
+//! and a Stage's own question dock in the same frame (harness-crk).
 
 use std::cell::Cell;
+use std::fs;
 
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -14,9 +15,10 @@ use ratatui::widgets::{
 use ratatui::Frame;
 
 use super::{bold, cut, fg, shell};
-use crate::orchestrator::stage::Ask;
+use crate::orchestrator::judgment::{Action, WAITS};
+use crate::orchestrator::stage::{plural, Ask};
 use crate::shell::brand::{lerp, BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT};
-use crate::shell::{About, Screen};
+use crate::shell::{About, Question, Screen};
 
 /// Under this many columns the dock folds over the Shell.
 const FOLD: u16 = 110;
@@ -26,6 +28,8 @@ const DIM_TO: Color = Color::Rgb(8, 12, 20);
 const CODE_BG: Color = Color::Rgb(24, 31, 48);
 const ADD_BG: Color = Color::Rgb(16, 46, 28);
 const DEL_BG: Color = Color::Rgb(56, 20, 26);
+/// The ground of a docked Wake's or Stage question's band.
+const BAND: Color = Color::Rgb(34, 28, 58);
 
 /// The frame: from 110 columns the Shell in the left 42% and a thick box in
 /// the right 58%; under, the Shell dimmed behind a rounded box that leaves
@@ -119,50 +123,10 @@ pub(super) fn plan(f: &mut Frame, s: &Screen) {
     let inner = block.inner(rect);
     f.render_widget(block, rect);
 
-    let opened = *q.opened.get_or_init(chrono::Local::now);
-    let new = s.events.iter().filter(|e| e.time >= opened).count();
-    // The badges shorten where the long ones do not fit; the Judgment has
-    // the lines under the text, each score named, shortened where it does
-    // not fit and wrapped at a score where that does not either.
     let w = inner.width as usize;
-    let judged: Vec<Line> = judged
-        .map(|judged| match format!("judged: {}", judged.said()) {
-            text if text.chars().count() <= w => vec![text],
-            _ => judged.short().split(", ").fold(vec![], |mut rows, score| {
-                match rows.last_mut() {
-                    None => rows.push(format!("judged: {score}")),
-                    Some(row) if row.len() + 2 + score.len() <= w => {
-                        *row = format!("{row}, {score}")
-                    }
-                    Some(_) => rows.push(score.to_string()),
-                }
-                rows
-            }),
-        })
-        .into_iter()
-        .flatten()
-        .map(|text| Line::from(Span::styled(text, fg(TEXT))))
-        .collect();
-    let badges = |short: bool| {
-        let mut badges = Vec::new();
-        if s.questions.len() > 1 {
-            let text = format!("{} more waiting", s.questions.len() - 1);
-            badges.push(Span::styled(text, bold(ORANGE)));
-        }
-        if new > 0 {
-            let text = match short {
-                true => format!("{new} new"),
-                false => format!("{new} new on RECENT"),
-            };
-            badges.push(Span::styled(text, fg(CYAN)));
-        }
-        Line::from(joined(badges))
-    };
-    let badge_line = match badges(false) {
-        line if line.width() > inner.width as usize => badges(true),
-        line => line,
-    };
-
+    let judged = judged.map_or(Vec::new(), |judged| {
+        judged_rows(judged.said(), judged.short(), w)
+    });
     let folded = width < FOLD;
     let foot = if folded { 1 } else { n as u16 };
     let [head, body, rule, foot] = Layout::vertical([
@@ -172,9 +136,7 @@ pub(super) fn plan(f: &mut Frame, s: &Screen) {
         Constraint::Length(foot),
     ])
     .areas(inner);
-    let lead = cut(&q.text, inner.width as usize);
-    let lead = Line::from(Span::styled(lead, fg(MUTED)));
-    let lines: Vec<Line> = [badge_line, lead].into_iter().chain(judged).collect();
+    let lines: Vec<Line> = heading(s, q, w).into_iter().chain(judged).collect();
     f.render_widget(Paragraph::new(lines), head);
 
     // The plan from its scroll row, kept inside; the last column is the
@@ -240,20 +202,298 @@ pub(super) fn plan(f: &mut Frame, s: &Screen) {
         options
             .iter()
             .enumerate()
-            .map(|(i, option)| match (i == q.cursor, s.composing && i == 1) {
-                (_, true) => composed(),
-                (true, _) => Line::from(Span::styled(
-                    cut(&format!("› {}. {option}", i + 1), w),
-                    bold(PURPLE),
-                )),
-                (false, _) => Line::from(Span::styled(
-                    cut(&format!("  {}. {option}", i + 1), w),
-                    fg(TEXT),
-                )),
+            .map(|(i, option)| match s.composing && i == 1 {
+                true => composed(),
+                false => option_row(i, option, i == q.cursor, w),
             })
             .collect()
     };
     f.render_widget(Paragraph::new(lines), foot);
+}
+
+/// A docked Question's first two lines: its badges (the other Questions,
+/// the lines since it first showed), shortened where the long ones do not
+/// fit in `w`, and its text.
+fn heading(s: &Screen, q: &Question, w: usize) -> [Line<'static>; 2] {
+    let opened = *q.opened.get_or_init(chrono::Local::now);
+    let new = s.events.iter().filter(|e| e.time >= opened).count();
+    let badges = |short: bool| {
+        let mut badges = Vec::new();
+        if s.questions.len() > 1 {
+            let text = format!("{} more waiting", s.questions.len() - 1);
+            badges.push(Span::styled(text, bold(ORANGE)));
+        }
+        if new > 0 {
+            let text = match short {
+                true => format!("{new} new"),
+                false => format!("{new} new on RECENT"),
+            };
+            badges.push(Span::styled(text, fg(CYAN)));
+        }
+        Line::from(joined(badges))
+    };
+    let badge_line = match badges(false) {
+        line if line.width() > w => badges(true),
+        line => line,
+    };
+    [
+        badge_line,
+        Line::from(Span::styled(cut(&q.text, w), fg(MUTED))),
+    ]
+}
+
+/// A Judgment's lines under the text, each score named: `said` whole where
+/// it fits in `w`, else `short`, wrapped at a score where that does not fit
+/// either.
+fn judged_rows(said: String, short: String, w: usize) -> Vec<Line<'static>> {
+    let rows = match format!("judged: {said}") {
+        text if text.chars().count() <= w => vec![text],
+        _ => short.split(", ").fold(vec![], |mut rows, score| {
+            match rows.last_mut() {
+                None => rows.push(format!("judged: {score}")),
+                Some(row) if row.len() + 2 + score.len() <= w => *row = format!("{row}, {score}"),
+                Some(_) => rows.push(score.to_string()),
+            }
+            rows
+        }),
+    };
+    rows.into_iter()
+        .map(|text| Line::from(Span::styled(text, fg(TEXT))))
+        .collect()
+}
+
+/// A docked option's row, cut to `w`: "› 1. approve" in bold purple under
+/// the cursor, "  2. park" otherwise.
+fn option_row(i: usize, option: &str, on: bool, w: usize) -> Line<'static> {
+    match on {
+        true => Line::from(Span::styled(
+            cut(&format!("› {}. {option}", i + 1), w),
+            bold(PURPLE),
+        )),
+        false => Line::from(Span::styled(
+            cut(&format!("  {}. {option}", i + 1), w),
+            fg(TEXT),
+        )),
+    }
+}
+
+/// A Wake or a Stage's own question in the dock (the A+C mix of
+/// harness-crk): its badges, text, the Judgment's scores and the facts; the
+/// pane's last lines, or the question from its start, in a box that gives up
+/// its rows first; the band of what the option under the cursor sends word
+/// for word or does, or the prompt being typed; then the options.
+pub(super) fn asked(f: &mut Frame, s: &Screen) {
+    let q = &s.questions[0];
+    let (kind, pane, text, wake) = match &q.about {
+        About::Asked(Ask::Wake { pane, tail, .. }) => ("WAKE", pane, tail, true),
+        About::Asked(Ask::StageQuestion { pane, question, .. }) => {
+            ("QUESTION", pane, question, false)
+        }
+        _ => return,
+    };
+    // where the session is, as the Question's line names it: "(pane 2-1)"
+    let at = q
+        .text
+        .rsplit_once("(pane ")
+        .and_then(|(_, at)| at.strip_suffix(')'))
+        .unwrap_or(pane);
+    let (rect, block) = dock(f, s);
+    let options = s.options();
+    let n = options.len();
+    let long = format!("↑↓ or 1-{n} pick · PgUp PgDn scroll · Enter answers · Esc hides");
+    let hint = match (s.composing, long.chars().count() + 4 > rect.width as usize) {
+        (true, _) => "Enter sends it, Esc goes back".to_string(),
+        (false, false) => long,
+        (false, true) => format!("↑↓ 1-{n} · PgUp PgDn · Enter · Esc"),
+    };
+    let title = format!(
+        " {kind} · {} ",
+        s.name(q.ticket.as_deref().unwrap_or_default())
+    );
+    let block = block
+        .title(Span::styled(title, bold(TEXT)))
+        .title_bottom(Span::styled(format!(" {hint} "), fg(MUTED)));
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let w = inner.width as usize;
+    let mut head: Vec<Line> = heading(s, q, w).into();
+    if let About::Asked(Ask::Wake {
+        judged: Some(judged),
+        ..
+    }) = &q.about
+    {
+        head.extend(judged_rows(judged.said(), judged.said(), w));
+    }
+    head.push(Line::from(Span::styled(
+        cut(&facts(s, q, at), w),
+        fg(MUTED),
+    )));
+    let (sends, said) = sends(s, q, at);
+    let band = wrap_spans(
+        vec![(format!("{sends}: "), fg(MUTED)), (said, fg(TEXT))],
+        w,
+        "› ",
+        "  ",
+        bold(PURPLE),
+    );
+    let [head_a, body, band_a, rule, foot] = Layout::vertical([
+        Constraint::Length(head.len() as u16),
+        Constraint::Min(3), // the box and one line at least
+        Constraint::Length(band.len() as u16),
+        Constraint::Length(1),
+        Constraint::Length(n as u16),
+    ])
+    .areas(inner);
+    f.render_widget(Paragraph::new(head), head_a);
+
+    let title = match wake {
+        true => format!(" pane {at}, its last lines "),
+        false => " the session asks ".to_string(),
+    };
+    let frame = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(fg(BORDER))
+        .padding(Padding::horizontal(1))
+        .title(Span::styled(title, fg(MUTED)));
+    let inside = frame.inner(body);
+    f.render_widget(frame, body);
+    let rows: Vec<Line> = text
+        .trim_end()
+        .lines()
+        .flat_map(|line| {
+            let body = line.trim_start();
+            let pad = &line[..line.len() - body.len()];
+            wrap_spans(
+                vec![(body.to_string(), fg(TEXT))],
+                inside.width as usize,
+                pad,
+                pad,
+                fg(TEXT),
+            )
+        })
+        .collect();
+    // A Wake's tail from its last line, `scroll` rows up; a Stage's
+    // question from its first, `scroll` rows down.
+    let h = inside.height as usize;
+    s.page.set(h.saturating_sub(2).max(1));
+    let max = rows.len().saturating_sub(h);
+    let row = q.scroll.get().min(max);
+    q.scroll.set(row);
+    let from = if wake { max - row } else { row };
+    let shown: Vec<Line> = rows.into_iter().skip(from).take(h).collect();
+    f.render_widget(Paragraph::new(shown), inside);
+
+    f.render_widget(
+        Paragraph::new(band).style(Style::default().bg(BAND)),
+        band_a,
+    );
+    f.render_widget(divider(w), rule);
+    let rows: Vec<Line> = options
+        .iter()
+        .enumerate()
+        .map(|(i, option)| option_row(i, option, i == q.cursor, w))
+        .collect();
+    f.render_widget(Paragraph::new(rows), foot);
+}
+
+/// The facts strip, from what the Orchestrator already knows: the Stage and
+/// Round and when it asked; for a Wake the result file and its state, and
+/// what is left for the session; for a Stage's question that its session
+/// waits in pane `at`.
+fn facts(s: &Screen, q: &Question, at: &str) -> String {
+    let id = q.ticket.as_deref().unwrap_or_default();
+    let ts = s.state.tickets.get(id).cloned().unwrap_or_default();
+    let stage = match ts.round {
+        0 => ts.stage.clone(),
+        round => format!("{}, round {round}", ts.stage),
+    };
+    let mut facts = vec![stage, format!("asked {}", q.asked.format("%H:%M:%S"))];
+    match &q.about {
+        About::Asked(Ask::Wake { file, actions, .. }) => {
+            let path = file.strip_prefix(&s.cfg.repo).unwrap_or(file).display();
+            let state = match fs::read_to_string(file) {
+                Err(_) => "is missing".to_string(),
+                Ok(body) => match body.lines().next().map(str::trim) {
+                    Some(first) if first.starts_with("STATUS:") => format!("says {first}"),
+                    _ => "was written without the STATUS line first".to_string(),
+                },
+            };
+            facts.push(format!("result file {path} {state}"));
+            let left: Vec<String> = [
+                actions
+                    .iter()
+                    .any(|a| a.is_nudge())
+                    .then(|| "a nudge".to_string()),
+                actions
+                    .contains(&Action::Retry)
+                    .then(|| "a retry".to_string()),
+                actions
+                    .contains(&Action::Wait)
+                    .then(|| plural(WAITS.saturating_sub(ts.waits), "wait")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            if !left.is_empty() {
+                facts.push(format!("left for this session: {}", left.join(", ")));
+            }
+        }
+        _ => facts.push(format!("the session in pane {at} waits for your answer")),
+    }
+    facts.retain(|fact| !fact.is_empty());
+    facts.join(" · ")
+}
+
+/// What the option under the cursor sends to the session in pane `at`, word
+/// for word, or does: its title and its text; your own, as typed so far.
+fn sends(s: &Screen, q: &Question, at: &str) -> (String, String) {
+    let id = q.ticket.as_deref().unwrap_or_default();
+    let word = format!("sends to pane {at}, word for word");
+    let does = |text: String| ("does".to_string(), text);
+    let open = || {
+        does(format!(
+            "focuses pane {at} in herdr; this Question stays open"
+        ))
+    };
+    let park = || {
+        does(format!(
+            "parks the Ticket where it is, pane {at} left open; /continue @{id} picks it up again"
+        ))
+    };
+    let own = || {
+        let text = match s.composing {
+            true => {
+                let (before, after) = s.input.split_at(s.at());
+                format!("{before}▌{after}")
+            }
+            false => "what you type next; Enter starts typing".to_string(),
+        };
+        (format!("sends to pane {at}"), text)
+    };
+    match &q.about {
+        About::Asked(Ask::Wake { actions, file, .. }) => match actions.get(q.cursor) {
+            Some(Action::Retry) => does(format!(
+                "closes pane {at} and starts a fresh session on the Stage's prompt; spends the Stage's one retry"
+            )),
+            Some(Action::Park) => park(),
+            Some(Action::Wait) => {
+                does("leaves the session alone ten minutes, then looks again".to_string())
+            }
+            Some(nudge) => (word, nudge.nudge(file).map(|(prompt, _)| prompt).unwrap_or_default()),
+            None if q.cursor == actions.len() => open(),
+            None => own(),
+        },
+        About::Asked(Ask::StageQuestion { options, .. }) => {
+            match (options.get(q.cursor), q.cursor.saturating_sub(options.len())) {
+                (Some(option), _) => (word, option.clone()),
+                (None, 0) => own(),
+                (None, 1) => open(),
+                (None, _) => park(),
+            }
+        }
+        _ => (String::new(), String::new()),
+    }
 }
 
 /// The rows in `area` from the scroll row, kept inside; the page and the

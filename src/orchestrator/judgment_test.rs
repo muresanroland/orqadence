@@ -110,18 +110,15 @@ fn question(w: &World, n: usize) -> (String, Vec<Action>, Option<String>) {
 #[test]
 fn each_action_at_the_floor_acts_and_logs_both_lines() {
     const ALL: [(&str, &str); 5] = [
-        ("nudge_write_result", "nudge to write the result"),
-        ("nudge_proceed", "nudge to carry on"),
+        ("nudge_write_result", "write the result"),
+        ("nudge_proceed", "carry on"),
         ("retry", "retry"),
         ("park", "park"),
         ("wait", "wait"),
     ];
     for (action, line2) in [
-        ("nudge_write_result", "hx-1 nudged: write the result file"),
-        (
-            "nudge_proceed",
-            "hx-1 nudged: carry on, the Ticket is the spec",
-        ),
+        ("nudge_write_result", "hx-1 nudged: write the result"),
+        ("nudge_proceed", "hx-1 nudged: carry on"),
         (
             "retry",
             "hx-1 retrying implement with a fresh session (pane 1-1)",
@@ -209,8 +206,7 @@ fn below_the_floor_the_wake_is_a_question_with_the_scores() {
     let mut run = spawn_ticket(o.clone(), "hx-1");
 
     let (pane, actions, judged) = question(&w, 1);
-    let said =
-        "retry 0.50, nudge to carry on 0.30, park 0.10, nudge to write the result 0.06, wait 0.04";
+    let said = "retry 0.50, carry on 0.30, park 0.10, write the result 0.06, wait 0.04";
     assert_eq!(judged.as_deref(), Some(said));
     assert_eq!(actions, [NudgeProceed, Retry, Park, Wait]);
     assert!(w

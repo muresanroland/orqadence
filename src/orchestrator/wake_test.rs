@@ -298,7 +298,7 @@ fn a_nudge_is_sent_to_its_session_and_re_arms_the_hold() {
     assert!(offered[0].contains(&file.display().to_string()));
 
     o.answer("hx-1", &pane, Answer::Act(Action::NudgeWriteResult));
-    w.await_line("hx-1 nudged: write the result file");
+    w.await_line("hx-1 nudged: write the result");
     assert_eq!(
         w.called(&format!("herdr agent prompt {pane} "))
             .iter()

@@ -1,9 +1,9 @@
 //! The layout: header, status row, Overall, the TICKETS sections, RECENT
 //! under its rule newest at the bottom (a Question takes its place when one
 //! shows), the MERGE TO UNBLOCK box, the LIMITED box, the / or @ list, a
-//! notice line and the input line. A plan Question docks the Shell beside it
-//! (draw/modal.rs), and so does /config (draw/config.rs); the Epic summary
-//! takes the whole terminal (draw/pager.rs).
+//! notice line and the input line. A plan, a Wake or a Stage's own question
+//! docks the Shell beside it (draw/modal.rs), and so does /config
+//! (draw/config.rs); the Epic summary takes the whole terminal (draw/pager.rs).
 
 use std::sync::atomic::Ordering;
 
@@ -72,15 +72,18 @@ pub(crate) fn ticket_color(id: &str) -> Color {
     TICKET_COLORS[n.wrapping_sub(1) % TICKET_COLORS.len()]
 }
 
-/// The Shell over the whole terminal, or docked beside a plan Question;
-/// the Epic summary over both.
+/// The Shell over the whole terminal, or docked beside a plan, a Wake or a
+/// Stage's own question; the Epic summary over both.
 pub(crate) fn draw(f: &mut Frame, s: &Screen) {
     if let Some(summary) = &s.summary {
         pager::pager(f, s, summary);
     } else if s.settings.is_some() {
         config::config(f, s);
     } else if s.modal() {
-        modal::plan(f, s);
+        match &s.questions[0].about {
+            About::Asked(Ask::Plan { .. }) => modal::plan(f, s),
+            _ => modal::asked(f, s),
+        }
     } else {
         shell(f, f.area(), s);
     }
@@ -94,10 +97,11 @@ pub(crate) fn draw(f: &mut Frame, s: &Screen) {
 
 /// The Shell drawn into `area`: header, status row and Overall (or the
 /// status box beside the header), the TICKETS
-/// sections, RECENT (newest at the bottom), the boxed QUESTION (a plan
-/// docks in the modal instead), the red MERGE TO UNBLOCK box, the amber
-/// LIMITED box, the / or @ list, notice, input. The row from which the list,
-/// a notice and the input line show, for the fold to leave.
+/// sections, RECENT (newest at the bottom), the boxed QUESTION (a plan, a
+/// Wake or a Stage's question docks in the modal instead), the red MERGE TO
+/// UNBLOCK box, the amber LIMITED box, the / or @ list, notice, input. The
+/// row from which the list, a notice and the input line show, for the fold
+/// to leave.
 fn shell(f: &mut Frame, area: Rect, s: &Screen) -> u16 {
     let tree = sections(s, area.width.saturating_sub(2) as usize);
     let head_h = header_height(area);
@@ -110,11 +114,10 @@ fn shell(f: &mut Frame, area: Rect, s: &Screen) -> u16 {
     let (unblock_h, limited_h) = (boxed_h(&unblock), boxed_h(&limited));
     // MERGE TO UNBLOCK and LIMITED take their rows first, then the / or @ list, leaving
     // TICKETS its three. The TICKETS tree takes its rows and RECENT keeps at
-    // least four, its rule and three lines. A Question takes RECENT's space,
-    // its pane tail cut first; TICKETS gives up rows only when the question
-    // and its options do not fit, and on a screen too short for even that
-    // the Question's bottom is cut. A taller tree scrolls (PageUp, PageDown
-    // with the input empty).
+    // least four, its rule and three lines. A Question takes RECENT's space;
+    // TICKETS gives up rows only when the question and its options do not
+    // fit, and on a screen too short for even that the Question's bottom is
+    // cut. A taller tree scrolls (PageUp, PageDown with the input empty).
     let beside = beside(area);
     let status_h = if beside { 0 } else { 1 };
     let free = area
@@ -130,14 +133,12 @@ fn shell(f: &mut Frame, area: Rect, s: &Screen) -> u16 {
     let mut tickets_h = (tree.len() as u16).min(free.saturating_sub(4).max(3));
     let width = area.width.saturating_sub(4) as usize;
     let asked = (s.showing() && !s.modal()).then(|| {
-        let least = question_lines(s, width, 0).len() as u16 + 2;
+        let lines = question_lines(s, width);
+        let least = lines.len() as u16 + 2;
         if free.saturating_sub(tickets_h) < least {
             tickets_h = free.saturating_sub(least).max(3).min(tickets_h);
         }
-        let room = free.saturating_sub(tickets_h);
-        let lines = question_lines(s, width, room.saturating_sub(2) as usize);
-        let height = (lines.len() as u16 + 2).min(room);
-        (lines, height)
+        (lines, least.min(free.saturating_sub(tickets_h)))
     });
     let asked_h = asked.as_ref().map_or(0, |(_, h)| *h);
     let [head, top, over, _, tickets, recent, question, merge, limit, lists, notice, input] =
@@ -722,32 +723,15 @@ fn scrolled(s: &Screen, tree: Vec<Line<'static>>, height: usize) -> Vec<Line<'st
     lines
 }
 
-/// A Question's lines: the question, a Judgment's scores, a Wake's pane
-/// tail or a Stage's question as far as `room` lines allow, and the
-/// numbered options with the cursor on one. Everything but the tail or
-/// question is always there.
-fn question_lines(s: &Screen, width: usize, room: usize) -> Vec<Line<'static>> {
+/// A Question's lines in the QUESTION box: the question, then the numbered
+/// options with the cursor on one.
+fn question_lines(s: &Screen, width: usize) -> Vec<Line<'static>> {
     let q = &s.questions[0];
     let head = match &q.ticket {
         Some(id) => format!("{}  {}", s.name(id), q.text),
         None => q.text.clone(),
     };
-    let mut lines = vec![Line::from(Span::styled(head, bold(TEXT)))];
-    let judged = match &q.about {
-        About::Asked(Ask::Wake {
-            judged: Some(judged),
-            ..
-        }) => Some(judged.said()),
-        _ => None,
-    };
-    if let Some(judged) = judged {
-        lines.push(Line::from(Span::styled(
-            format!("judged: {judged}"),
-            fg(TEXT),
-        )));
-    }
-    lines.push(Line::default());
-    let mut options = Vec::new();
+    let mut lines = vec![Line::from(Span::styled(head, bold(TEXT))), Line::default()];
     for (i, option) in s.options().iter().enumerate() {
         let (mark, style) = if i == q.cursor {
             ("›", bold(PURPLE))
@@ -755,7 +739,7 @@ fn question_lines(s: &Screen, width: usize, room: usize) -> Vec<Line<'static>> {
             (" ", fg(TEXT))
         };
         let first = format!("{mark} {}. ", i + 1);
-        options.extend(modal::wrap_spans(
+        lines.extend(modal::wrap_spans(
             vec![(option.clone(), style)],
             width,
             &first,
@@ -763,23 +747,6 @@ fn question_lines(s: &Screen, width: usize, room: usize) -> Vec<Line<'static>> {
             style,
         ));
     }
-    let fit = room.saturating_sub(lines.len() + options.len());
-    match &q.about {
-        About::Asked(Ask::Wake { tail, .. }) => {
-            let tail: Vec<&str> = tail.lines().collect();
-            for line in &tail[tail.len().saturating_sub(fit)..] {
-                lines.push(Line::from(Span::styled(line.to_string(), fg(MUTED))));
-            }
-        }
-        About::Asked(Ask::StageQuestion { question, .. }) => {
-            let rows = question.lines().flat_map(|line| {
-                modal::wrap_spans(vec![(line.to_string(), fg(TEXT))], width, "", "", fg(TEXT))
-            });
-            lines.extend(rows.take(fit));
-        }
-        _ => {}
-    }
-    lines.extend(options);
     lines
 }
 

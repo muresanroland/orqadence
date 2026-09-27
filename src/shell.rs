@@ -161,9 +161,12 @@ pub(crate) struct Question {
     pub(crate) about: About,
     /// The option the cursor is on.
     pub(crate) cursor: usize,
-    /// The first row of a plan shown, which the modal's reading keys move;
-    /// the draw, which knows the width, keeps it inside the plan.
+    /// The first row of a plan or a Stage's question shown, or a Wake's
+    /// tail's rows up from its last, which the modal's reading keys move;
+    /// the draw, which knows the width, keeps it inside.
     pub(crate) scroll: Cell<usize>,
+    /// When it was asked: its line's time.
+    pub(crate) asked: chrono::DateTime<chrono::Local>,
     /// When a plan's modal first drew it, for its count of the lines since.
     pub(crate) opened: OnceCell<chrono::DateTime<chrono::Local>>,
 }
@@ -593,6 +596,7 @@ impl Screen {
             return;
         }
         let (ticket, ask, text) = (event.ticket.clone(), event.ask.clone(), event.text.clone());
+        let asked = event.time;
         if event.panel {
             self.show(event);
         }
@@ -649,6 +653,7 @@ impl Screen {
                 about: About::Asked(ask),
                 cursor: 0,
                 scroll: Cell::new(0),
+                asked,
                 opened: OnceCell::new(),
             },
         );
@@ -741,9 +746,14 @@ impl Screen {
         !self.questions.is_empty() && !self.hidden
     }
 
-    /// Whether the front Question is a plan, which docks in the modal.
+    /// Whether the front Question docks in the modal: a plan, a Wake or a
+    /// Stage's own question.
     pub(crate) fn modal(&self) -> bool {
-        self.showing() && matches!(self.questions[0].about, About::Asked(Ask::Plan { .. }))
+        self.showing()
+            && matches!(
+                self.questions[0].about,
+                About::Asked(Ask::Plan { .. } | Ask::Wake { .. } | Ask::StageQuestion { .. })
+            )
     }
 
     /// The front Question's options, numbered in this order.
@@ -752,9 +762,9 @@ impl Screen {
             return Vec::new();
         };
         match &q.about {
-            About::Asked(Ask::Wake { actions, file, .. }) => actions
+            About::Asked(Ask::Wake { actions, .. }) => actions
                 .iter()
-                .map(|action| action.option(file))
+                .map(|action| action.option())
                 .chain(["open the pane", "a prompt of your own"].map(str::to_string))
                 .collect(),
             About::Asked(Ask::Blocked { .. }) => ["open the pane", "park", "I answered it"]
@@ -936,11 +946,13 @@ impl Screen {
         // Space toggles a /continue row, y and n answer a confirmation; a
         // plan reads like a pager, ↑↓ a line, PageUp, PageDown and Space a
         // page, Home and End, Tab and Shift-Tab heading to heading, and ←→
-        // pick. A slash starts a command.
+        // pick; PageUp and PageDown page a docked Wake's or Stage question's
+        // body. A slash starts a command.
         if self.showing() && self.input.is_empty() && !self.composing {
             let n = self.options().len();
             let confirm = matches!(self.questions[0].about, About::Confirm(_));
-            let plan = self.modal();
+            let plan = matches!(self.questions[0].about, About::Asked(Ask::Plan { .. }));
+            let docked = self.modal();
             let q = &mut self.questions[0];
             match key.code {
                 KeyCode::Up
@@ -956,6 +968,7 @@ impl Screen {
                 {
                     self.scroll_rows(&self.questions[0].scroll, key.code)
                 }
+                KeyCode::PageUp | KeyCode::PageDown if docked => self.page(key.code),
                 KeyCode::Up | KeyCode::Left => q.cursor = q.cursor.saturating_sub(1),
                 KeyCode::Down | KeyCode::Right => q.cursor = (q.cursor + 1).min(n - 1),
                 KeyCode::Char(c @ '0'..='9') => {
@@ -1019,7 +1032,7 @@ impl Screen {
             KeyCode::Enter if picked.is_some() && !whole => self.fill(&picked.unwrap()),
             KeyCode::PageDown | KeyCode::PageUp if self.composing => {
                 if self.modal() {
-                    self.scroll_rows(&self.questions[0].scroll, key.code);
+                    self.page(key.code);
                 }
             }
             KeyCode::Down if self.input.is_empty() => scroll(&self.recent, -1),
@@ -1079,6 +1092,18 @@ impl Screen {
             KeyCode::PageDown | KeyCode::Char(' ') => row.saturating_add(page),
             _ => row,
         });
+    }
+
+    /// PageUp or PageDown over the docked Question's body: a Wake's tail
+    /// counts its rows up from its last, so the two swap there.
+    fn page(&self, code: KeyCode) {
+        let q = &self.questions[0];
+        let code = match (&q.about, code) {
+            (About::Asked(Ask::Wake { .. }), KeyCode::PageUp) => KeyCode::PageDown,
+            (About::Asked(Ask::Wake { .. }), KeyCode::PageDown) => KeyCode::PageUp,
+            (_, code) => code,
+        };
+        self.scroll_rows(&q.scroll, code);
     }
 
     /// The user picked option `choice` of the front Question.
@@ -1274,6 +1299,7 @@ impl Screen {
             about: About::Confirm(pending),
             cursor: 1,
             scroll: Cell::new(0),
+            asked: chrono::Local::now(),
             opened: OnceCell::new(),
         });
     }
@@ -1379,6 +1405,7 @@ impl Screen {
                         about: About::Continue { rows },
                         cursor: 0,
                         scroll: Cell::new(0),
+                        asked: chrono::Local::now(),
                         opened: OnceCell::new(),
                     });
                 }

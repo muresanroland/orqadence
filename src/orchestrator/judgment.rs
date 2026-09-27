@@ -34,7 +34,7 @@ pub(crate) const PLAN_FLOOR: Floor = Floor {
 };
 
 /// How many waits a session may take.
-const WAITS: usize = 3;
+pub(crate) const WAITS: usize = 3;
 
 /// What a Wake can come to, by a Judgment or the user's answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,11 +73,11 @@ impl Action {
         }
     }
 
-    /// How the judged line names it.
+    /// How the judged line names it, and a nudge after "nudge: " and "nudged: ".
     fn short(self) -> &'static str {
         match self {
-            NudgeWriteResult => "nudge to write the result",
-            NudgeProceed => "nudge to carry on",
+            NudgeWriteResult => "write the result",
+            NudgeProceed => "carry on",
             other => other.word(),
         }
     }
@@ -99,24 +99,24 @@ impl Action {
     /// A canned nudge from docs/design/judgment-prototype: its prompt over
     /// the Stage's result file, and the words the line says once it is sent.
     pub(crate) fn nudge(self, file: &Path) -> Option<(String, &'static str)> {
-        let (prompt, said) = match self {
-            NudgeWriteResult => ("The Orchestrator is waiting for your result file {result_file} and cannot read anything else. Write it now, the first line exactly 'STATUS: done' (or 'STATUS: failed' and why), then stop.", "write the result file"),
-            NudgeProceed => ("Nobody is watching this pane and no one will answer. The Ticket is the spec: decide yourself, note the decision in the result file, carry on to the end, then write {result_file} with 'STATUS: done' as its first line.", "carry on, the Ticket is the spec"),
+        let prompt = match self {
+            NudgeWriteResult => "The Orchestrator is waiting for your result file {result_file} and cannot read anything else. Write it now, the first line exactly 'STATUS: done' (or 'STATUS: failed' and why), then stop.",
+            NudgeProceed => "Nobody is watching this pane and no one will answer. The Ticket is the spec: decide yourself, note the decision in the result file, carry on to the end, then write {result_file} with 'STATUS: done' as its first line.",
             _ => return None,
         };
         Some((
             prompt.replace("{result_file}", &file.display().to_string()),
-            said,
+            self.short(),
         ))
     }
 
-    /// The Question's option for it, a nudge's prompt in full.
-    pub(crate) fn option(self, file: &Path) -> String {
-        match (self.nudge(file), self) {
-            (Some((prompt, _)), _) => format!("nudge: {prompt}"),
-            (None, Retry) => "retry with a fresh session".to_string(),
-            (None, Wait) => "wait ten minutes".to_string(),
-            (None, other) => other.word().to_string(),
+    /// The Question's option for it: "nudge: write the result".
+    pub(crate) fn option(self) -> String {
+        match self {
+            Retry => "retry with a fresh session".to_string(),
+            Wait => "wait ten minutes".to_string(),
+            nudge if nudge.is_nudge() => format!("nudge: {}", nudge.short()),
+            other => other.word().to_string(),
         }
     }
 }
