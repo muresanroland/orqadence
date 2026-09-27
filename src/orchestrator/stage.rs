@@ -1321,7 +1321,7 @@ impl Orchestrator {
                 }
                 Some(Answer::Act(nudge)) => nudge
                     .nudge(file)
-                    .map(|(prompt, said)| (prompt, format!("nudged: {said}"))),
+                    .map(|prompt| (prompt, format!("nudged: {}", nudge.short()))),
                 Some(Answer::Prompt(text)) => Some((text, "nudged with your prompt".to_string())),
                 Some(approve @ Answer::Approve) => {
                     self.dropped(ticket, &approve); // its plan is gone

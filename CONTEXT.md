@@ -79,6 +79,10 @@ _Avoid_: Report, recap
 The Orchestrator's request for judgment about a Stage that cannot advance by rule, answered by a Judgment or, failing that, by the user through a Question.
 _Avoid_: Alert, escalation
 
+**Nudge**:
+One canned prompt sent into a woken Stage's live session, at most once per session, by a Judgment or the user's answer: **write the result**, when the work is done but the result file is not, or **carry on**, when the session stopped to ask and nobody will answer, so it decides for itself.
+_Avoid_: Continue (that is /continue, resuming a saved run), poke, reminder
+
 **Judgment**:
 The Orchestrator's answer to a Wake or a Plan, taken from a typed model over the evidence: for a Wake one of a fixed set of actions with a score each, for a Plan a yes or no score on each criterion (it covers the Ticket, it stays in scope, it asks the user a question). It is acted on at or above a confidence floor, a Wake's and a Plan's each kept in config.json, and shown on the Shell.
 _Avoid_: LLM call, Main session
