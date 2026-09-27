@@ -5,7 +5,7 @@ use super::brand::{
 use super::draw::{draw, ticket_color};
 use super::{About, Epic, Pending, Screen};
 use crate::orchestrator::judgment::fake::Fake as TypeSafeFake;
-use crate::orchestrator::judgment::{Action, PlanJudged};
+use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
 use crate::orchestrator::limit_test::hits;
 use crate::orchestrator::plan_test::{at_dialog, nouls};
 use crate::orchestrator::question_test::ASKS;
@@ -2624,8 +2624,9 @@ fn a_wake_docks_with_the_pane_tail_and_its_options_and_hides_on_esc() {
         "{:?}",
         row(&buf, 0)
     );
+    // no badges, no row for them
     assert_eq!(
-        cols(&buf, 2, x as usize + 2, 118).trim_end(),
+        cols(&buf, 1, x as usize + 2, 118).trim_end(),
         "stuck in fix 1: went idle without a result (pane 2-1)"
     );
     // The facts strip, whole at a wide render: the result file's state is
@@ -2633,7 +2634,7 @@ fn a_wake_docks_with_the_pane_tail_and_its_options_and_hides_on_esc() {
     let facts = |s: &Screen| {
         let buf = render(s, 320, 40);
         let (x, _) = find(&buf, "┏").unwrap();
-        cols(&buf, 3, x as usize + 2, 318).trim_end().to_string()
+        cols(&buf, 2, x as usize + 2, 318).trim_end().to_string()
     };
     let path = ".orqadence/runs/harness-kqe.11/fix-1.md";
     assert_eq!(
@@ -3106,12 +3107,8 @@ fn band(buf: &Buffer) -> String {
         .join(" ")
 }
 
-/// At 80x24 with MERGE TO UNBLOCK and LIMITED up, a Wake with all five
-/// actions folds over the dimmed Shell with every option in view, and the
-/// band on its tinted ground gives the option under the cursor in full: what
-/// it sends to the pane word for word, or what it does.
-#[test]
-fn a_wake_docks_at_80x24_with_every_option_and_the_band_in_full() {
+/// The live screen with MERGE TO UNBLOCK and LIMITED up, and no Question.
+fn merge_and_limited() -> Screen {
     let mut s = sections_screen(true);
     let now = chrono::Local
         .with_ymd_and_hms(2026, 9, 25, 14, 0, 0)
@@ -3120,6 +3117,81 @@ fn a_wake_docks_at_80x24_with_every_option_and_the_band_in_full() {
     let reset = now + chrono::Duration::hours(1);
     s.state.limits.insert("claude".to_string(), reset);
     s.questions.clear(); // the Blocked Question
+    s
+}
+
+/// Where rows are fewest, a Judgment's line wrapping, a long path and a
+/// notice up at 80x24, the pane's box gives up its rows and the band and the
+/// options stay whole.
+#[test]
+fn the_band_and_options_stay_whole_where_rows_are_fewest() {
+    let mut s = merge_and_limited();
+    let file = PathBuf::from(format!("/Users/someone/{}review-1.md", "deep/".repeat(20)));
+    let file = file.as_path();
+    let scores = [
+        (Action::NudgeProceed, 0.48),
+        (Action::NudgeWriteResult, 0.31),
+        (Action::Retry, 0.12),
+        (Action::Park, 0.06),
+        (Action::Wait, 0.03),
+    ];
+    s.push(asking(
+        "harness-a.6",
+        "stuck in review 1: went idle without a result (pane 2-1)",
+        Ask::Wake {
+            pane: "w1:p7".to_string(),
+            tail: "Ran the tests: 12 passed.\n> Should I also update the docs?\n".to_string(),
+            file: file.to_path_buf(),
+            actions: vec![
+                Action::NudgeProceed,
+                Action::Retry,
+                Action::Park,
+                Action::Wait,
+            ],
+            judged: Some(Judged {
+                choice: Action::NudgeProceed,
+                confidence: 0.48,
+                scores: scores.to_vec(),
+            }),
+        },
+    ));
+    s.notice("demo: no pane behind it", Duration::from_secs(5));
+    let buf = render(&s, 80, 24);
+    assert!(
+        find(&buf, "judged: carry on 0.48").is_some() && find(&buf, "wait 0.03").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    // the path wraps inside itself: the band compared without its spaces
+    let [_, carry] = nudges(file);
+    let bare = |text: &str| text.replace(' ', "");
+    assert_eq!(
+        bare(&band(&buf)),
+        bare(&format!("› sends to pane 2-1, word for word: {carry}")),
+        "{:#?}",
+        rows(&buf)
+    );
+    for option in ["1. nudge: carry on", "6. a prompt of your own"] {
+        assert!(
+            find(&buf, option).is_some(),
+            "{option:?}: {:#?}",
+            rows(&buf)
+        );
+    }
+    assert!(
+        find(&buf, "> Should I also update the docs?").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+}
+
+/// At 80x24 with MERGE TO UNBLOCK and LIMITED up, a Wake with all five
+/// actions folds over the dimmed Shell with every option in view, and the
+/// band on its tinted ground gives the option under the cursor in full: what
+/// it sends to the pane word for word, or what it does.
+#[test]
+fn a_wake_docks_at_80x24_with_every_option_and_the_band_in_full() {
+    let mut s = merge_and_limited();
     let file = Path::new("/r/.orqadence/runs/harness-a.6/review-1.md");
     s.push(asking(
         "harness-a.6",
@@ -3220,7 +3292,7 @@ fn a_stage_question_docks_its_text_from_the_start_and_takes_an_answer_in_the_ban
         row(&buf, 0)
     );
     assert_eq!(
-        cols(&buf, 3, x as usize + 2, 158).trim_end(),
+        cols(&buf, 2, x as usize + 2, 158).trim_end(),
         "fix, round 1 · asked 12:04:44 · the session in pane 2-1 waits for your answer"
     );
     let body = boxed_body(&buf, "╭ the session asks ");
@@ -4316,10 +4388,19 @@ fn answering_the_plan_docks_the_wake_queued_behind() {
         row(&buf, 0)
     );
     assert!(
-        row(&buf, 2).contains("┃ stuck in fix 1: went idle without a result (pane 3-1)"),
+        row(&buf, 1).contains("┃ stuck in fix 1: went idle without a result (pane 3-1)"),
         "{:#?}",
         rows(&buf)
     );
+    // It counts its own new lines, as the plan does, on a row of their own.
+    s.say("a line after it opened");
+    let buf = render(&s, 160, 45);
+    assert!(
+        row(&buf, 1).contains("┃ 1 new on RECENT "),
+        "{:#?}",
+        rows(&buf)
+    );
+    assert!(row(&buf, 2).contains("┃ stuck in fix 1: went idle"));
     assert!(s
         .events
         .iter()

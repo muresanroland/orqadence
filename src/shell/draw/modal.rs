@@ -317,7 +317,9 @@ pub(super) fn asked(f: &mut Frame, s: &Screen) {
     f.render_widget(block, rect);
 
     let w = inner.width as usize;
+    // no badges, no row for them: rows are few here
     let mut head: Vec<Line> = heading(s, q, w).into();
+    head.retain(|line| line.width() > 0);
     if let About::Asked(Ask::Wake {
         judged: Some(judged),
         ..
@@ -339,7 +341,8 @@ pub(super) fn asked(f: &mut Frame, s: &Screen) {
     );
     let [head_a, body, band_a, rule, foot] = Layout::vertical([
         Constraint::Length(head.len() as u16),
-        Constraint::Min(3), // the box and one line at least
+        // the box gives up its rows first, the band and the options never
+        Constraint::Min(0),
         Constraint::Length(band.len() as u16),
         Constraint::Length(1),
         Constraint::Length(n as u16),
