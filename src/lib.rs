@@ -104,18 +104,21 @@ pub(crate) mod tempdir {
 
         #[test]
         fn the_sweep_removes_a_dead_pids_dirs_and_keeps_a_live_ones() {
-            // past every pid_max: never a running process
-            let tmp = std::env::temp_dir();
-            let stale = tmp.join(format!("orqadence-{}-0", i32::MAX));
-            let live = tmp.join(format!("orqadence-{}-sweep", std::process::id()));
+            // past every pid_max: never a running process; this run's pid as
+            // the counter keeps a concurrent run off the same dir
+            let stale = std::env::temp_dir().join(format!(
+                "orqadence-{}-{}",
+                i32::MAX,
+                std::process::id()
+            ));
             std::fs::create_dir_all(stale.join(".orqadence")).unwrap();
-            std::fs::create_dir_all(&live).unwrap();
+            // a fresh dir of this process, removed by its own Drop
+            let live = TempDir::create().unwrap();
 
             sweep();
 
             assert!(!stale.exists(), "{} is left", stale.display());
-            assert!(live.exists(), "{} is gone", live.display());
-            std::fs::remove_dir_all(&live).unwrap();
+            assert!(live.path().exists(), "{} is gone", live.path().display());
         }
     }
 }
