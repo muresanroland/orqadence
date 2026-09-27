@@ -6,7 +6,7 @@
 //! the log; /stop-demo (or /stop-work) puts the Shell back as it was.
 
 use std::cell::Cell;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::summary::{Summary, Ticket};
 use super::{About, Epic, Screen};
@@ -495,10 +495,7 @@ pub(super) fn answered(s: &mut Screen, id: &str, about: &About, answer: Answer) 
         }
         (_, Answer::Act(Action::Retry)) => format!("retrying {at} with a fresh session"),
         (_, Answer::Act(Action::Wait)) => "waiting: still working".to_string(),
-        (_, Answer::Act(nudge)) => {
-            let said = nudge.nudge(Path::new("")).map_or("", |(_, said)| said);
-            format!("nudged: {said}")
-        }
+        (_, Answer::Act(nudge)) => format!("nudged: {}", nudge.short()),
     };
     s.push(Event {
         time: (s.cfg.clock)(),

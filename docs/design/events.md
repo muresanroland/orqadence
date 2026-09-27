@@ -38,8 +38,8 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 | parked | parked: `reason` |
 | Wake | stuck in fix 1: `reason` (pane 2-1) |
 | blocked session | waiting at a prompt in fix 1 (pane 2-1) |
-| Judgment, line 1 | judged: nudge to write the result 0.84, nudge to carry on 0.07, retry 0.05, park 0.03, wait 0.01 *(the actions offered, highest score first: a spent nudge or retry is left out, and wait after a timeout, for a dead session or after three waits)* |
-| Judgment, line 2 | nudged: write the result file · nudged: carry on, the Ticket is the spec · retrying fix 1 with a fresh session (pane 2-3) · parked: `reason` · waiting: still working (pane 2-2) |
+| Judgment, line 1 | judged: write the result 0.84, carry on 0.07, retry 0.05, park 0.03, wait 0.01 *(the actions offered, highest score first: a spent nudge or retry is left out, and wait after a timeout, for a dead session or after three waits)* |
+| Judgment, line 2 | nudged: write the result · nudged: carry on · retrying fix 1 with a fresh session (pane 2-3) · parked: `reason` · waiting: still working (pane 2-2) |
 | below the floor, or no TypeSafe | asking you: stuck in fix 1 *(below the floor the judged line goes to the log alone)* |
 | only park left (nudge and retry spent) | parked: fix 1 `reason` again after a retry *(no Judgment asked)* |
 | retry command | retrying fix 1 with a fresh session (pane 2-3) |
@@ -114,7 +114,7 @@ Decided on the map ticket "The Shell's Question panel" (harness-7bj.7). A Questi
 |---|---|
 | Question raised | asking you: stuck in fix 1 · asking you: waiting at a prompt in fix 1 (pane 2-1) · asking you: plan ready in implement (pane 2-1) · asking you: question in implement (pane 2-1) |
 | answer, line 1 | you answered: nudge · retry · park · wait · your prompt · approve · feedback · I answered it · the Stage's option picked · your answer |
-| answer, line 2 | the Judgment's line 2 wording where it has one: nudged: write the result file · retrying fix 1 with a fresh session (pane 2-3) · parked: `reason` |
+| answer, line 2 | the Judgment's line 2 wording where it has one: nudged: write the result · retrying fix 1 with a fresh session (pane 2-3) · parked: `reason` |
 | answer, line 2, no Judgment equivalent | nudged with your prompt · plan approved · plan sent back with your feedback · sent your answer · carrying on |
 | blocked session cleared in the pane | carrying on |
 | open the pane, Esc, /questions | nothing |

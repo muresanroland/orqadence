@@ -5,7 +5,7 @@ use super::brand::{
 use super::draw::{draw, ticket_color};
 use super::{About, Epic, Pending, Screen};
 use crate::orchestrator::judgment::fake::Fake as TypeSafeFake;
-use crate::orchestrator::judgment::{Action, PlanJudged};
+use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
 use crate::orchestrator::limit_test::hits;
 use crate::orchestrator::plan_test::{at_dialog, nouls};
 use crate::orchestrator::question_test::ASKS;
@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 
 /// The two canned nudges' prompts over a result file.
 fn nudges(file: &Path) -> [String; 2] {
-    [Action::NudgeWriteResult, Action::NudgeProceed].map(|a| a.nudge(file).unwrap().0)
+    [Action::NudgeWriteResult, Action::NudgeProceed].map(|a| a.nudge(file).unwrap())
 }
 
 fn issue(id: &str, title: &str, status: &str) -> BdIssue {
@@ -1030,8 +1030,8 @@ fn up_and_down_scroll_recent_and_its_rule_counts_older_and_newer() {
 }
 
 /// The Shell captures the mouse, so the wheel comes as itself and not as ↑
-/// or ↓ (harness-7lz): it scrolls the box under the pointer, the docked plan
-/// or RECENT, and never moves a Question's answer.
+/// or ↓ (harness-7lz): it scrolls the box under the pointer, the docked
+/// Question or RECENT, and never moves a Question's answer.
 #[test]
 fn the_wheel_scrolls_the_box_under_the_pointer_and_never_moves_an_answer() {
     let (up, down) = (MouseEventKind::ScrollUp, MouseEventKind::ScrollDown);
@@ -1061,8 +1061,8 @@ fn the_wheel_scrolls_the_box_under_the_pointer_and_never_moves_an_answer() {
     assert!(find(&buf, "↓ 1 newer").is_some(), "{:#?}", rows(&buf));
     assert_eq!(s.questions[0].cursor, 0, "the wheel moved the answer");
 
-    // Over a pane tail cut to fit it reads up from the tail's end, over a
-    // Stage's question down from its top.
+    // Over a docked Wake it reads up from its tail's end, over a Stage's
+    // question down from its top.
     let long: String = (0..40).map(|n| format!("row {n}\n")).collect();
     let About::Asked(Ask::Wake { tail, .. }) = &mut s.questions[0].about else {
         unreachable!()
@@ -2049,7 +2049,9 @@ fn retry_and_park_reach_the_ticket_and_refusals_are_logged() {
         "hx-1 stuck in implement: went idle without a result (pane 1-1)",
     );
     s.poll();
+    s.hidden = true; // the Shell whole, the docked Wake out of the way
     let buf = render(&s, 120, 40);
+    s.hidden = false;
     assert!(
         row(&buf, 8).contains("RUNNING  ● 0 working  ◆ 1 needs you"),
         "{:?}",
@@ -2661,16 +2663,39 @@ fn an_update_waits_on_another_processs_lock_and_retries_from_tick() {
     );
 }
 
+/// The docked body's lines: the box titled `title`, its borders trimmed.
+fn boxed_body(buf: &Buffer, title: &str) -> Vec<String> {
+    let (x, top) = find(buf, title).unwrap_or_else(|| panic!("no {title:?}: {:#?}", rows(buf)));
+    (top + 1..buf.area.height)
+        .map(|y| cols(buf, y, x as usize, buf.area.width as usize))
+        .take_while(|r| !r.starts_with('╰'))
+        .map(|r| {
+            r.trim_start_matches('│')
+                .split('│')
+                .next()
+                .unwrap()
+                .trim()
+                .to_string()
+        })
+        .collect()
+}
+
+/// A Wake docks beside the Shell from 110 columns: its title, text and the
+/// facts; the pane's last lines in a box, anchored to the last, which PageUp
+/// and PageDown page; the options, the hint on the bottom border. Esc hides
+/// it, and the Questions queue as ever.
 #[test]
-fn a_wake_question_renders_the_pane_tail_and_its_options_and_hides_on_esc() {
+fn a_wake_docks_with_the_pane_tail_and_its_options_and_hides_on_esc() {
     let repo = TempDir::new();
     let fake = Fake::quiet();
     let mut s = screen_at(fake.clone(), repo.path());
-    let file = Path::new("/r/.orqadence/runs/harness-kqe.11/fix-1.md");
+    let file = repo.path().join(".orqadence/runs/harness-kqe.11/fix-1.md");
+    let tail: String = (1..=60).map(|n| format!("step {n}\n")).collect();
+    let tail = format!("{tail}Ran the tests: 12 passed.\n> Should I also update the docs?\n");
     let wake = || Ask::Wake {
         pane: "w1:p7".to_string(),
-        tail: "Ran the tests: 12 passed.\n> Should I also update the docs?\n".to_string(),
-        file: file.to_path_buf(),
+        tail: tail.clone(),
+        file: file.clone(),
         // its waits spent
         actions: Action::ALL[..4].to_vec(),
         judged: None,
@@ -2685,59 +2710,98 @@ fn a_wake_question_renders_the_pane_tail_and_its_options_and_hides_on_esc() {
         "the screen thread ran {:?}",
         fake.calls()
     );
-    // The Question takes RECENT's space, RECENT keeping what it leaves; the
-    // tree stays whole, and the tail shows in what the question and its
-    // options leave.
     let buf = render(&s, 120, 40);
-    assert!(find(&buf, "14 Self-update").is_some(), "{:#?}", rows(&buf));
-    let (_, y) = find(&buf, " QUESTION ").unwrap();
-    assert_eq!(find(&buf, " RECENT ").map(|(_, r)| y - r), Some(3));
-    let body: Vec<String> = (y + 1..39)
-        .map(|y| {
-            row(&buf, y)
-                .trim_matches(|c| c == '│' || c == ' ')
-                .to_string()
-        })
-        .collect();
+    let (x, top) = find(&buf, "┏").unwrap_or_else(|| panic!("{:#?}", rows(&buf)));
+    assert_eq!(top, 0, "{:#?}", rows(&buf));
+    for text in ["├─ ✓ 8 Events", "── RECENT", "› ▌"] {
+        let (at, _) = find(&buf, text).unwrap_or_else(|| panic!("{text:?}: {:#?}", rows(&buf)));
+        assert!(at < x, "{text:?} is not in the Shell's left part");
+    }
+    assert!(find(&buf, " QUESTION").is_none(), "{:#?}", rows(&buf));
+    assert!(
+        row(&buf, 0).contains(" WAKE · 11 Questions "),
+        "{:?}",
+        row(&buf, 0)
+    );
+    // no badges, no row for them
     assert_eq!(
-        body[..4],
+        cols(&buf, 1, x as usize + 2, 118).trim_end(),
+        "stuck in fix 1: went idle without a result (pane 2-1)"
+    );
+    // The facts strip, whole at a wide render: the result file's state is
+    // read afresh.
+    let facts = |s: &Screen| {
+        let buf = render(s, 320, 40);
+        let (x, _) = find(&buf, "┏").unwrap();
+        cols(&buf, 2, x as usize + 2, 318).trim_end().to_string()
+    };
+    let path = ".orqadence/runs/harness-kqe.11/fix-1.md";
+    assert_eq!(
+        facts(&s),
+        format!("fix, round 1 · asked 12:04:44 · result file {path} is missing · left for this session: a nudge, a retry")
+    );
+    write_file(&file, "all three fixed\n");
+    assert_eq!(
+        facts(&s),
+        format!("fix, round 1 · asked 12:04:44 · result file {path} was written without the STATUS line first · left for this session: a nudge, a retry")
+    );
+    // The pane's last lines, anchored to the last; PageUp and PageDown page.
+    let body = boxed_body(&render(&s, 120, 40), "╭ pane 2-1, its last lines ");
+    assert_eq!(
+        body[body.len() - 2..],
         [
-            "11 Questions  stuck in fix 1: went idle without a result (pane 2-1)",
-            "",
             "Ran the tests: 12 passed.",
-            "> Should I also update the docs?",
+            "> Should I also update the docs?"
         ],
         "{:#?}",
         rows(&buf)
     );
-    assert!(body[4].starts_with("› 1. nudge: "), "{body:#?}");
-    let text = body.join(" ");
-    let [first, second] = nudges(file);
+    assert!(body.len() < 62, "the whole tail fits: {body:#?}");
+    s.key(key(KeyCode::PageUp));
+    let up = boxed_body(&render(&s, 120, 40), "╭ pane 2-1, its last lines ");
+    assert_eq!(up.len(), body.len());
+    assert_eq!(up.last(), body.get(1), "PageUp is not a page less two rows");
+    s.key(key(KeyCode::PageUp));
+    s.key(key(KeyCode::PageUp));
+    let first = boxed_body(&render(&s, 120, 40), "╭ pane 2-1, its last lines ");
+    assert_eq!(first[0], "step 1", "PageUp ran past the tail's start");
+    s.key(key(KeyCode::PageDown));
+    s.key(key(KeyCode::PageDown));
+    s.key(key(KeyCode::PageDown));
+    assert_eq!(
+        boxed_body(&render(&s, 120, 40), "╭ pane 2-1, its last lines "),
+        body
+    );
+    assert_eq!(s.questions[0].cursor, 0, "a page moved the cursor");
+    // The options, one row each, the cursor's purple; the hint on the border.
+    let buf = render(&s, 120, 40);
     for option in [
-        format!("› 1. nudge: {first}"),
-        format!("2. nudge: {second}"),
-        "3. retry with a fresh session".to_string(),
-        "4. park".to_string(),
-        "5. open the pane".to_string(),
-        "6. a prompt of your own".to_string(),
+        "› 1. nudge: write the result",
+        "  2. nudge: carry on",
+        "  3. retry with a fresh session",
+        "  4. park",
+        "  5. open the pane",
+        "  6. a prompt of your own",
     ] {
         assert!(
-            text.contains(&option),
-            "{option:?} is not shown in full:\n{body:#?}"
+            find(&buf, option).is_some(),
+            "{option:?}: {:#?}",
+            rows(&buf)
         );
     }
     let (x, y1) = find(&buf, "› 1. nudge").unwrap();
     assert_eq!(buf[(x, y1)].fg, PURPLE);
     let (x, y2) = find(&buf, "2. nudge").unwrap();
     assert!(y2 > y1 && buf[(x, y2)].fg != PURPLE);
-    let (_, hint) = find(&buf, "↑↓ or a number picks, Enter answers, Esc hides").unwrap();
-    assert!(
-        row(&buf, hint).starts_with('└'),
-        "the hint is not on the border"
-    );
+    let (_, hint) = find(
+        &buf,
+        "┗ ↑↓ or 1-6 pick · PgUp PgDn scroll · Enter answers · Esc hides ",
+    )
+    .unwrap_or_else(|| panic!("the hint is not on the border: {:#?}", rows(&buf)));
+    assert_eq!(hint, 39);
     s.running = true;
     assert!(
-        find(&render(&s, 120, 40), "◆ 11 Questions").is_some(),
+        find(&render(&s, 160, 40), "◆ 11 Questions").is_some(),
         "a live Ticket with a Question waiting does not need you"
     );
     s.running = false;
@@ -2767,7 +2831,7 @@ fn a_wake_question_renders_the_pane_tail_and_its_options_and_hides_on_esc() {
     s.key(key(KeyCode::Esc));
     assert!(s.hidden);
     let buf = render(&s, 120, 40);
-    assert!(find(&buf, " QUESTION ").is_none());
+    assert!(find(&buf, " QUESTION ").is_none() && find(&buf, "┏").is_none());
     assert!(
         row(&buf, 37).contains("11 Questions  asking you: stuck in fix 1"),
         "RECENT's last row, above the notice: {:#?}",
@@ -2837,17 +2901,15 @@ fn a_wake_question_renders_the_pane_tail_and_its_options_and_hides_on_esc() {
         question(&s),
         "stuck in fix 1: timed out after 1h (pane 2-1)"
     );
-    // A short screen keeps every option: the tail goes first, then tree rows.
-    let buf = render(&s, 120, 32);
+    // A short screen keeps every option: the pane's box gives up its rows.
+    let buf = render(&s, 120, 24);
     assert!(
         find(&buf, "6. a prompt of your own").is_some(),
         "{:#?}",
         rows(&buf)
     );
-    assert!(find(&buf, "Ran the tests").is_none(), "{:#?}", rows(&buf));
-    assert!(find(&buf, "14 Self-update").is_none(), "{:#?}", rows(&buf));
-    assert!(find(&buf, " ━━ ▾ harness-kqe").is_some());
-    assert!(row(&buf, 31).starts_with("› ▌"), "{:#?}", rows(&buf));
+    assert!(find(&buf, "> Should I also update the docs?").is_some());
+    assert!(row(&buf, 23).starts_with("› ▌"), "{:#?}", rows(&buf));
     s.push(event(Some("harness-kqe.11"), "fix 1 done", true));
     assert!(
         s.questions.is_empty(),
@@ -2967,7 +3029,7 @@ fn a_wake_question_nudges_opens_the_pane_and_parks() {
 
     pick(&mut s, 1);
     assert!(s.questions.is_empty(), "the answered Question stayed");
-    await_line(&mut s, "hx-1 nudged: write the result file");
+    await_line(&mut s, "hx-1 nudged: write the result");
     assert_eq!(prompts(&w), [first]);
     // The hold is re-armed: the nudged session, idle without a result, Wakes again.
     await_questions(&mut s, 1);
@@ -2985,8 +3047,20 @@ fn a_wake_question_nudges_opens_the_pane_and_parks() {
 
     pick(&mut s, 5);
     assert!(s.composing && s.questions.len() == 1);
-    assert!(row(&render(&s, 120, 40), 39).contains("your prompt, Enter sends it"));
-    type_line(&mut s, "read the failing test first");
+    type_in(&mut s, "read the failing test first");
+    let buf = render(&s, 120, 40);
+    assert_eq!(
+        band(&buf),
+        "› sends to pane 1-1: read the failing test first▌",
+        "{:#?}",
+        rows(&buf)
+    );
+    assert_eq!(
+        cols(&buf, 39, 0, 10).trim_end(),
+        "›",
+        "typed on the input line"
+    );
+    s.key(key(KeyCode::Enter));
     assert!(!s.composing && s.input.is_empty());
     await_line(&mut s, "hx-1 nudged with your prompt");
     assert_eq!(
@@ -3012,7 +3086,7 @@ fn a_wake_question_nudges_opens_the_pane_and_parks() {
     for line in [
         "hx-1 asking you: stuck in implement",
         "hx-1 you answered: nudge",
-        "hx-1 nudged: write the result file",
+        "hx-1 nudged: write the result",
         "hx-1 you answered: your prompt",
         "hx-1 nudged with your prompt",
         "hx-1 you answered: park",
@@ -3080,10 +3154,9 @@ fn a_wake_question_below_the_floor_shows_the_scores_and_its_one_nudge() {
     });
     s.command("/start-epic hx");
     await_line(&mut s, "hx-1 asking you: stuck in implement");
-    let [_, proceed] = nudges(&w.repo.join(".orqadence/runs/hx-1/implement.md"));
     let rest = ["open the pane", "a prompt of your own"].map(str::to_string);
     let options = |actions: &[&str]| -> Vec<String> {
-        std::iter::once(format!("nudge: {proceed}"))
+        std::iter::once("nudge: carry on".to_string())
             .chain(actions.iter().map(|a| a.to_string()))
             .chain(rest.clone())
             .collect()
@@ -3092,11 +3165,11 @@ fn a_wake_question_below_the_floor_shows_the_scores_and_its_one_nudge() {
         s.options(),
         options(&["retry with a fresh session", "park", "wait ten minutes"])
     );
-    let buf = render(&s, 120, 40);
+    let buf = render(&s, 240, 40);
     assert!(
         find(
             &buf,
-            "judged: park 0.50, nudge to carry on 0.30, retry 0.10, nudge to write the result 0.06, wait 0.04"
+            "judged: park 0.50, carry on 0.30, retry 0.10, write the result 0.06, wait 0.04"
         )
         .is_some(),
         "{:#?}",
@@ -3112,9 +3185,264 @@ fn a_wake_question_below_the_floor_shows_the_scores_and_its_one_nudge() {
     await_questions(&mut s, 1);
     assert_eq!(s.options(), options(&["park", "wait ten minutes"]));
     pick(&mut s, 1);
-    await_line(&mut s, "hx-1 nudged: carry on, the Ticket is the spec");
+    await_line(&mut s, "hx-1 nudged: carry on");
     s.command("/stop-work");
     await_end(&mut s);
+}
+
+/// The band of the docked Question: its rows from its "› " to the rule over
+/// the options, borders trimmed, joined by a space.
+fn band(buf: &Buffer) -> String {
+    let (x, from) = find(buf, "› sends")
+        .or_else(|| find(buf, "› does"))
+        .unwrap_or_else(|| panic!("no band: {:#?}", rows(buf)));
+    (from..buf.area.height)
+        .map(|y| {
+            let r = cols(buf, y, x as usize, buf.area.width as usize);
+            r.trim_matches(['│', '┃', ' ']).to_string()
+        })
+        .take_while(|r| !r.starts_with('─'))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The live screen with MERGE TO UNBLOCK and LIMITED up, and no Question.
+fn merge_and_limited() -> Screen {
+    let mut s = sections_screen(true);
+    let now = chrono::Local
+        .with_ymd_and_hms(2026, 9, 25, 14, 0, 0)
+        .unwrap();
+    set_clock(&mut s.cfg, now);
+    let reset = now + chrono::Duration::hours(1);
+    s.state.limits.insert("claude".to_string(), reset);
+    s.questions.clear(); // the Blocked Question
+    s
+}
+
+/// Where rows are fewest, a Judgment's line wrapping, a long path and a
+/// notice up at 80x24, the pane's box gives up its rows and the band and the
+/// options stay whole.
+#[test]
+fn the_band_and_options_stay_whole_where_rows_are_fewest() {
+    let mut s = merge_and_limited();
+    let file = PathBuf::from(format!("/Users/someone/{}review-1.md", "deep/".repeat(20)));
+    let file = file.as_path();
+    let scores = [
+        (Action::NudgeProceed, 0.48),
+        (Action::NudgeWriteResult, 0.31),
+        (Action::Retry, 0.12),
+        (Action::Park, 0.06),
+        (Action::Wait, 0.03),
+    ];
+    s.push(asking(
+        "harness-a.6",
+        "stuck in review 1: went idle without a result (pane 2-1)",
+        Ask::Wake {
+            pane: "w1:p7".to_string(),
+            tail: "Ran the tests: 12 passed.\n> Should I also update the docs?\n".to_string(),
+            file: file.to_path_buf(),
+            actions: vec![
+                Action::NudgeProceed,
+                Action::Retry,
+                Action::Park,
+                Action::Wait,
+            ],
+            judged: Some(Judged {
+                choice: Action::NudgeProceed,
+                confidence: 0.48,
+                scores: scores.to_vec(),
+            }),
+        },
+    ));
+    s.notice("demo: no pane behind it", Duration::from_secs(5));
+    let buf = render(&s, 80, 24);
+    assert!(
+        find(&buf, "judged: carry on 0.48").is_some() && find(&buf, "wait 0.03").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    // the path wraps inside itself: the band compared without its spaces
+    let [_, carry] = nudges(file);
+    let bare = |text: &str| text.replace(' ', "");
+    assert_eq!(
+        bare(&band(&buf)),
+        bare(&format!("› sends to pane 2-1, word for word: {carry}")),
+        "{:#?}",
+        rows(&buf)
+    );
+    for option in ["1. nudge: carry on", "6. a prompt of your own"] {
+        assert!(
+            find(&buf, option).is_some(),
+            "{option:?}: {:#?}",
+            rows(&buf)
+        );
+    }
+    assert!(
+        find(&buf, "> Should I also update the docs?").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+}
+
+/// At 80x24 with MERGE TO UNBLOCK and LIMITED up, a Wake with all five
+/// actions folds over the dimmed Shell with every option in view, and the
+/// band on its tinted ground gives the option under the cursor in full: what
+/// it sends to the pane word for word, or what it does.
+#[test]
+fn a_wake_docks_at_80x24_with_every_option_and_the_band_in_full() {
+    let mut s = merge_and_limited();
+    let file = Path::new("/r/.orqadence/runs/harness-a.6/review-1.md");
+    s.push(asking(
+        "harness-a.6",
+        "stuck in review 1: went idle without a result (pane 2-1)",
+        Ask::Wake {
+            pane: "w1:p7".to_string(),
+            tail: "Ran the tests: 12 passed.\n> Should I also update the docs?\n".to_string(),
+            file: file.to_path_buf(),
+            actions: Action::ALL.to_vec(),
+            judged: None,
+        },
+    ));
+    s.hidden = true;
+    let buf = render(&s, 80, 24);
+    for title in ["MERGE TO UNBLOCK", "LIMITED"] {
+        assert!(find(&buf, title).is_some(), "{title}: {:#?}", rows(&buf));
+    }
+    s.hidden = false;
+    let buf = render(&s, 80, 24);
+    assert_eq!(find(&buf, "╭"), Some((0, 0)), "{:#?}", rows(&buf));
+    assert!(row(&buf, 0).contains(" WAKE · 6 "), "{:?}", row(&buf, 0));
+    assert!(row(&buf, 23).starts_with("› ▌"), "{:#?}", rows(&buf));
+    let options = [
+        "nudge: write the result",
+        "nudge: carry on",
+        "retry with a fresh session",
+        "park",
+        "wait ten minutes",
+        "open the pane",
+        "a prompt of your own",
+    ];
+    let [write, carry] = nudges(file);
+    let bands = [
+        format!("sends to pane 2-1, word for word: {write}"),
+        format!("sends to pane 2-1, word for word: {carry}"),
+        "does: closes pane 2-1 and starts a fresh session on the Stage's prompt; spends the Stage's one retry".to_string(),
+        "does: parks the Ticket where it is, pane 2-1 left open; /continue @harness-a.6 picks it up again".to_string(),
+        "does: leaves the session alone ten minutes, then looks again".to_string(),
+        "does: focuses pane 2-1 in herdr; this Question stays open".to_string(),
+        "sends to pane 2-1: what you type next; Enter starts typing".to_string(),
+    ];
+    for (i, want) in bands.iter().enumerate() {
+        let buf = render(&s, 80, 24);
+        for (k, option) in options.iter().enumerate() {
+            let mark = if k == i { "›" } else { " " };
+            let option = format!("{mark} {}. {option}", k + 1);
+            assert!(
+                find(&buf, &option).is_some(),
+                "{option:?}: {:#?}",
+                rows(&buf)
+            );
+        }
+        assert_eq!(band(&buf), format!("› {want}"), "{:#?}", rows(&buf));
+        let (x, y) = find(&buf, "› sends")
+            .or_else(|| find(&buf, "› does"))
+            .unwrap();
+        assert_ne!(buf[(x, y)].bg, Color::Reset, "the band is not tinted");
+        s.key(key(KeyCode::Down));
+    }
+}
+
+/// A Stage's own question docks as a Wake does: the question from its first
+/// line in the box, which PageDown and PageUp page; the band sends an option
+/// word for word, or says what the others do, and an answer of your own is
+/// typed there, Enter sending it and Esc going back.
+#[test]
+fn a_stage_question_docks_its_text_from_the_start_and_takes_an_answer_in_the_band() {
+    let repo = TempDir::new();
+    let mut s = screen_at(Fake::quiet(), repo.path());
+    let points: String = (1..=40).map(|n| format!("point {n}\n")).collect();
+    s.push(asking(
+        "harness-kqe.11",
+        "question in implement (pane 2-1)",
+        Ask::StageQuestion {
+            pane: "w1:p7".to_string(),
+            question: format!("{points}Queue the requests or fail them?"),
+            options: vec![
+                "queue them, in order".to_string(),
+                "fail them with a retry-after".to_string(),
+            ],
+        },
+    ));
+    assert_eq!(
+        s.options(),
+        [
+            "queue them, in order",
+            "fail them with a retry-after",
+            "an answer of your own",
+            "open the pane",
+            "park"
+        ]
+    );
+    let buf = render(&s, 160, 30);
+    let (x, _) = find(&buf, "┏").unwrap_or_else(|| panic!("{:#?}", rows(&buf)));
+    assert!(
+        row(&buf, 0).contains("┏ QUESTION · 11 Questions "),
+        "{:?}",
+        row(&buf, 0)
+    );
+    assert_eq!(
+        cols(&buf, 2, x as usize + 2, 158).trim_end(),
+        "fix, round 1 · asked 12:04:44 · the session in pane 2-1 waits for your answer"
+    );
+    let body = boxed_body(&buf, "╭ the session asks ");
+    assert_eq!(body[0], "point 1", "{:#?}", rows(&buf));
+    s.key(key(KeyCode::PageDown));
+    let down = boxed_body(&render(&s, 160, 30), "╭ the session asks ");
+    assert_eq!(down[0], body[body.len() - 2], "PageDown is not a page");
+    s.key(key(KeyCode::PageUp));
+    assert_eq!(
+        boxed_body(&render(&s, 160, 30), "╭ the session asks "),
+        body
+    );
+
+    for want in [
+        "› sends to pane 2-1, word for word: queue them, in order",
+        "› sends to pane 2-1, word for word: fail them with a retry-after",
+        "› sends to pane 2-1: what you type next; Enter starts typing",
+        "› does: focuses pane 2-1 in herdr; this Question stays open",
+        "› does: parks the Ticket where it is, pane 2-1 left open; /continue @harness-kqe.11 picks it up again",
+    ] {
+        assert_eq!(band(&render(&s, 160, 30)), want);
+        s.key(key(KeyCode::Down));
+    }
+
+    // An answer of your own is typed in the band; Esc goes back.
+    pick(&mut s, 3);
+    assert!(s.composing);
+    type_in(&mut s, "queue them, capped at 100");
+    let buf = render(&s, 160, 30);
+    assert_eq!(
+        band(&buf),
+        "› sends to pane 2-1: queue them, capped at 100▌"
+    );
+    assert_eq!(
+        cols(&buf, 29, 0, 10).trim_end(),
+        "›",
+        "typed on the input line"
+    );
+    s.key(key(KeyCode::Esc));
+    assert!(!s.composing && s.input.is_empty() && s.questions.len() == 1);
+    assert_eq!(
+        band(&render(&s, 160, 30)),
+        "› sends to pane 2-1: what you type next; Enter starts typing"
+    );
+    s.key(key(KeyCode::Enter));
+    type_line(&mut s, "fail them");
+    assert!(s.questions.is_empty() && !s.composing);
+    assert_eq!(
+        s.events.last().map(line).as_deref(),
+        Some("harness-kqe.11 you answered: your answer")
+    );
 }
 
 /// Of the waiting lines, only a trust dialog blocks a Ticket on the user; a
@@ -4144,21 +4472,34 @@ fn the_plan_reads_with_a_pagers_keys_and_esc_hides_it() {
 }
 
 /// Other Questions queue behind the plan, counted on its badge line;
-/// answering the plan shows the next, a Wake in the Shell's Question box.
+/// answering the plan docks the next, a Wake, in its place.
 #[test]
-fn answering_the_plan_shows_the_wake_queued_behind_in_the_question_box() {
+fn answering_the_plan_docks_the_wake_queued_behind() {
     let repo = TempDir::new();
     let mut s = plan_screen(repo.path());
     assert!(find(&render(&s, 160, 45), "1 more waiting").is_some());
     pick(&mut s, 3);
     let buf = render(&s, 160, 45);
-    assert!(find(&buf, "┏").is_none(), "{:#?}", rows(&buf));
-    let (_, y) = find(&buf, " QUESTION ").unwrap();
+    assert!(find(&buf, " QUESTION").is_none(), "{:#?}", rows(&buf));
     assert!(
-        row(&buf, y + 1).contains("10 The Shell runs the Orchestrator  stuck in fix 1: went idle"),
+        row(&buf, 0).contains("┏ WAKE · 10 The Shell runs the Orchestrator "),
+        "{:?}",
+        row(&buf, 0)
+    );
+    assert!(
+        row(&buf, 1).contains("┃ stuck in fix 1: went idle without a result (pane 3-1)"),
         "{:#?}",
         rows(&buf)
     );
+    // It counts its own new lines, as the plan does, on a row of their own.
+    s.say("a line after it opened");
+    let buf = render(&s, 160, 45);
+    assert!(
+        row(&buf, 1).contains("┃ 1 new on RECENT "),
+        "{:#?}",
+        rows(&buf)
+    );
+    assert!(row(&buf, 2).contains("┃ stuck in fix 1: went idle"));
     assert!(s
         .events
         .iter()
@@ -4198,10 +4539,10 @@ fn the_new_lines_count_follows_the_plan_on_screen() {
     assert!(!row(&buf, 1).contains("new"), "{:?}", row(&buf, 1));
 }
 
-/// A Question's option with a word wider than the box, a nudge's path,
-/// goes on under itself instead of running off the edge.
+/// A word wider than the band, a nudge's path, goes on under itself
+/// instead of running off the edge.
 #[test]
-fn a_word_wider_than_the_question_wraps() {
+fn a_word_wider_than_the_band_wraps() {
     let repo = TempDir::new();
     let mut s = screen_at(Fake::quiet(), repo.path());
     let file = PathBuf::from(format!("/r/{}fix-1.md", "deep/".repeat(30)));
@@ -4217,11 +4558,11 @@ fn a_word_wider_than_the_question_wraps() {
         },
     ));
     let buf = render(&s, 80, 40);
-    let (_, y) = find(&buf, "› 1. nudge").unwrap();
+    let (x, y) = find(&buf, "› sends").unwrap();
     let text: String = (y..40)
         .map(|y| {
-            row(&buf, y)
-                .trim_matches(|c| c == '│' || c == ' ')
+            cols(&buf, y, x as usize, 80)
+                .trim_matches(['│', ' '])
                 .to_string()
         })
         .collect();
