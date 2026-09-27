@@ -156,6 +156,9 @@ fn shell(f: &mut Frame, area: Rect, s: &Screen) -> u16 {
             Constraint::Length(1),
         ])
         .areas(area);
+    s.tickets_area.set(tickets);
+    s.recent_area.set(recent);
+    s.question_area.set(question);
     if beside {
         let [left, right] =
             Layout::horizontal([Constraint::Length(HEADER_W), Constraint::Min(0)]).areas(head);
@@ -763,19 +766,31 @@ fn question_lines(s: &Screen, width: usize, room: usize) -> Vec<Line<'static>> {
             style,
         ));
     }
+    // What does not fit scrolls with the wheel: a pane tail up from its
+    // last line, a Stage's question down from its first; kept inside.
     let fit = room.saturating_sub(lines.len() + options.len());
+    let kept = |rows: usize| {
+        let row = q.scroll.get().min(rows.saturating_sub(fit));
+        q.scroll.set(row);
+        row
+    };
     match &q.about {
         About::Asked(Ask::Wake { tail, .. }) => {
             let tail: Vec<&str> = tail.lines().collect();
-            for line in &tail[tail.len().saturating_sub(fit)..] {
+            let end = tail.len() - kept(tail.len());
+            for line in &tail[end.saturating_sub(fit)..end] {
                 lines.push(Line::from(Span::styled(line.to_string(), fg(MUTED))));
             }
         }
         About::Asked(Ask::StageQuestion { question, .. }) => {
-            let rows = question.lines().flat_map(|line| {
-                modal::wrap_spans(vec![(line.to_string(), fg(TEXT))], width, "", "", fg(TEXT))
-            });
-            lines.extend(rows.take(fit));
+            let rows: Vec<Line> = question
+                .lines()
+                .flat_map(|line| {
+                    modal::wrap_spans(vec![(line.to_string(), fg(TEXT))], width, "", "", fg(TEXT))
+                })
+                .collect();
+            let from = kept(rows.len());
+            lines.extend(rows.into_iter().skip(from).take(fit));
         }
         _ => {}
     }

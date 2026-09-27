@@ -100,6 +100,7 @@ pub(super) fn plan(f: &mut Frame, s: &Screen) {
     };
     let width = f.area().width;
     let (rect, block) = dock(f, s);
+    s.plan_area.set(rect);
     let options = s.options();
     let n = options.len();
     let hint = match (s.composing, rect.width < 90) {

@@ -17,7 +17,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event as Input, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event as Input, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::{Position, Rect};
 use ratatui::DefaultTerminal;
 
 use crate::orchestrator::judgment::{self, Action};
@@ -161,8 +164,10 @@ pub(crate) struct Question {
     pub(crate) about: About,
     /// The option the cursor is on.
     pub(crate) cursor: usize,
-    /// The first row of a plan shown, which the modal's reading keys move;
-    /// the draw, which knows the width, keeps it inside the plan.
+    /// The first row of a plan shown, which the modal's reading keys move,
+    /// or of a Stage's question, or a pane tail's rows up from its last,
+    /// which the wheel moves; the draw, which knows the width, keeps it
+    /// inside.
     pub(crate) scroll: Cell<usize>,
     /// When a plan's modal first drew it, for its count of the lines since.
     pub(crate) opened: OnceCell<chrono::DateTime<chrono::Local>>,
@@ -230,6 +235,12 @@ pub(crate) struct Screen {
     /// The rows the docked plan's headings, or the summary's Tickets, start
     /// on at the last draw, for Tab and Shift-Tab.
     pub(crate) heads: RefCell<Vec<usize>>,
+    /// Where the last draw put TICKETS, RECENT, the Question box and the
+    /// docked plan, for the wheel to scroll the one under the pointer.
+    pub(crate) tickets_area: Cell<Rect>,
+    pub(crate) recent_area: Cell<Rect>,
+    pub(crate) question_area: Cell<Rect>,
+    pub(crate) plan_area: Cell<Rect>,
     /// The updater thread's checks, applied between commands in poll().
     update_sender: Sender<Checked>,
     update_receiver: Receiver<Checked>,
@@ -288,6 +299,10 @@ impl Screen {
             first: None,
             page: Cell::new(0),
             heads: RefCell::new(Vec::new()),
+            tickets_area: Cell::default(),
+            recent_area: Cell::default(),
+            question_area: Cell::default(),
+            plan_area: Cell::default(),
             update_sender,
             update_receiver,
             update: None,
@@ -991,9 +1006,8 @@ impl Screen {
         }
         // With a list open Up and Down move its cursor, Tab fills in its row
         // and so does Enter, but on a command typed whole that needs no
-        // argument Enter runs it. With the input line empty, Up and Down (and
-        // the wheel, which the terminal sends as them) scroll RECENT; PageUp
-        // and PageDown TICKETS.
+        // argument Enter runs it. With the input line empty, Up and Down
+        // scroll RECENT; PageUp and PageDown TICKETS.
         let (open, picked, whole, pick) = {
             let list = self.list();
             // a reloaded bd cache may have shortened the list under the cursor
@@ -1005,7 +1019,6 @@ impl Screen {
             (list.len(), row.map(|row| row.0.to_string()), whole, pick)
         };
         self.pick = pick;
-        let scroll = |rows: &Cell<usize>, by: isize| rows.set(rows.get().saturating_add_signed(by));
         match key.code {
             KeyCode::Char(_) if held => {}
             KeyCode::Char(c) => {
@@ -1022,10 +1035,10 @@ impl Screen {
                     self.scroll_rows(&self.questions[0].scroll, key.code);
                 }
             }
-            KeyCode::Down if self.input.is_empty() => scroll(&self.recent, -1),
-            KeyCode::Up if self.input.is_empty() => scroll(&self.recent, 1),
-            KeyCode::PageDown if self.input.is_empty() => scroll(&self.scroll, 10),
-            KeyCode::PageUp if self.input.is_empty() => scroll(&self.scroll, -10),
+            KeyCode::Down if self.input.is_empty() => scroll_by(&self.recent, -1),
+            KeyCode::Up if self.input.is_empty() => scroll_by(&self.recent, 1),
+            KeyCode::PageDown if self.input.is_empty() => scroll_by(&self.scroll, 10),
+            KeyCode::PageUp if self.input.is_empty() => scroll_by(&self.scroll, -10),
             KeyCode::Left => self.back = (self.back + 1).min(self.input.chars().count()),
             KeyCode::Right => self.back = self.back.saturating_sub(1),
             KeyCode::Backspace => {
@@ -1059,6 +1072,41 @@ impl Screen {
             }
             _ => {}
         }
+    }
+
+    /// The wheel scrolls the box under the pointer a row: the Epic summary,
+    /// the docked plan, RECENT, a Wake's pane tail or a Stage's question, or
+    /// TICKETS. It never moves a Question's answer or a list's cursor, and
+    /// /config takes none of it. Clicks do nothing.
+    pub(crate) fn mouse(&mut self, m: MouseEvent) {
+        let down = match m.kind {
+            MouseEventKind::ScrollUp => -1,
+            MouseEventKind::ScrollDown => 1,
+            _ => return,
+        };
+        let pointer = Position::new(m.column, m.row);
+        let under = |area: &Cell<Rect>| area.get().contains(pointer);
+        // RECENT and a pane tail count their rows up from the newest.
+        let (rows, by) = if let Some(summary) = &self.summary {
+            (&summary.scroll, down)
+        } else if self.settings.is_some() {
+            return;
+        } else if self.modal() && under(&self.plan_area) {
+            (&self.questions[0].scroll, down)
+        } else if under(&self.recent_area) {
+            (&self.recent, -down)
+        } else if self.showing() && under(&self.question_area) {
+            let q = &self.questions[0];
+            match q.about {
+                About::Asked(Ask::Wake { .. }) => (&q.scroll, -down),
+                _ => (&q.scroll, down),
+            }
+        } else if under(&self.tickets_area) {
+            (&self.scroll, down)
+        } else {
+            return;
+        };
+        scroll_by(rows, by);
     }
 
     /// The reading keys of the plan modal and the Epic summary over its
@@ -1805,7 +1853,14 @@ pub(crate) fn open(
 ) -> io::Result<()> {
     let mut screen = Screen::open(repo, tools, env);
     let mut terminal = ratatui::try_init()?;
+    mouse_reporting(true);
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        mouse_reporting(false);
+        hook(info)
+    }));
     let result = run(&mut terminal, &mut screen);
+    mouse_reporting(false);
     ratatui::restore();
     screen.close();
     if screen.reexec {
@@ -1813,6 +1868,24 @@ pub(crate) fn open(
         eprintln!("orqa: {}", update::reexec(&screen.cfg.exe));
     }
     result
+}
+
+/// Mouse reporting of presses and the wheel, SGR-encoded, on or off, so a
+/// wheel notch comes as itself and not as the ↑ or ↓ the terminal's
+/// alternate scroll sends (harness-7lz). Plain drag no longer selects text;
+/// Shift or Option held does. Not crossterm's EnableMouseCapture, which
+/// reports every move too, a redraw each.
+fn mouse_reporting(on: bool) {
+    let codes = match on {
+        true => "\x1b[?1000h\x1b[?1006h",
+        false => "\x1b[?1006l\x1b[?1000l",
+    };
+    let _ = crossterm::execute!(io::stdout(), crossterm::style::Print(codes));
+}
+
+/// Moves a scroll row by `by`, never under 0; the draw keeps it inside.
+fn scroll_by(rows: &Cell<usize>, by: isize) {
+    rows.set(rows.get().saturating_add_signed(by));
 }
 
 /// The screen thread: take the Events and the State, draw, poll for a key
@@ -1833,8 +1906,10 @@ fn run(terminal: &mut DefaultTerminal, screen: &mut Screen) -> io::Result<()> {
             last = Instant::now();
             continue;
         }
-        if let Input::Key(key) = event::read()? {
-            screen.key(key);
+        match event::read()? {
+            Input::Key(key) => screen.key(key),
+            Input::Mouse(m) => screen.mouse(m),
+            _ => {}
         }
     }
     Ok(())
