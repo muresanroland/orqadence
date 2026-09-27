@@ -73,6 +73,7 @@ pub(crate) mod tempdir {
             let pid = name
                 .to_str()
                 .and_then(|n| n.strip_prefix("orqadence-")?.split_once('-'))
+                .filter(|(_, n)| n.parse::<u64>().is_ok())
                 .and_then(|(pid, _)| pid.parse::<i32>().ok());
             if pid.is_some_and(|pid| pid > 0 && !running(pid)) {
                 let _ = std::fs::remove_dir_all(entry.path());
