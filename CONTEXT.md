@@ -33,7 +33,7 @@ Where init puts the skills Orqadence installs, as the user answers: this checkou
 The beads epic handed to Orqadence. Its child Tickets are the whole scope of one run.
 
 **Ticket**:
-A beads issue that is a child of the Epic, and the unit that moves through the Pipeline. It ends as one pull request and closes only when that pull request is merged.
+A beads issue, and the unit that moves through the Pipeline. Most are children of the Epic; a Ticket can also run on its own, whether it has an Epic or not. It ends as one pull request and closes only when that pull request is merged.
 _Avoid_: Task, issue, story
 
 **Pipeline**:
@@ -114,5 +114,5 @@ The deterministic process that owns ticket state, pane placement, and stage tran
 _Avoid_: Script, runner, daemon
 
 **Shell**:
-The full-terminal screen that `orqa` alone opens: it lists the Epics, takes slash commands, runs the Orchestrator inside its own process, and is where every event and Question appears.
+The full-terminal screen that `orqa` alone opens: it lists the Epics and the open Tickets with no Epic, takes slash commands, runs the Orchestrator inside its own process, and is where every event and Question appears.
 _Avoid_: TUI, dashboard, Main session, attach

@@ -98,7 +98,8 @@ const COMMANDS: [(&str, &str, &str); 14] = [
     ("/exit", "", "leave Orqadence"),
 ];
 
-/// An open Epic and its child Tickets, one row each on the TICKETS tree.
+/// An open Epic and its child Tickets, one row each on the TICKETS tree; or,
+/// its id empty and last, the no-Epic group: the open Tickets with no open Epic.
 pub(crate) struct Epic {
     pub(crate) id: String,
     pub(crate) title: String,
@@ -113,6 +114,8 @@ struct Run {
     scheduler: Option<JoinHandle<Result<(), String>>>,
     /// An Epic run, which a finished Epic clears from the state file.
     epic: bool,
+    /// A Ticket run's Tickets, which alone show live; none in an Epic run.
+    tickets: Vec<String>,
     /// The scheduler returned an error: the state file is read back.
     failed: bool,
     /// The Epic summary has opened by itself, which it does once a run.
@@ -537,7 +540,7 @@ impl Screen {
     /// or merged or is Parked, one at least with its PR: the Epic summary's
     /// EPIC DONE, from the live State.
     fn all_prs_open(&self) -> bool {
-        let Some(epic) = self.epics.iter().find(|e| e.id == self.state.epic) else {
+        let Some(epic) = self.saved() else {
             return false;
         };
         let status = |t: &BdIssue| match self.state.tickets.get(&t.id) {
@@ -548,6 +551,14 @@ impl Screen {
         let out = [STATUS_PR_OPEN, STATUS_MERGED, STATUS_PARKED];
         epic.tickets.iter().all(|t| out.contains(&status(t)))
             && epic.tickets.iter().any(|t| status(t) != STATUS_PARKED)
+    }
+
+    /// The saved run's Epic on the tree; never the no-Epic group.
+    pub(crate) fn saved(&self) -> Option<&Epic> {
+        let epic = &self.state.epic;
+        self.epics
+            .iter()
+            .find(|e| !epic.is_empty() && e.id == *epic)
     }
 
     /// The scheduler has returned and Ticket threads are still leaving.
@@ -853,7 +864,7 @@ impl Screen {
         let (epics, tickets) = (!takes.contains("<ticket>"), !takes.contains("<epic>"));
         let mut found = Vec::new();
         for e in &self.epics {
-            if epics {
+            if epics && !e.id.is_empty() {
                 found.push((e.id.as_str(), "Epic", e.title.as_str()));
             }
             for t in e.tickets.iter().filter(|t| tickets && t.status != "closed") {
@@ -1294,10 +1305,11 @@ impl Screen {
         }
         let epic = o.state.lock().unwrap().epic.clone();
         if !epic.is_empty() {
-            self.spawn(prepared, true, move |o| o.run(&epic));
+            self.spawn(prepared, true, Vec::new(), move |o| o.run(&epic));
         } else {
-            self.spawn(prepared, false, move |o| {
-                o.run_tickets(&o.resumable());
+            let tickets = o.resumable();
+            self.spawn(prepared, false, tickets.clone(), move |o| {
+                o.run_tickets(&tickets);
                 Ok(())
             });
         }
@@ -1474,12 +1486,14 @@ impl Screen {
         let candidates: Vec<(&str, &str)> = if epics {
             self.epics
                 .iter()
+                .filter(|e| !e.id.is_empty())
                 .map(|e| (e.id.as_str(), e.title.as_str()))
                 .collect()
         } else {
             self.epics
                 .iter()
                 .flat_map(|e| &e.tickets)
+                .filter(|t| t.status != "closed")
                 .map(|t| (t.id.as_str(), t.title.as_str()))
                 .collect()
         };
@@ -1494,7 +1508,7 @@ impl Screen {
             })
             .map(|(id, title)| format!("{id} {title}"))
             .collect();
-        let what = if epics { "open Epic" } else { "Ticket" };
+        let what = if epics { "open Epic" } else { "open Ticket" };
         match found.as_slice() {
             [one] => Some(one.split(' ').next().unwrap().to_string()),
             [] => {
@@ -1509,18 +1523,32 @@ impl Screen {
     }
 
     /// /start-epic and /start-ticket: over a different saved Epic (the
-    /// Ticket's parent on the tree) it asks before discarding the saved run,
-    /// which goes only once the lock is held.
+    /// Ticket's parent, as the tree has it; one with none differs from any)
+    /// it asks before discarding the saved run, which goes only once the lock
+    /// is held. An Epic run resumes every running Ticket, so over a saved
+    /// Ticket run it asks too when one running or Parked is not the Epic's.
     fn start(&mut self, id: &str, max: usize, epic: bool, discard: bool) {
-        let saved = self.state.epic.clone();
-        let mine = if epic {
-            id.to_string()
-        } else {
+        let parent = |ticket: &str| {
             self.epics
                 .iter()
-                .find(|e| e.tickets.iter().any(|t| t.id == id))
-                .map(|e| e.id.clone())
+                .flat_map(|e| &e.tickets)
+                .find(|t| t.id == ticket)
+                .map(|t| t.parent.clone())
                 .unwrap_or_default()
+        };
+        let mine = if epic { id.to_string() } else { parent(id) };
+        let saved = if epic && self.state.epic.is_empty() {
+            let stray: Vec<&str> = self
+                .state
+                .tickets
+                .iter()
+                .filter(|(_, ts)| ts.status == STATUS_RUNNING || ts.status == STATUS_PARKED)
+                .filter(|(t, _)| parent(t) != mine)
+                .map(|(t, _)| t.as_str())
+                .collect();
+            stray.join(", ")
+        } else {
+            self.state.epic.clone()
         };
         let other = !saved.is_empty() && saved != mine;
         if other && !discard {
@@ -1542,9 +1570,9 @@ impl Screen {
         }
         let id = id.to_string();
         if epic {
-            self.spawn(prepared, true, move |o| o.run(&id));
+            self.spawn(prepared, true, Vec::new(), move |o| o.run(&id));
         } else {
-            self.spawn(prepared, false, move |o| {
+            self.spawn(prepared, false, vec![id.clone()], move |o| {
                 o.run_ticket(&id);
                 Ok(())
             });
@@ -1607,6 +1635,7 @@ impl Screen {
         &mut self,
         (lock, o): (Lock, Arc<Orchestrator>),
         epic: bool,
+        tickets: Vec<String>,
         work: impl FnOnce(&Arc<Orchestrator>) -> Result<(), String> + Send + 'static,
     ) {
         self.state = o.state.lock().unwrap().clone();
@@ -1618,6 +1647,7 @@ impl Screen {
             o,
             scheduler: Some(scheduler),
             epic,
+            tickets,
             failed: false,
             summarized: false,
             _lock: lock,
@@ -1732,7 +1762,8 @@ fn bd_list(repo: &Path, tools: &dyn Tools) -> Result<Vec<BdIssue>, String> {
     Ok(issues.unwrap_or_default())
 }
 
-/// Every open Epic expanded into its Tickets, from one bd list call.
+/// Every open Epic expanded into its Tickets, then the no-Epic group when it
+/// has one, from one bd list call.
 fn load_epics(repo: &Path, tools: &dyn Tools) -> Result<Vec<Epic>, String> {
     let mut issues = bd_list(repo, tools)?;
     let mut epics: Vec<Epic> = issues
@@ -1744,14 +1775,24 @@ fn load_epics(repo: &Path, tools: &dyn Tools) -> Result<Vec<Epic>, String> {
             tickets: Vec::new(),
         })
         .collect();
+    let mut no_epic = Epic {
+        id: String::new(),
+        title: "no Epic".to_string(),
+        tickets: Vec::new(),
+    };
     issues.sort_by_key(|i| suffix_order(&i.id));
     for issue in issues {
         if issue.issue_type == "epic" {
             continue;
         }
-        if let Some(epic) = epics.iter_mut().find(|e| e.id == issue.parent) {
-            epic.tickets.push(issue);
+        match epics.iter_mut().find(|e| e.id == issue.parent) {
+            Some(epic) => epic.tickets.push(issue),
+            None if issue.status != "closed" => no_epic.tickets.push(issue),
+            None => {}
         }
+    }
+    if !no_epic.tickets.is_empty() {
+        epics.push(no_epic);
     }
     Ok(epics)
 }

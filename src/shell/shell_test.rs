@@ -1142,7 +1142,8 @@ fn the_idle_tree_renders_from_a_fake_bd_with_the_saved_epic_resumable() {
 
 /// Four open Epics as bd lists them. The first is the saved run's, with Ticket
 /// 5 blocked by Ticket 3; every Ticket of the second is closed; the third has
-/// one closed, one in progress and one open; the fourth is not started.
+/// one closed, one in progress and one open; the fourth is not started. Two
+/// open Tickets have no open Epic, one under a closed Epic, one with none.
 const SECTIONS: &str = r#"[
     {"id":"harness-a","title":"Build: the screen","status":"open","issue_type":"epic"},
     {"id":"harness-a.1","title":"Plan floor","status":"closed","issue_type":"task","parent":"harness-a"},
@@ -1163,7 +1164,11 @@ const SECTIONS: &str = r#"[
     {"id":"harness-c.3","title":"Third","status":"open","issue_type":"task","parent":"harness-c"},
     {"id":"harness-d","title":"Not yet","status":"open","issue_type":"epic"},
     {"id":"harness-d.1","title":"Later","status":"open","issue_type":"task","parent":"harness-d"},
-    {"id":"harness-d.2","title":"Much later","status":"open","issue_type":"task","parent":"harness-d"}
+    {"id":"harness-d.2","title":"Much later","status":"open","issue_type":"task","parent":"harness-d"},
+    {"id":"harness-x","title":"Loose end","status":"open","issue_type":"bug"},
+    {"id":"harness-y","title":"Long gone","status":"closed","issue_type":"task"},
+    {"id":"harness-old","title":"Done long ago","status":"closed","issue_type":"epic"},
+    {"id":"harness-old.1","title":"Left behind","status":"in_progress","issue_type":"task","parent":"harness-old"}
 ]"#;
 
 /// The Shell over SECTIONS from a fake bd list, with the saved run on
@@ -1293,8 +1298,21 @@ fn idle_every_open_epic_is_a_rule_line_in_its_color_by_place_with_its_word() {
     assert_eq!(buf[(x, y)].fg, ticket_color("harness-a.4"));
     // Idle, a Ticket blocked on an open PR is only open.
     assert!(row_of(&buf, "· 5 The @ list").ends_with("5 The @ list"));
+    // The open Tickets with no open Epic, last in a section of their own,
+    // each by its whole id.
+    let (_, y) = find(&buf, "▾ no Epic").unwrap_or_else(|| panic!("{:#?}", rows(&buf)));
     assert!(
-        row(&buf, 8).contains("IDLE    4 open Epics  ·  15 Tickets"),
+        row(&buf, y)
+            .trim_end()
+            .ends_with("━ 1 in progress · 1 open  IN PROGRESS"),
+        "{:?}",
+        row(&buf, y)
+    );
+    assert!(row(&buf, y + 1).starts_with("    ├─ ● harness-old.1 Left behind"));
+    assert!(row(&buf, y + 2).starts_with("    └─ · harness-x Loose end"));
+    assert!(find(&buf, "Long gone").is_none(), "a closed one is listed");
+    assert!(
+        row(&buf, 8).contains("IDLE    4 open Epics  ·  17 Tickets"),
         "the idle status row changed: {:?}",
         row(&buf, 8)
     );
@@ -1304,7 +1322,7 @@ fn idle_every_open_epic_is_a_rule_line_in_its_color_by_place_with_its_word() {
 fn live_only_the_runs_epics_are_listed_with_each_label_and_its_stage() {
     let s = sections_screen(true);
     let buf = render(&s, 120, 40);
-    for other in ["harness-b", "harness-c", "harness-d"] {
+    for other in ["harness-b", "harness-c", "harness-d", "no Epic"] {
         assert!(find(&buf, other).is_none(), "{other} is not in the run");
     }
     let (x, y) = find(&buf, "▾ harness-a").unwrap();
@@ -2103,6 +2121,112 @@ fn start_ticket_keeps_a_saved_epic_run_and_asks_over_a_different_one() {
     assert!(s.run.is_some(), "{:?}", s.notice);
     await_end(&mut s);
     assert!(s.state.epic.is_empty(), "{:?}", s.state);
+}
+
+/// A Ticket with no Epic lists idle in a section of its own; /start-ticket
+/// picks it and runs it, and live it shows alone, as a /start-ticket run on
+/// an Epic's Ticket shows that Ticket under its Epic and not the others.
+#[test]
+fn a_ticket_with_no_epic_lists_starts_and_shows_alone_live() {
+    let loose = BdTicket {
+        no_epic: true,
+        ..BdTicket::new("lx")
+    };
+    let (w, _) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2"), loose]);
+    w.session(|_| (String::new(), "working".to_string()));
+    let mut s = shell(&w);
+    s.reload_epics();
+    let idle = |s: &Screen| {
+        let buf = render(s, 120, 40);
+        assert!(find(&buf, "▾ hx  Epic hx").is_some(), "{:#?}", rows(&buf));
+        assert!(find(&buf, "· hx-2 Ticket hx-2").is_some());
+        let (_, y) = find(&buf, "▾ no Epic").unwrap();
+        assert!(
+            row(&buf, y + 1).contains("lx Ticket lx"),
+            "{:#?}",
+            rows(&buf)
+        );
+        buf
+    };
+    let buf = idle(&s);
+    assert!(row_of(&buf, "▾ no Epic").ends_with("━ 1 open  NOT STARTED"));
+    assert!(row_of(&buf, "IDLE").contains("IDLE    1 open Epic  ·  3 Tickets"));
+
+    type_in(&mut s, "/start-epic @");
+    assert_eq!(list_keys(&s), ["hx"], "the no-Epic group is offered");
+    s.input.clear();
+    type_in(&mut s, "/start-ticket @");
+    assert_eq!(list_keys(&s), ["hx-1", "hx-2", "lx"]);
+    s.command("/start-epic lx");
+    assert_eq!(notice(&s), "no open Epic matches \"lx\"");
+    s.command("/start-epic no Epic");
+    assert_eq!(notice(&s), "no open Epic matches \"no Epic\"");
+    s.input.clear();
+    type_in(&mut s, "/start-ticket @lx");
+    s.key(key(KeyCode::Enter)); // picked from the list
+    assert_eq!(s.input, "/start-ticket lx ");
+    s.key(key(KeyCode::Enter));
+    assert!(s.run.is_some(), "{:?}", s.notice);
+    await_line(&mut s, "lx implement started: claude (pane 1-1)");
+    let buf = render(&s, 120, 40);
+    let (_, y) = find(&buf, "▾ no Epic").unwrap_or_else(|| panic!("{:#?}", rows(&buf)));
+    assert!(row(&buf, y).trim_end().ends_with("━ 0/1 merged  RUNNING"));
+    assert!(
+        row(&buf, y + 1).contains("└─ ● lx Ticket lx"),
+        "{:#?}",
+        rows(&buf)
+    );
+    assert!(find(&buf, "▾ hx").is_none() && find(&buf, "Ticket hx-").is_none());
+    s.command("/stop-work");
+    await_end(&mut s);
+    // Idle again: every Ticket, the one no-Epic Ticket saved but not resumable.
+    let buf = idle(&s);
+    assert!(row_of(&buf, "▾ no Epic").ends_with("━ 1 in progress  IN PROGRESS"));
+    // /continue resumes it, and again it shows alone.
+    s.command("/continue");
+    s.key(key(KeyCode::Enter));
+    assert!(s.run.is_some(), "{:?}", s.notice);
+    let buf = render(&s, 120, 40);
+    assert!(
+        row_of(&buf, "▾ no Epic").ends_with("RUNNING"),
+        "{:#?}",
+        rows(&buf)
+    );
+    assert!(find(&buf, "▾ hx").is_none());
+    s.command("/stop-work");
+    await_end(&mut s);
+
+    s.command("/start-ticket hx-1");
+    assert!(s.run.is_some(), "{:?}", s.notice);
+    await_line(&mut s, "hx-1 implement started: claude");
+    let buf = render(&s, 120, 40);
+    assert!(
+        row_of(&buf, "▾ hx").ends_with("━ 0/1 merged  RUNNING"),
+        "{:#?}",
+        rows(&buf)
+    );
+    assert!(
+        find(&buf, "└─ ● hx-1 Ticket hx-1").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    assert!(find(&buf, "Ticket hx-2").is_none() && find(&buf, "▾ no Epic").is_none());
+    s.command("/stop-work");
+    await_end(&mut s);
+    idle(&s);
+    // An Epic run resumes every running Ticket: over lx, not hx's, it asks.
+    s.command("/start-epic hx");
+    assert_eq!(question(&s), "discard the saved run on lx?");
+    s.command("n");
+    assert!(s.run.is_none());
+    // A Ticket with no Epic has none to share with a saved Epic run.
+    s.state.epic = "hx".to_string();
+    s.command("/start-ticket lx");
+    assert_eq!(question(&s), "discard the saved run on hx?");
+    s.command("n");
+    assert!(s.run.is_none());
+    s.command("/start-ticket nothing-like-it");
+    assert_eq!(notice(&s), "no open Ticket matches \"nothing-like-it\"");
 }
 
 #[test]
