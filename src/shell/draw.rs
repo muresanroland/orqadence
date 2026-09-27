@@ -865,10 +865,12 @@ fn input_line(f: &mut Frame, area: Rect, s: &Screen) {
     if s.modal() && s.composing {
         return f.render_widget(Line::from("› ".fg(PURPLE).bold()), area);
     }
+    let (before, after) = s.input.split_at(s.at());
     let mut spans = vec![
         "› ".fg(PURPLE).bold(),
-        s.input.as_str().fg(TEXT),
+        before.fg(TEXT),
         "▌".fg(TEXT),
+        after.fg(TEXT),
     ];
     if s.input.is_empty() {
         spans.push(if s.composing { COMPOSING } else { PLACEHOLDER }.fg(DARK_ORANGE));

@@ -761,6 +761,27 @@ fn up_and_down_move_an_open_lists_cursor_and_scroll_recent_when_none_is() {
     assert_eq!(s.recent.get(), 0);
 }
 
+/// ← and → move the input line's cursor; typing and Backspace act at it.
+#[test]
+fn arrows_move_the_input_cursor() {
+    let mut s = screen();
+    type_in(&mut s, "ñac");
+    s.key(key(KeyCode::Left));
+    type_in(&mut s, "b");
+    assert_eq!(s.input, "ñabc");
+    for _ in 0..9 {
+        s.key(key(KeyCode::Left));
+    }
+    s.key(key(KeyCode::Right));
+    s.key(key(KeyCode::Backspace));
+    assert_eq!(s.input, "abc", "past the start, then back one");
+    s.key(key(KeyCode::Backspace));
+    assert_eq!(s.input, "abc", "nothing before the cursor");
+    s.key(key(KeyCode::Esc));
+    type_in(&mut s, "xy");
+    assert_eq!(s.input, "xy", "a cleared line types at the end");
+}
+
 /// The input line's placeholder draws in dark orange.
 #[test]
 fn the_placeholder_draws_in_dark_orange() {
