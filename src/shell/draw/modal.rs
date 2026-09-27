@@ -197,18 +197,19 @@ pub(super) fn plan(f: &mut Frame, s: &Screen) {
     }
     f.render_widget(divider(rule.width as usize), rule);
 
-    // The feedback being typed shows its tail.
+    // The feedback being typed shows its tail up to the cursor.
     let w = foot.width as usize;
     let composed = || {
         let room = w.saturating_sub(12);
-        let typed = s
-            .input
+        let (before, after) = s.input.split_at(s.at());
+        let typed = before
             .chars()
-            .skip(s.input.chars().count().saturating_sub(room));
+            .skip(before.chars().count().saturating_sub(room));
         Line::from(vec![
             Span::styled("feedback › ", bold(PURPLE)),
             Span::styled(typed.collect::<String>(), fg(TEXT)),
             Span::styled("▌", fg(TEXT)),
+            Span::styled(after, fg(TEXT)),
         ])
     };
     // Folded, one row: where it does not fit, each option's first word.

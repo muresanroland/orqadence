@@ -179,6 +179,8 @@ pub(crate) struct Screen {
     /// The panel's lines, oldest first.
     pub(crate) events: Vec<Event>,
     pub(crate) input: String,
+    /// The input line's cursor, in chars before its end: 0 types at the end.
+    pub(crate) back: usize,
     /// The open list's cursor row, back to the top on every key that types.
     pub(crate) pick: usize,
     /// The first TICKETS row shown, for a tree taller than its room; the
@@ -261,6 +263,7 @@ impl Screen {
             state,
             events: Vec::new(),
             input: String::new(),
+            back: 0,
             pick: 0,
             scroll: Cell::new(0),
             recent: Cell::new(0),
@@ -875,6 +878,16 @@ impl Screen {
         self.input.truncate(at);
         self.input.push_str(picked);
         self.input.push(' ');
+        self.back = 0;
+    }
+
+    /// The input line's cursor as a byte index into it.
+    pub(crate) fn at(&self) -> usize {
+        let n = self.input.chars().count().saturating_sub(self.back);
+        self.input
+            .char_indices()
+            .nth(n)
+            .map_or(self.input.len(), |(i, _)| i)
     }
 
     pub(crate) fn key(&mut self, key: KeyEvent) {
@@ -884,6 +897,8 @@ impl Screen {
         let held = key
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        // a cleared or taken line leaves the cursor past its start
+        self.back = self.back.min(self.input.chars().count());
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if self.ctrl_c.is_some_and(|at| at.elapsed() < CTRL_C_WINDOW) {
                 self.quit();
@@ -983,7 +998,8 @@ impl Screen {
         match key.code {
             KeyCode::Char(_) if held => {}
             KeyCode::Char(c) => {
-                self.input.push(c);
+                let at = self.at();
+                self.input.insert(at, c);
                 self.pick = 0;
             }
             KeyCode::Up if open > 0 => self.pick = self.pick.saturating_sub(1),
@@ -999,8 +1015,13 @@ impl Screen {
             KeyCode::Up if self.input.is_empty() => scroll(&self.recent, 1),
             KeyCode::PageDown if self.input.is_empty() => scroll(&self.scroll, 10),
             KeyCode::PageUp if self.input.is_empty() => scroll(&self.scroll, -10),
+            KeyCode::Left => self.back = (self.back + 1).min(self.input.chars().count()),
+            KeyCode::Right => self.back = self.back.saturating_sub(1),
             KeyCode::Backspace => {
-                self.input.pop();
+                let at = self.at();
+                if let Some(c) = self.input[..at].chars().next_back() {
+                    self.input.remove(at - c.len_utf8());
+                }
                 self.pick = 0;
             }
             KeyCode::Esc if self.composing => {
