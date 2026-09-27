@@ -1525,18 +1525,30 @@ impl Screen {
     /// /start-epic and /start-ticket: over a different saved Epic (the
     /// Ticket's parent, as the tree has it; one with none differs from any)
     /// it asks before discarding the saved run, which goes only once the lock
-    /// is held.
+    /// is held. An Epic run resumes every running Ticket, so over a saved
+    /// Ticket run it asks too when one running or Parked is not the Epic's.
     fn start(&mut self, id: &str, max: usize, epic: bool, discard: bool) {
-        let saved = self.state.epic.clone();
-        let mine = if epic {
-            id.to_string()
-        } else {
+        let parent = |ticket: &str| {
             self.epics
                 .iter()
                 .flat_map(|e| &e.tickets)
-                .find(|t| t.id == id)
+                .find(|t| t.id == ticket)
                 .map(|t| t.parent.clone())
                 .unwrap_or_default()
+        };
+        let mine = if epic { id.to_string() } else { parent(id) };
+        let saved = if epic && self.state.epic.is_empty() {
+            let stray: Vec<&str> = self
+                .state
+                .tickets
+                .iter()
+                .filter(|(_, ts)| ts.status == STATUS_RUNNING || ts.status == STATUS_PARKED)
+                .filter(|(t, _)| parent(t) != mine)
+                .map(|(t, _)| t.as_str())
+                .collect();
+            stray.join(", ")
+        } else {
+            self.state.epic.clone()
         };
         let other = !saved.is_empty() && saved != mine;
         if other && !discard {

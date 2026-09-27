@@ -2214,6 +2214,11 @@ fn a_ticket_with_no_epic_lists_starts_and_shows_alone_live() {
     s.command("/stop-work");
     await_end(&mut s);
     idle(&s);
+    // An Epic run resumes every running Ticket: over lx, not hx's, it asks.
+    s.command("/start-epic hx");
+    assert_eq!(question(&s), "discard the saved run on lx?");
+    s.command("n");
+    assert!(s.run.is_none());
     // A Ticket with no Epic has none to share with a saved Epic run.
     s.state.epic = "hx".to_string();
     s.command("/start-ticket lx");
