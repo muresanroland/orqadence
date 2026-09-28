@@ -16,7 +16,7 @@ A skill owned and shipped by Orqadence that holds the instructions for one Stage
 _Avoid_: Prompt, template
 
 **Brainstorm skill**:
-A skill owned and shipped by Orqadence that holds the instructions for one kind of Brainstorm session, such as charting a Map or researching a Background Map ticket. Orqadence's own, modelled on mattpocock's wayfinder and the skills it calls; a Target repo changes a Brainstorm by editing the installed copy, not by swapping in another skill.
+A skill owned and shipped by Orqadence that holds the instructions for one kind of Brainstorm session, such as charting a Map or researching a Background Waypoint. Orqadence's own, modelled on mattpocock's wayfinder and the skills it calls; a Target repo changes a Brainstorm by editing the installed copy, not by swapping in another skill.
 _Avoid_: Wayfinder, brainstorming skill
 
 **Delegate skill**:
@@ -57,7 +57,7 @@ A Ticket label that only changes which App, model or effort runs a Stage, such a
 _Avoid_: Flag, option
 
 **Brainstorm**:
-Planning work with the user before it is built: one session turns the user's idea into Tickets, or into a Map when the work is big. A Map's Map tickets then get a session each, the ones that need the user one after another, the Background Map tickets alongside, until the Map ticket that writes the Epic closes.
+Planning work with the user before it is built: one session turns the user's idea into Tickets, or into a Map when the work is big. A Map's Waypoints then get a session each, the ones that need the user one after another, the Background Waypoints alongside, until the Waypoint that writes the Epic closes.
 _Avoid_: Wayfinding, grilling, planning run
 
 **Idea**:
@@ -65,16 +65,16 @@ The beads issue a Brainstorm opens for the user's idea the moment charting start
 _Avoid_: Start ticket, brainstorm ticket
 
 **Map**:
-The beads epic a Brainstorm charts: where the work is headed, the decisions made so far, and the Map tickets still open. Its last Map ticket writes the Epic that builds what it decided.
+The beads epic a Brainstorm charts: where the work is headed, the decisions made so far, and the Waypoints still open. Its last Waypoint writes the Epic that builds what it decided.
 _Avoid_: Brainstorm epic, wayfinder epic, coding epic (that is the Epic)
 
-**Map ticket**:
+**Waypoint**:
 One question on a Map, closed by the decision recorded on it rather than by a pull request. It never enters the Pipeline.
-_Avoid_: Ticket, decision ticket
+_Avoid_: Map ticket, Ticket, decision ticket
 
-**Background Map ticket**:
-A Map ticket that needs no user to resolve, such as research, so it can run while the user works another Map ticket or is Away.
-_Avoid_: AFK ticket (AFK is avoided for Away), unattended ticket
+**Background Waypoint**:
+A Waypoint that needs no user to resolve, such as research, so it can run while the user works another Waypoint or is Away.
+_Avoid_: Background Map ticket, AFK ticket (AFK is avoided for Away), unattended ticket
 
 **Pipeline**:
 The fixed sequence of Stages every Ticket passes through: Implement, Review, Debate, Fix, then a pull request.
