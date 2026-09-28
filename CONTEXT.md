@@ -45,7 +45,7 @@ A run over Tickets the user names instead of an Epic: its scope is a queue they 
 _Avoid_: Batch, single-Ticket run
 
 **Ticket label**:
-A bd label `orqa:<name>` that the Target repo has configured, changing how its Ticket runs: the skills and guidance the Stages that write its code get, the App, model or effort of any Stage, a section of its pull request, and possibly an Extra review. A Ticket carries at most one Area label and any number of Modifier labels; labels that clash are put to the user before the Ticket goes on.
+A bd label `orqa:<name>` that the Target repo has configured, changing how its Ticket runs: the skills and guidance the Stages that write its code get, the App, model or effort of any Stage, the template its pull request is written from, and possibly an Extra review. A Ticket carries at most one Area label and any number of Modifier labels; labels that clash are put to the user before the Ticket goes on.
 _Avoid_: Tag, kind
 
 **Area label**:
