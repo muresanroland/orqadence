@@ -44,6 +44,18 @@ _Avoid_: Task, issue, story
 A run over Tickets the user names instead of an Epic: its scope is a queue they add to and take from while it runs, and it ends once every Ticket in it is merged (or none is left). Like an Epic run it takes at most max_tickets at once, polls for merges and resumes; only one run, of either kind, is live in a Target repo.
 _Avoid_: Batch, single-Ticket run
 
+**Ticket label**:
+A bd label `orqa:<name>` that the Target repo has configured, changing how its Ticket runs: the skills and guidance the Stages that write its code get, the App, model or effort of any Stage, a section of its pull request, and possibly an extra Stage. A Ticket carries at most one Area label and any number of Modifier labels; labels that clash are put to the user before the Ticket goes on.
+_Avoid_: Tag, kind
+
+**Area label**:
+The Ticket label naming the one type of work a Ticket does, such as fe, be, db, security, architecture or infra. Work that spans areas is an Epic with a Ticket per area, the Epic's description saying what each side expects of the other.
+_Avoid_: Type (bd's issue type), domain
+
+**Modifier label**:
+A Ticket label that only changes which App, model or effort runs a Stage, such as codex-review, and combines with an Area label.
+_Avoid_: Flag, option
+
 **Brainstorm**:
 Planning work with the user before it is built: one session turns the user's idea into Tickets, or into a Map when the work is big. A Map's Map tickets then get a session each, the ones that need the user one after another, the Background Map tickets alongside, until the Map ticket that writes the Epic closes.
 _Avoid_: Wayfinding, grilling, planning run
@@ -84,7 +96,7 @@ _Avoid_: Agent, kind, CLI, provider
 The recorded outcome of a Stage, carrying its completion status and, as appropriate, Findings, a Verdict, an opened pull request, a Plan to approve, or a question the Stage needs the user to answer before it can go on. The Orchestrator uses it together with the session's state to decide whether the Stage can advance.
 
 **Run directory**:
-The Ticket's directory under `.orqadence/runs/`, holding its Stages' evidence: the result files, diffs and Debate transcripts, all flat text. It doubles as the Review's sandbox, so the checkout's skills are linked there and build scratch lands there too, both pruned when the pull request opens.
+The Ticket's directory under `.orqadence-local/runs/`, holding its Stages' evidence: the result files, diffs and Debate transcripts, all flat text. It doubles as the Review's sandbox, so the checkout's skills are linked there and build scratch lands there too, both pruned when the pull request opens.
 _Avoid_: Logs, workdir, artifacts
 
 **Finding**:
@@ -125,6 +137,10 @@ _Avoid_: Prompt, dialog, alert, form, popup
 **Parked**:
 A Ticket taken out of the Pipeline to wait for the user, after a Wake that a Judgment or the user settled as park, or after its Stage asked a question while the user was Away. Other Tickets keep running.
 _Avoid_: Stuck, paused, failed
+
+**Manual work**:
+Something a Stage needs done that it cannot do itself, above all anything that needs a credential, filed for the user with a prompt to run outside Orqadence. When the Stage cannot go on without it, the Ticket waits until the user marks it done; otherwise the pull request lists it. Unlike a Question, it asks for an action, not an answer.
+_Avoid_: Manual step, human task, hand-off
 
 **Away**:
 What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket. Nothing else changes: Judgments still answer what they can.
