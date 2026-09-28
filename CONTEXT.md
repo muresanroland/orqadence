@@ -16,7 +16,7 @@ A skill owned and shipped by Orqadence that holds the instructions for one Stage
 _Avoid_: Prompt, template
 
 **Brainstorm skill**:
-A skill owned and shipped by Orqadence that holds the instructions for one kind of Brainstorm session, such as charting a Map or researching a Background Waypoint. Orqadence's own, modelled on mattpocock's wayfinder and the skills it calls; a Target repo changes a Brainstorm by editing the installed copy, not by swapping in another skill.
+A skill owned and shipped by Orqadence that holds the instructions for one kind of Brainstorm session, such as charting a Map or answering a Research Waypoint. Orqadence's own, modelled on mattpocock's wayfinder and the skills it calls; a Target repo changes a Brainstorm by editing the installed copy, not by swapping in another skill.
 _Avoid_: Wayfinder, brainstorming skill
 
 **Delegate skill**:
@@ -57,7 +57,7 @@ A Ticket label that only changes which App, model or effort runs a Stage, such a
 _Avoid_: Flag, option
 
 **Brainstorm**:
-Planning work with the user before it is built: one session turns the user's idea into Tickets, or into a Map when the work is big. A Map's Waypoints then get a session each, the ones that need the user one after another, the Background Waypoints alongside, until the Waypoint that writes the Epic closes.
+Planning work with the user before it is built: one session turns the user's idea into Tickets, or into a Map when the work is big. A Map's Waypoints then get a session each, the ones that need the user one after another, the Research Waypoints alongside, until the Waypoint that writes the Epic closes.
 _Avoid_: Wayfinding, grilling, planning run
 
 **Idea**:
@@ -72,9 +72,9 @@ _Avoid_: Brainstorm epic, wayfinder epic, coding epic (that is the Epic)
 One question on a Map, closed by the decision recorded on it rather than by a pull request. It never enters the Pipeline.
 _Avoid_: Map ticket, Ticket, decision ticket
 
-**Background Waypoint**:
-A Waypoint that needs no user to resolve, such as research, so it can run while the user works another Waypoint or is Away.
-_Avoid_: Background Map ticket, AFK ticket (AFK is avoided for Away), unattended ticket
+**Research Waypoint**:
+A Waypoint answered by research alone, needing no user, so Orqadence runs it in its own session while the user works another Waypoint or is Away, and tells the live Waypoint session when it closes. Only research runs without the user; anything needing a credential or a human action is Manual work.
+_Avoid_: Background Waypoint, Background Map ticket, AFK ticket (AFK is avoided for Away), unattended ticket
 
 **Pipeline**:
 The fixed sequence of Stages every Ticket passes through: Implement, Review, Debate, Fix, then a pull request.
