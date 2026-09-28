@@ -159,8 +159,12 @@ Something a Stage needs done that it cannot do itself, above all anything that n
 _Avoid_: Manual step, human task, hand-off
 
 **Away**:
-What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket. Nothing else changes: Judgments still answer what they can.
+What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket. Nothing is pushed to the phone, and the Shell never goes On call. Nothing else changes: Judgments still answer what they can.
 _Avoid_: AFK, offline, unattended mode
+
+**On call**:
+What the Shell turns on by itself when a Question has waited five minutes unanswered and the user is not Away: they are away from the desk but their phone reaches them. That Question, every Question after it and the end of the run are pushed to the phone at once, and the user answers in the Shell. Answering any Question ends it, from wherever it was typed. Unlike Away, nothing parks for it.
+_Avoid_: Away by phone, remote mode, paged
 
 **Limited**:
 A Ticket held because the App its Stage runs on hit its provider's usage limit. The limit holds every Stage on that App, whichever Ticket it belongs to: a short one resumes at the reset; a long one (a reset more than a day away) ends the run with every session saved, and /continue resumes each where it stopped. A limit on the Review is put to the user once, through a Question whose answer stands for every Ticket until the reset; a limit on one Debate side settles the Findings without that side. Unlike Parked, nothing in the Ticket's own work went wrong.
