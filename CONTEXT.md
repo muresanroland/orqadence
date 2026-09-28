@@ -45,7 +45,7 @@ A run over Tickets the user names instead of an Epic: its scope is a queue they 
 _Avoid_: Batch, single-Ticket run
 
 **Ticket label**:
-A bd label `orqa:<name>` that the Target repo has configured, changing how its Ticket runs: the skills and guidance the Stages that write its code get, the App, model or effort of any Stage, a section of its pull request, and possibly an extra Stage. A Ticket carries at most one Area label and any number of Modifier labels; labels that clash are put to the user before the Ticket goes on.
+A bd label `orqa:<name>` that the Target repo has configured, changing how its Ticket runs: the skills and guidance the Stages that write its code get, the App, model or effort of any Stage, a section of its pull request, and possibly an Extra review. A Ticket carries at most one Area label and any number of Modifier labels; labels that clash are put to the user before the Ticket goes on.
 _Avoid_: Tag, kind
 
 **Area label**:
@@ -77,11 +77,15 @@ A Waypoint answered by research alone, needing no user, so Orqadence runs it in 
 _Avoid_: Background Waypoint, Background Map ticket, AFK ticket (AFK is avoided for Away), unattended ticket
 
 **Pipeline**:
-The fixed sequence of Stages every Ticket passes through: Implement, Review, Debate, Fix, then a pull request.
+The fixed sequence of Stages every Ticket passes through: Implement, Review, Debate, Fix, then a pull request, plus an Extra review when its Area label carries one.
 _Avoid_: Workflow, flow
 
+**Extra review**:
+A second review an Area label adds to its Tickets, with its own skill, App, model and effort: the Review's instructions with the label's own review skill, such as a security review or infra's offline checks. As the label says, it runs after the Review in every Round, in the first Round only, or once after the last Round before the pull request, and its Findings join the Debate or go straight to the Fix. Like the Review it never changes the code, and a Round opened unreviewed skips it too.
+_Avoid_: Extra Stage, label Stage, security Stage
+
 **Round**:
-One pass of Review, Debate and Fix over a Ticket. Rounds repeat until a Verdict has no fix items or the cap is reached, after which the pull request opens with any leftover Findings listed.
+One pass of Review, Debate and Fix over a Ticket, with any Extra review beside the Review. Rounds repeat until a Verdict has no fix items or the cap is reached, after which the pull request opens with any leftover Findings listed.
 _Avoid_: Iteration, loop, cycle
 
 **Stage**:
@@ -100,7 +104,7 @@ The Ticket's directory under `.orqadence-local/runs/`, holding its Stages' evide
 _Avoid_: Logs, workdir, artifacts
 
 **Finding**:
-One claimed problem with a Ticket's changes, raised by the Review or by the over-engineering audit, and the unit the Debate argues over.
+One claimed problem with a Ticket's changes, raised by the Review, an Extra review or the over-engineering audit, and the unit the Debate argues over.
 _Avoid_: Comment, issue, point
 
 **Moderator**:
@@ -108,7 +112,7 @@ The neutral session that runs the Debate between side A and side B. It never arg
 _Avoid_: Judge, Debby
 
 **Verdict**:
-The Debate's result: every Finding marked fix or skip, with a severity and the reason. Only fix items reach the Fix Stage.
+The Debate's result: every Finding marked fix or skip, with a severity and the reason. Only fix items reach the Fix Stage, with any Extra review Findings that skip the Debate.
 _Avoid_: Synthesis, summary, report
 
 **Epic summary**:
