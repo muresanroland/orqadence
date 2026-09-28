@@ -20,7 +20,7 @@ A skill owned and shipped by Orqadence that holds the instructions for one kind 
 _Avoid_: Wayfinder, brainstorming skill
 
 **Delegate skill**:
-A third-party skill a Stage skill runs for one job of its Stage (test-first implementing, self review, the over-engineering audit, merge conflicts...), chosen per job by the user. A Stage can have several. The Stage skill still owns the Stage result; with no Delegate skill for a job it follows its own instructions.
+A third-party skill a Stage skill or Brainstorm skill runs for one job (test-first implementing, self review, the over-engineering audit, merge conflicts, how it writes...), chosen per job by the user. A Stage can have several. The skill that runs it still owns its result; with no Delegate skill for a job it follows its own instructions. The Brainstorm's own jobs, grilling, domain modeling, research and prototyping, never take one.
 _Avoid_: Override, replacement, work skill
 
 **Shipped skill**:
