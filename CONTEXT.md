@@ -169,6 +169,10 @@ _Avoid_: Rate-limited, cooling down, throttled
 **Ticket tab**:
 The herdr tab belonging to one running Ticket, holding one pane per Stage.
 
+**Docs pass**:
+graphify's LLM pass over a Target repo's docs and images, which adds what they say to the code graph Orqadence keeps current on its own. It runs only when a new major or minor version tag reaches the default branch and the user says yes to the Question, in an App's session they can watch.
+_Avoid_: Rebuild, graph build, reindex
+
 **Tools**:
 The one seam every external command (herdr, bd, gh, git) goes through; a test double stands behind it so tests never start a process.
 _Avoid_: Runner, exec, shell
