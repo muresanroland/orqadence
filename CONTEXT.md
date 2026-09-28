@@ -15,12 +15,16 @@ _Avoid_: Project, host repo
 A skill owned and shipped by Orqadence that holds the instructions for one Stage. Once installed for a Target repo, the installed copy is the one that runs and may be edited there.
 _Avoid_: Prompt, template
 
+**Brainstorm skill**:
+A skill owned and shipped by Orqadence that holds the instructions for one kind of Brainstorm session, such as charting a Map or researching a Background Map ticket. Orqadence's own, modelled on mattpocock's wayfinder and the skills it calls; a Target repo changes a Brainstorm by editing the installed copy, not by swapping in another skill.
+_Avoid_: Wayfinder, brainstorming skill
+
 **Delegate skill**:
 A third-party skill a Stage skill runs for one job of its Stage (test-first implementing, self review, the over-engineering audit, merge conflicts...), chosen per job by the user. A Stage can have several. The Stage skill still owns the Stage result; with no Delegate skill for a job it follows its own instructions.
 _Avoid_: Override, replacement, work skill
 
 **Shipped skill**:
-Any skill Orqadence installs for a Target repo, at the Skill location: the Stage skills, plus create-pr, which the Fix Stage runs. A repo that already has a create-pr of its own is asked whether to keep it, replace it, or take the shipped one beside it as orqadence-create-pr.
+Any skill Orqadence installs for a Target repo, at the Skill location: the Stage skills, the Brainstorm skills, plus create-pr, which the Fix Stage runs. A repo that already has a create-pr of its own is asked whether to keep it, replace it, or take the shipped one beside it as orqadence-create-pr.
 
 **Skill manifest**:
 One checkout's record of the skills Orqadence installed for it: the Shipped skills, plus third-party skills named by their source, where they were put, and which of them is each Stage's Delegate skill. It belongs to the checkout, not the repo, even when the skill files themselves are committed.
@@ -43,6 +47,10 @@ _Avoid_: Batch, single-Ticket run
 **Brainstorm**:
 Planning work with the user before it is built: one session turns the user's idea into Tickets, or into a Map when the work is big. A Map's Map tickets then get a session each, the ones that need the user one after another, the Background Map tickets alongside, until the Map ticket that writes the Epic closes.
 _Avoid_: Wayfinding, grilling, planning run
+
+**Idea**:
+The beads issue a Brainstorm opens for the user's idea the moment charting starts, in progress while it is charted, so a stopped charting can be found and continued. Once charting ends it closes, naming the Map or the Tickets that came out; it never enters the Pipeline.
+_Avoid_: Start ticket, brainstorm ticket
 
 **Map**:
 The beads epic a Brainstorm charts: where the work is headed, the decisions made so far, and the Map tickets still open. Its last Map ticket writes the Epic that builds what it decided.
