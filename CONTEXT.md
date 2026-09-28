@@ -107,6 +107,18 @@ _Avoid_: Logs, workdir, artifacts
 One claimed problem with a Ticket's changes, raised by the Review, an Extra review or the over-engineering audit, and the unit the Debate argues over.
 _Avoid_: Comment, issue, point
 
+**PR comment**:
+What a reviewer, human or bot, leaves on a Ticket's pull request once it is open: a review thread, or a finding in a review's body or a bot's summary. The Address PR comments Stage acts on them. Unlike a Finding, it comes from outside Orqadence.
+_Avoid_: Finding (that is Orqadence's own Review), feedback
+
+**Rebase**:
+The Stage that brings a Ticket's open pull request back onto the default branch when it conflicts, keeping both sides' intent or asking the user. It runs outside the Pipeline, by itself when the Target repo turns it on, and otherwise on the user's command.
+_Avoid_: Address, conflict fix, merge
+
+**Address PR comments**:
+The Stage that acts on a Ticket's open pull request once its checks and bots are done: it fixes the PR comments and failing checks the user approved, answers the others as won't fix, and pushes to the same pull request. It runs outside the Pipeline, after the user approves or a countdown or Away approves for them.
+_Avoid_: Address (alone), Fix (that is the Pipeline's), review response
+
 **Moderator**:
 The neutral session that runs the Debate between side A and side B. It never argues a position of its own, and settles Findings the sides still dispute by an outside score.
 _Avoid_: Judge, Debby
