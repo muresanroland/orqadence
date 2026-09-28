@@ -73,7 +73,7 @@ One question on a Map, closed by the decision recorded on it rather than by a pu
 _Avoid_: Map ticket, Ticket, decision ticket
 
 **Research Waypoint**:
-A Waypoint answered by research alone, needing no user, so Orqadence runs it in its own session while the user works another Waypoint or is Away, and tells the live Waypoint session when it closes. Only research runs without the user; anything needing a credential or a human action is Manual work.
+A Waypoint answered by research alone, needing no user, so Orqadence runs it in its own session while the user works another Waypoint or is Away; the next session with the user reads what it found. Only research runs without the user; anything needing a credential or a human action is Manual work.
 _Avoid_: Background Waypoint, Background Map ticket, AFK ticket (AFK is avoided for Away), unattended ticket
 
 **Pipeline**:
@@ -151,7 +151,7 @@ What the Shell puts to the user when the Orchestrator cannot act alone: a Wake t
 _Avoid_: Prompt, dialog, alert, form, popup
 
 **Parked**:
-A Ticket taken out of the Pipeline to wait for the user, after a Wake that a Judgment or the user settled as park, or after its Stage asked a question while the user was Away. Other Tickets keep running.
+A Ticket taken out of the Pipeline to wait for the user, after a Wake that a Judgment or the user settled as park, or after its Stage asked a question while the user was Away. Other Tickets keep running. A Research Waypoint whose session needs the user while they are Away is parked the same way, and the other research goes on.
 _Avoid_: Stuck, paused, failed
 
 **Manual work**:
