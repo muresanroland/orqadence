@@ -265,7 +265,7 @@ fn old_checkout() -> TempDir {
 fn old_tools() -> Arc<Fake> {
     Fake::new(|dir, argv| match argv {
         ["git", "status", "--porcelain"] if dir.ends_with("t1") => Ok(" M f\n".to_string()),
-        ["git", "worktree", "remove", "--force", path] if path.ends_with("t2") => {
+        ["git", "worktree", "remove", "--force", "--force", path] if path.ends_with("t2") => {
             Err("fatal: not a working tree".to_string())
         }
         _ => ok(dir, argv),
@@ -288,7 +288,7 @@ fn init_deletes_the_old_run_files_on_yes_keeping_the_branches() {
     let calls = tools.calls();
     for ticket in ["t1", "t2"] {
         let remove = format!(
-            "git worktree remove --force {}",
+            "git worktree remove --force --force {}",
             old.join("worktrees").join(ticket).display()
         );
         assert!(calls.contains(&remove), "no {remove}: {calls:?}");

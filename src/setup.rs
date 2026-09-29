@@ -99,8 +99,10 @@ pub(crate) fn clean_old_checkout(
         }
         for worktree in &worktrees {
             let path = worktree.display().to_string();
-            // One git no longer knows, say: its folder goes with the rest.
-            if let Err(err) = tools.run(repo, &["git", "worktree", "remove", "--force", &path]) {
+            // Force twice removes a locked one too, whose record prune would
+            // keep. One git no longer knows, say: its folder goes with the rest.
+            let remove = ["git", "worktree", "remove", "--force", "--force", &path];
+            if let Err(err) = tools.run(repo, &remove) {
                 write!(out, "init: {err}; deleting its folder anyway\r\n")?;
             }
         }
