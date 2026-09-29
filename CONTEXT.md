@@ -129,7 +129,7 @@ The neutral session that runs the Debate between side A and side B. It never arg
 _Avoid_: Judge, Debby
 
 **Verdict**:
-The Debate's result: every Finding marked fix or skip, with a severity and the reason. Only fix items reach the Fix Stage, with any Extra review Findings that skip the Debate.
+The Debate's result: every Finding marked fix or skip, with a severity and the reason. A high Finding is never debated and is always fix. Only fix items reach the Fix Stage, with any Extra review Findings that skip the Debate.
 _Avoid_: Synthesis, summary, report
 
 **Epic summary**:

@@ -18,7 +18,7 @@ Nothing you run may change the worktree: the Orchestrator compares it with its s
 A side is **limited** when Inputs say so (`Side A: limited until <t>` or `Side B: limited until <t>`), or when its command stops with its App's usage-limit text instead of an answer: codex exits 1 with "You’ve hit your usage limit" on stderr; claude exits non-zero with "You've hit your … limit" on stdout. That is a limit, not a failed side: do not retry it.
 
 - **The side runs on your own App** (the App this session runs on): the limit is yours too. End your turn with the side's limit line as it printed it, and nothing after it: the Orchestrator reads it off your pane and holds the Debate until the reset. When this session carries on after the reset, run that side again and continue the Debate as usual.
-- **The side runs on another App**: the Debate is not argued. Do not run steps 2 and 3, or stop them where they are. If side A is limited, the audit cannot run: skip it and say so in the Notes. Settle every Finding, the audit's included, as follows:
+- **The side runs on another App**: the Debate is not argued. Do not run steps 2 and 3, or stop them where they are. If side A is limited, the audit cannot run: skip it and say so in the Notes. Settle every Finding that is not `(high)`, the audit's included, as follows (a `(high)` Finding is fix as step 1 says):
   - TypeSafe on: ask TypeSafe as in step 4, with `argument_for` and `argument_against` empty. A score of 0.5 or more is **fix**; below 0.5 is **skip**. Settled is `typesafe <score>, <app> limited`. A call that fails or times out twice is **skip**, settled `flagged: TypeSafe unreachable`.
   - TypeSafe off (Inputs has **TypeSafe** `off`, or `TYPESAFE_API_KEY` is empty): every Finding is **skip**, settled `<app> limited, no TypeSafe`.
   - In the Notes write `<app> limited until <t>: side <A or B> did not argue`, so the pull request lists it.
@@ -30,10 +30,11 @@ A side is **limited** when Inputs say so (`Side A: limited until <t>` or `Side B
 - Add over-engineering Findings with the audit on the line below. With no such line there is no audit: write "no over-engineering audit (none picked)" under the Verdict's Notes, or, when **Not installed** under Inputs names the audit, that its skill is not installed.
   Run `<Side A command> "Use the {{audit}} skill on the diff in <that file>. Output one line per finding: - (severity) path:line — what to cut and what replaces it. Output nothing else. Nobody can answer questions: decide and note."` and add each line it returns as a Finding. If that command fails, continue with the Review's Findings and say so in the Verdict.
 - No Findings at all: skip to step 5 and write a Verdict with no items.
+- A `(high)` Finding, the audit's included, is not debated: it is **fix**, settled `high severity`, whatever the sides would say. Steps 2 to 4 argue only the medium and low Findings; with none of those, skip to step 5.
 
 ## 2. Opening positions, both sides in parallel
 
-Give both sides the same brief: the diff file, the numbered Findings, and the instruction "For each Finding say fix or skip and argue why in at most four sentences, citing the code. Fixing means changing this branch before it merges. Nobody can answer questions: decide and note."
+Give both sides the same brief: the diff file, the numbered medium and low Findings, and the instruction "For each Finding say fix or skip and argue why in at most four sentences, citing the code. Fixing means changing this branch before it merges. Nobody can answer questions: decide and note."
 
 - Side A: `<Side A command> "<brief>"`
 - Side B: `<Side B command> "<brief>"`
@@ -69,7 +70,8 @@ STATUS: done
 
 ## Verdict
 
-- [fix] (high) path/file.go:41 — the problem | reason: why, in one sentence | settled: consensus
+- [fix] (high) path/file.go:41 — the problem | reason: high severity is always fixed | settled: high severity
+- [fix] (medium) path/four.go:9 — the problem | reason: why, in one sentence | settled: consensus
 - [skip] (low) path/other.go:12 — the problem | reason: ... | settled: typesafe 0.31
 - [skip] (medium) path/third.go:7 — the problem | reason: ... | settled: flagged: TypeSafe unreachable
 
