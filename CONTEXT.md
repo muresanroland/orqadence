@@ -128,8 +128,12 @@ The Debate's result: every Finding marked fix or skip, with a severity and the r
 _Avoid_: Synthesis, summary, report
 
 **Epic summary**:
-The Shell's read-only page over one run, an Epic's or a Ticket run's: each Ticket's pull request, Rounds and Findings fixed, skipped and left on the pull request, then the Parked Tickets with their reasons, with the run's cost and time. It opens by itself once every Ticket has its pull request or is Parked, and /summary opens it again, built fresh from bd, the state file and the Run directories.
+The Shell's read-only page over one run, an Epic's or a Ticket run's: each Ticket's pull request, Rounds and Findings fixed, skipped and left on the pull request, then the Parked Tickets with their reasons and the Manual work not yet done, with the run's cost and time. It opens by itself once every Ticket has its pull request or is Parked, and /summary opens it again, built fresh from bd, the state file and the Run directories.
 _Avoid_: Report, recap
+
+**Brainstorm summary**:
+The Shell's page at the end of a Brainstorm, once the Waypoint that writes the Epics closes: each Epic in build order with its Tickets and their labels, then the Manual work not yet done. It offers to start the first Epic, but only once the docs pull request is merged and no other run is going; /summary @<map> opens it again.
+_Avoid_: Map summary, Brainstorm report
 
 **Wake**:
 The Orchestrator's request for judgment about a Stage that cannot advance by rule, answered by a Judgment or, failing that, by the user through a Question.
@@ -147,7 +151,7 @@ _Avoid_: LLM call, Main session
 What an Implement session writes before it may edit: the changes and tests it intends for its Ticket, the decisions it made with the answer taken, and an open question only when it has one. A Judgment approves it when it covers every acceptance criterion, stays in scope and asks nothing; otherwise the user reads it and answers, and the session revises it. An open question always goes to the user.
 
 **Question**:
-What the Shell puts to the user when the Orchestrator cannot act alone: a Wake the Judgment was unsure about, a blocked session, a plan to approve, a Stage's own question, the Review's App at its usage limit, or a confirmation. It holds only its Ticket (the Review's limit, every Ticket reaching the Review on that App until it is answered), is answered from a fixed set of options or a line of the user's own text, and is never saved: on resume it is derived again from the live session or the Stage result.
+What the Shell puts to the user when the Orchestrator cannot act alone: a Wake the Judgment was unsure about, a blocked session, a plan to approve, a Stage's own question, Manual work its session waits on, the Review's App at its usage limit, or a confirmation. It holds only its Ticket (the Review's limit, every Ticket reaching the Review on that App until it is answered), is answered from a fixed set of options or a line of the user's own text, and is never saved: on resume it is derived again from the live session or the Stage result.
 _Avoid_: Prompt, dialog, alert, form, popup
 
 **Parked**:
@@ -155,7 +159,7 @@ A Ticket taken out of the Pipeline to wait for the user, after a Wake that a Jud
 _Avoid_: Stuck, paused, failed
 
 **Manual work**:
-Something a Stage needs done that it cannot do itself, above all anything that needs a credential, filed for the user with a prompt to run outside Orqadence. When the Stage cannot go on without it, the Ticket waits until the user marks it done; otherwise the pull request lists it. Unlike a Question, it asks for an action, not an answer.
+Something a code-editing Stage or a Brainstorm session needs done that it cannot do itself, above all anything that needs a credential, filed for the user as written steps plus, as the task needs, a wizard to run or a prompt for a separate session outside Orqadence. When the session cannot go on without it, its Ticket or Waypoint waits on a Question until the user marks it done; otherwise the work goes on, the pull request lists it, and it stays open until the user marks it done. Unlike a Question, it asks for an action, not an answer.
 _Avoid_: Manual step, human task, hand-off
 
 **Away**:
