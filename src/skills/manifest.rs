@@ -131,8 +131,8 @@ pub(crate) fn job_row(job: &str) -> &'static str {
 /// SKILL.md that is itself a link.
 pub(crate) struct Place<'a>(pub(crate) &'a Path);
 
-const FILES: &str = ".orqadence/skills";
-const LINKS: [&str; 2] = [".agents/skills", ".claude/skills"];
+pub(crate) const FILES: &str = ".orqadence/skills";
+pub(crate) const LINKS: [&str; 2] = [".agents/skills", ".claude/skills"];
 
 impl Place<'_> {
     pub(crate) fn skill(&self, name: &str) -> PathBuf {
@@ -751,16 +751,13 @@ pub(crate) fn move_in(repo: &Path, name: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Where a Ticket's worktree and Run directory get the checkout's skills.
-const SUBS: [&str; 2] = [".claude/skills", ".agents/skills"];
-
 /// Links every skill in the checkout's .orqadence/skills into each dir's
 /// .claude/skills and .agents/skills, where nothing is there already and
 /// that folder is dir's own (own), and hides the links from git in the repo's .git/info/exclude: a Ticket's
 /// worktree, and the Review's Run directory. Absolute: they are never
 /// committed.
 pub(crate) fn link_checkout_skills(repo: &Path, dirs: &[&Path]) -> io::Result<()> {
-    let from = repo.join(".orqadence/skills");
+    let from = repo.join(FILES);
     let mut names: Vec<String> = fs::read_dir(&from)
         .into_iter()
         .flatten()
@@ -777,11 +774,11 @@ pub(crate) fn link_checkout_skills(repo: &Path, dirs: &[&Path]) -> io::Result<()
     // gets no links; ask git rev-parse --git-path info/exclude if one does.
     let hidden: Vec<String> = names
         .iter()
-        .flat_map(|name| SUBS.map(|sub| format!("/{sub}/{name}")))
+        .flat_map(|name| LINKS.map(|sub| format!("/{sub}/{name}")))
         .collect();
     crate::setup::add_lines(&repo.join(".git/info/exclude"), &hidden)?;
     for name in &names {
-        for sub in SUBS {
+        for sub in LINKS {
             for dir in dirs {
                 if !own(dir, sub) {
                     continue;
@@ -858,7 +855,7 @@ pub(crate) fn list(repo: &Path, home: &Path, tools: &dyn Tools) -> Vec<(String, 
     let mut dirs = vec![
         repo.join(".agents/skills"),
         repo.join(".claude/skills"),
-        repo.join(".orqadence/skills"),
+        repo.join(FILES),
     ];
     if !home.as_os_str().is_empty() {
         dirs.extend([home.join(".claude/skills"), home.join(".agents/skills")]);

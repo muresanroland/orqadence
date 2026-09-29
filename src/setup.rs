@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::orchestrator::app::{self, APPS};
 use crate::orchestrator::state::{self, local_dir};
-use crate::skills::manifest::{self, Installed, Manifest, Place, JOBS};
+use crate::skills::manifest::{self, Installed, Manifest, Place, FILES, JOBS, LINKS};
 use crate::skills::{stage_skill, SKILLS};
 use crate::tools::Tools;
 
@@ -127,16 +127,7 @@ pub(crate) fn clean_old_checkout(
             }
         }
     }
-    let ignore = repo.join(".gitignore");
-    let Ok(text) = fs::read_to_string(&ignore) else {
-        return Ok(());
-    };
-    let kept: String = text
-        .split_inclusive('\n')
-        .filter(|line| line.trim() != ".orqadence/")
-        .collect();
-    if kept != text {
-        fs::write(&ignore, kept)?;
+    if remove_lines(&repo.join(".gitignore"), &[".orqadence/".to_string()])? {
         write!(
             out,
             "init: removed .orqadence/ from .gitignore: its settings are committed now\r\n"
@@ -198,7 +189,7 @@ pub(crate) fn install_skills(
     let place = Place(repo);
     let mode = if force {
         Mode::Overwrite
-    } else if installed(&repo.join(".orqadence/skills")) {
+    } else if installed(&repo.join(FILES)) {
         write!(
             out,
             "init: the shipped skills are already installed here.\r\n"
@@ -315,26 +306,16 @@ fn installed(dir: &Path) -> bool {
 // ponytail: link_checkout_skills adds them back at a Ticket's start until
 // harness-7ji.4 removes it; commit the links before starting one.
 fn unhide_links(repo: &Path) -> io::Result<()> {
-    let exclude = repo.join(".git/info/exclude");
-    let Ok(text) = fs::read_to_string(&exclude) else {
-        return Ok(());
-    };
-    let hidden: Vec<String> = fs::read_dir(repo.join(".orqadence/skills"))
+    let hidden: Vec<String> = fs::read_dir(repo.join(FILES))
         .into_iter()
         .flatten()
         .flatten()
         .flat_map(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
-            [".claude/skills", ".agents/skills"].map(|sub| format!("/{sub}/{name}"))
+            LINKS.map(|sub| format!("/{sub}/{name}"))
         })
         .collect();
-    let kept: String = text
-        .split_inclusive('\n')
-        .filter(|line| !hidden.iter().any(|h| line.trim() == h))
-        .collect();
-    if kept != text {
-        fs::write(&exclude, kept)?;
-    }
+    remove_lines(&repo.join(".git/info/exclude"), &hidden)?;
     Ok(())
 }
 
@@ -823,6 +804,23 @@ pub(crate) fn add_lines(path: &Path, lines: &[String]) -> io::Result<()> {
     fs::write(path, existing)
 }
 
+/// Takes out of the file at path each line that is one of lines, trimmed,
+/// and says whether any was there. A file that cannot be read has none.
+pub(crate) fn remove_lines(path: &Path, lines: &[String]) -> io::Result<bool> {
+    let Ok(text) = fs::read_to_string(path) else {
+        return Ok(false);
+    };
+    let kept: String = text
+        .split_inclusive('\n')
+        .filter(|line| !lines.iter().any(|drop| line.trim() == drop))
+        .collect();
+    if kept == text {
+        return Ok(false);
+    }
+    fs::write(path, kept)?;
+    Ok(true)
+}
+
 /// Returns one specific message per missing prerequisite.
 pub(crate) fn preflight(
     repo: &Path,
@@ -955,8 +953,9 @@ pub(crate) fn warnings(
 /// Whether the skill is in the repo's .agents/skills, .claude/skills or
 /// .orqadence/skills.
 fn has_skill(repo: &Path, name: &str) -> bool {
-    [".agents/skills", ".claude/skills", ".orqadence/skills"]
-        .iter()
+    LINKS
+        .into_iter()
+        .chain([FILES])
         .any(|dir| repo.join(dir).join(name).join("SKILL.md").exists())
 }
 
