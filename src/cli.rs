@@ -80,11 +80,7 @@ pub fn run(
                 // Cancelled at the gate: nothing else runs, but for this
                 // machine's steps on a committed checkout.
                 Ok(false) if !committed => return 0,
-                Ok(_) => {
-                    let key = env("TYPESAFE_API_KEY");
-                    let token = env(crate::on_call::TOKEN_VAR);
-                    setup::set_up(repo, &*tools, &key, &token, committed, out, input, tty)
-                }
+                Ok(_) => setup::set_up(repo, &*tools, env, committed, out, input, tty),
                 Err(err) => Err(err),
             };
             if let Err(err) = asked {

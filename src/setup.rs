@@ -334,26 +334,25 @@ fn unhide_links(repo: &Path) -> io::Result<()> {
 /// `committed` checkout keeps the committed TypeSafe switch and picks, and
 /// is asked only for the key, when TypeSafe is on and no key is set or
 /// kept; On call is per person, asked on every checkout.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn set_up(
     repo: &Path,
     tools: &dyn Tools,
-    env_key: &str,
-    env_token: &str,
+    env: &dyn Fn(&str) -> String,
     committed: bool,
     out: &mut dyn Write,
     input: &mut dyn Read,
     tty: bool,
 ) -> io::Result<()> {
+    let env_key = env("TYPESAFE_API_KEY");
     bd_init(repo, tools, out, input, tty)?;
     write_agent_docs(repo, out, input, tty)?;
     if !committed {
-        let typesafe = ask_typesafe(repo, env_key, out, input, tty)?;
+        let typesafe = ask_typesafe(repo, &env_key, out, input, tty)?;
         install_defaults(repo, tools, typesafe, out)?;
     } else if app::typesafe(repo) && env_key.trim().is_empty() && !repo.join(KEY_FILE).exists() {
         ask_typesafe_key(repo, out, input, tty)?;
     }
-    ask_on_call(repo, env_token, out, input, tty)?;
+    ask_on_call(repo, &env(on_call::TOKEN_VAR), out, input, tty)?;
     install_integrations(repo, tools, out, input, tty)
 }
 
