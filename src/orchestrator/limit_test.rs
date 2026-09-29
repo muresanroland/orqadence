@@ -1,7 +1,7 @@
 use super::app::app;
 use super::judgment::fake::Fake as TypeSafeFake;
 use super::limit::{find, until, Limit};
-use super::stage::{Ask, Orchestrator, IMPLEMENT};
+use super::stage::{Answer, Ask, Orchestrator, IMPLEMENT};
 use super::state::{load_state, Review, Session, TicketState};
 use super::world::{
     new_world, restarted, set_clock, spawn_ticket, succeed, wait_until, BdTicket, World,
@@ -825,6 +825,76 @@ fn review_with_the_fallback_starts_stage_review_on_its_app_and_model() {
         "{starts:?}"
     );
     assert!(!w.called("herdr agent start h-hx-1-debate ").is_empty());
+}
+
+/// The review pick committed on the base, a personal copy in a home folder
+/// of review_if_limited's App (never the review row's): asked once, at the
+/// Ticket's start, before the Review falls back to that App.
+#[test]
+fn a_personal_copy_in_the_fallback_apps_home_is_asked_once() {
+    let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
+    clock(&mut o);
+    write_file(
+        &w.repo.join(".orqadence/config.json"),
+        r#"{"review_if_limited": {"app": "claude", "model": "opus"}}"#,
+    );
+    w.picked("review", "requesting-code-review");
+    write_file(
+        &w.home
+            .join(".claude/skills/requesting-code-review/SKILL.md"),
+        "yours",
+    );
+    write_file(&o.run_dir("hx-1").join("implement.md"), "STATUS: done\n");
+    let (world, first) = (w.clone(), AtomicBool::new(true));
+    w.session(move |p| {
+        if p.stage == "review" && first.swap(false, SeqCst) {
+            world.lock().tails.insert(p.pane.clone(), CODEX.to_string());
+            return (String::new(), "idle".to_string());
+        }
+        succeed(p)
+    });
+    let o = Arc::new(o);
+    let _run = spawn_ticket(o.clone(), "hx-1");
+
+    let asked = w.await_event("shadows the committed");
+    assert_eq!(
+        asked.text,
+        "your ~/.claude/skills/requesting-code-review shadows the committed \
+         requesting-code-review: claude runs yours"
+    );
+    let Some(Ask::TicketStart { options }) = asked.ask else {
+        panic!("no Ticket-start Question: {:?}", asked.ask);
+    };
+    o.answer("hx-1", "", Answer::Prompt(options[0].clone()));
+    wait_until("the Review's limit Question", || {
+        !review_questions(&w).is_empty()
+    });
+    o.review("codex", Review::Fallback);
+    w.await_line("hx-1 review 1 started: claude opus (pane");
+    w.await_line("hx-1 PR #hx-1 opened");
+    let shadows = w.events().into_iter().filter(|e| {
+        matches!(e.ask, Some(Ask::TicketStart { .. })) && e.text.contains("shadows the committed")
+    });
+    assert_eq!(shadows.count(), 1);
+}
+
+/// No review_if_limited row: nothing loads the review pick on claude, so a
+/// personal copy there asks nothing.
+#[test]
+fn no_shadow_question_without_a_fallback_row() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.picked("review", "requesting-code-review");
+    write_file(
+        &w.home
+            .join(".claude/skills/requesting-code-review/SKILL.md"),
+        "yours",
+    );
+    o.run_ticket("hx-1");
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert!(
+        w.events().iter().all(|e| e.ask.is_none()),
+        "a Question was put"
+    );
 }
 
 #[test]

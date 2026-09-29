@@ -421,7 +421,8 @@ impl Orchestrator {
     }
 
     /// A personal skill with the name of a committed one a Stage loads by
-    /// name (each job's pick, create-pr for the Fix), in a home folder of
+    /// name (each job's pick, create-pr for the Fix, the review pick on
+    /// review_if_limited's row too while it is set), in a home folder of
     /// the App on the row that loads it (home_skills), shadows it: claude
     /// runs the personal one, codex may. A Question each, before any Stage
     /// on each entry, but for Implement's jobs once it is done: gone on
@@ -446,10 +447,17 @@ impl Orchestrator {
             .iter()
             .map(|(job, _)| (manifest.pick(job), job_row(job)))
             .filter(|(_, key)| !(implemented && *key == IMPLEMENT.name))
-            .chain([("create-pr", FIX.name)]);
+            .chain([
+                ("create-pr", FIX.name),
+                (manifest.pick("review"), app::IF_LIMITED),
+            ]);
         for (name, key) in loaded {
             // a row that cannot be read is its Stage's to refuse
-            let Ok(row) = app::row(repo, key) else {
+            let row = match key {
+                app::IF_LIMITED => app::fallback_row(repo).ok().flatten(),
+                _ => app::row(repo, key).ok(),
+            };
+            let Some(row) = row else {
                 continue;
             };
             if !has_skill(&worktree, name) {
