@@ -65,13 +65,24 @@ pub fn run(
                 None => &mut silent,
             };
             let home = PathBuf::from(env("HOME"));
-            let asked = match setup::clean_old_checkout(repo, &*tools, out, &mut *input, tty)
-                .and_then(|()| setup::install_skills(repo, &home, force, out, &mut *input, tty))
-            {
-                Ok(false) => return 0, // cancelled at the gate: nothing else runs
-                Ok(true) => {
+            let tidied = setup::clean_old_checkout(repo, &*tools, out, &mut *input, tty);
+            // After the tidy step, which refuses before any tool runs.
+            let committed = tidied.is_ok() && setup::committed(repo, &*tools);
+            if committed {
+                let _ = writeln!(
+                    out,
+                    "init: this repo's Orqadence settings are committed; asking only this machine's questions"
+                );
+            }
+            let asked = match tidied.and_then(|()| {
+                setup::install_skills(repo, &home, force, committed, out, &mut *input, tty)
+            }) {
+                // Cancelled at the gate: nothing else runs, but for this
+                // machine's steps on a committed checkout.
+                Ok(false) if !committed => return 0,
+                Ok(_) => {
                     let key = env("TYPESAFE_API_KEY");
-                    setup::set_up(repo, &*tools, &key, out, input, tty)
+                    setup::set_up(repo, &*tools, &key, committed, out, input, tty)
                 }
                 Err(err) => Err(err),
             };

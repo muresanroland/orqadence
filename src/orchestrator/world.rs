@@ -234,6 +234,7 @@ pub(crate) fn new_world(tickets: Vec<BdTicket>) -> (Arc<World>, Orchestrator) {
         &repo,
         &home,
         false,
+        false,
         &mut std::io::sink(),
         &mut std::io::empty(),
         false,
