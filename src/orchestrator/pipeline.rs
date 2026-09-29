@@ -13,7 +13,7 @@ use super::stage::{
     IMPLEMENT, REVIEW,
 };
 use super::state::{STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
-use crate::skills::manifest::{has_skill, job_row, unlink_checkout_skills, Manifest, JOBS};
+use crate::skills::manifest::{job_row, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS};
 
 pub(crate) const MAX_ROUNDS: usize = 3;
 
@@ -388,12 +388,14 @@ impl Orchestrator {
         // Merged since a park, say: the branch, still the base's, is
         // brought up to it. Not brought up, the worktree says nothing about
         // the base: park rather than ask or build on a stale one.
-        let pull = ["git", "pull", "--ff-only", "origin", "HEAD"];
-        if let Err(err) = self.cfg.tools.run(&worktree, &pull) {
-            return Err(StageError::Parked(format!(
-                "branch not brought up to origin's default branch: {err}"
-            )));
-        }
+        self.cfg
+            .tools
+            .run(&worktree, &["git", "pull", "--ff-only", "origin", "HEAD"])
+            .map_err(|err| {
+                StageError::Parked(format!(
+                    "branch not brought up to origin's default branch: {err}"
+                ))
+            })?;
         for (job, _) in JOBS {
             let pick = manifest.pick(job);
             if !missing(pick) {
@@ -452,7 +454,12 @@ impl Orchestrator {
             let Ok(row) = app::row(repo, key) else {
                 continue;
             };
-            if !has_skill(&worktree, name) {
+            // committed where the row's App loads it
+            let committed = LINKS.into_iter().chain([FILES]).any(|dir| {
+                row.app.loads(name, Path::new(dir))
+                    && worktree.join(dir).join(name).join("SKILL.md").exists()
+            });
+            if !committed {
                 continue;
             }
             for dir in row.app.home_skills {
@@ -509,12 +516,7 @@ impl Orchestrator {
                 }
             }
             drop(shadows);
-            if self.consume(&format!("park-{ticket}")) {
-                return Err(StageError::Parked("by you at its start".to_string()));
-            }
-            if !self.sleep() {
-                return Err(StageError::Stopped);
-            }
+            self.wait_at_start(ticket)?;
         }
     }
 }

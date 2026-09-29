@@ -1338,13 +1338,20 @@ impl Orchestrator {
                 Some(other) => self.dropped(ticket, &other),
                 None => {}
             }
-            if self.consume(&format!("park-{ticket}")) {
-                return Err(StageError::Parked("by you at its start".to_string()));
-            }
-            if !self.sleep() {
-                return Err(StageError::Stopped);
-            }
+            self.wait_at_start(ticket)?;
         }
+    }
+
+    /// One wait of a Ticket at its start, before any Stage: /park parks it,
+    /// /stop-work stops it.
+    pub(super) fn wait_at_start(&self, ticket: &str) -> Result<(), StageError> {
+        if self.consume(&format!("park-{ticket}")) {
+            return Err(StageError::Parked("by you at its start".to_string()));
+        }
+        if !self.sleep() {
+            return Err(StageError::Stopped);
+        }
+        Ok(())
     }
 
     /// Keeps a woken Ticket waiting, leaving every other Ticket running,
