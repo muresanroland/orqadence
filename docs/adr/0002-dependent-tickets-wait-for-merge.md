@@ -1,5 +1,7 @@
 # Dependent Tickets wait for the merge, not for the pull request
 
+Who merges is superseded by ADR 0007: with Agent merge on, the Orchestrator merges unless the Ticket's label says a human must.
+
 A Ticket's Pipeline ends with an open pull request, but the beads ticket closes only when that pull request is merged, so `bd ready` keeps dependent Tickets blocked until a human has merged what they build on; they then branch from the updated main. Stacked pull requests (branching a dependent from the unmerged branch) were rejected because review changes to the lower pull request force rebases of everything above it, and a Ticket with two dependencies has no single base. A shared epic branch that Orqadence merges into was rejected because it merges code no human has looked at.
 
 ## Consequences

@@ -53,6 +53,10 @@ _Avoid_: Type (bd's issue type), domain
 A Ticket label that only changes which App, model or effort runs a Stage, such as codex-review, and combines with an Area label.
 _Avoid_: Flag, option
 
+**Human-merge label**:
+A Ticket label configured `human_merge`, as security, db and infra ship, or the built-in `orqa:human-merge` on one Ticket: the Orchestrator never merges that Ticket's pull request, which carries the GitHub label `orqa:human-merge`, even under Agent merge.
+_Avoid_: Protected label, manual label
+
 **Release label**:
 The label `orqa:release`, on an Epic or on any Ticket of a Ticket run, asking that the run end in a Release, when the Target repo has releases turned on. An Epic's run raises the minor version, a Ticket run the patch version. Unlike a Ticket label it is read on the Epic, not its Tickets, and changes how the run ends, not how a Ticket runs.
 _Avoid_: Version bump label, release tag
@@ -120,8 +124,16 @@ _Avoid_: Address, conflict fix, merge
 The Stage that acts on a Ticket's open pull request once its checks and bots are done: it fixes the PR comments and failing checks the user approved, answers the others as won't fix, and pushes to the same pull request. It runs outside the Pipeline, after the user approves or a countdown or Away approves for them.
 _Avoid_: Address (alone), Fix (that is the Pipeline's), review response
 
+**Agent merge**:
+The Target repo's switch, off by default and only with automatic Address PR comments on, that lets the Orchestrator merge a Ticket's pull request once Address PR comments' flow has finished on a quiet head: checks green, the repo's review bots done, and every PR comment fixed or answered. Anything still open is a Question, merge or park. Never for a Human-merge label; never by a Stage session.
+_Avoid_: Auto-merge (GitHub's), self-merge
+
+**No-review pull request**:
+The Release's version pull request, or one whose every changed file is Markdown or a skill. It carries the GitHub label `orqa:no-review`, which the review bots are configured to skip, and under Agent merge it merges once its checks are green.
+_Avoid_: Trivial PR, docs PR
+
 **Release**:
-The Stage that ends a run carrying the Release label, once every Ticket is merged: it raises the version wherever the Target repo keeps it, adds a changelog entry when the repo keeps a changelog, and opens the version pull request. When that is merged, a Question asks whether to tag the new version; yes pushes the tag, and either answer ends the run. A repo that keeps its version only in tags gets no pull request, only the Question. It runs outside the Pipeline and belongs to the run, not to a Ticket.
+The Stage that ends a run carrying the Release label, once every Ticket is merged: it raises the version wherever the Target repo keeps it, adds a changelog entry when the repo keeps a changelog, and opens the version pull request. When that is merged, a Question asks whether to tag the new version; yes pushes the tag, and either answer ends the run. Under Agent merge the version pull request is merged and tagged without the Question. A repo that keeps its version only in tags gets no pull request, only the Question. It runs outside the Pipeline and belongs to the run, not to a Ticket.
 _Avoid_: Version bump, bump, publish
 
 **Moderator**:
