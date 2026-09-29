@@ -38,7 +38,7 @@ A beads issue, and the unit that moves through the Pipeline. Most are children o
 _Avoid_: Task, issue, story
 
 **Ticket run**:
-A run over Tickets the user names instead of an Epic: its scope is a queue they add to and take from while it runs, and it ends once every Ticket in it is merged (or none is left). Like an Epic run it takes at most max_tickets at once, polls for merges and resumes; only one run, of either kind, is live in a Target repo.
+A run over Tickets the user names instead of an Epic: its scope is a queue they add to and take from while it runs, and it ends once every Ticket in it is merged (or none is left), after its Release when it carries the Release label. Like an Epic run it takes at most max_tickets at once, polls for merges and resumes; only one run, of either kind, is live in a Target repo.
 _Avoid_: Batch, single-Ticket run
 
 **Ticket label**:
@@ -52,6 +52,10 @@ _Avoid_: Type (bd's issue type), domain
 **Modifier label**:
 A Ticket label that only changes which App, model or effort runs a Stage, such as codex-review, and combines with an Area label.
 _Avoid_: Flag, option
+
+**Release label**:
+The label `orqa:release`, on an Epic or on any Ticket of a Ticket run, asking that the run end in a Release, when the Target repo has releases turned on. An Epic's run raises the minor version, a Ticket run the patch version. Unlike a Ticket label it is read on the Epic, not its Tickets, and changes how the run ends, not how a Ticket runs.
+_Avoid_: Version bump label, release tag
 
 **Brainstorm**:
 Planning work with the user before it is built: one session turns the user's idea into Tickets, or into a Map when the work is big. A Map's Waypoints then get a session each, the ones that need the user one after another, the Research Waypoints alongside, until the Waypoint that writes the Epic closes.
@@ -116,6 +120,10 @@ _Avoid_: Address, conflict fix, merge
 The Stage that acts on a Ticket's open pull request once its checks and bots are done: it fixes the PR comments and failing checks the user approved, answers the others as won't fix, and pushes to the same pull request. It runs outside the Pipeline, after the user approves or a countdown or Away approves for them.
 _Avoid_: Address (alone), Fix (that is the Pipeline's), review response
 
+**Release**:
+The Stage that ends a run carrying the Release label, once every Ticket is merged: it raises the version wherever the Target repo keeps it, adds a changelog entry when the repo keeps a changelog, and opens the version pull request. When that is merged, a Question asks whether to tag the new version; yes pushes the tag, and either answer ends the run. A repo that keeps its version only in tags gets no pull request, only the Question. It runs outside the Pipeline and belongs to the run, not to a Ticket.
+_Avoid_: Version bump, bump, publish
+
 **Moderator**:
 The neutral session that runs the Debate between side A and side B. It never argues a position of its own, and settles Findings the sides still dispute by an outside score.
 _Avoid_: Judge, Debby
@@ -125,7 +133,7 @@ The Debate's result: every Finding marked fix or skip, with a severity and the r
 _Avoid_: Synthesis, summary, report
 
 **Epic summary**:
-The Shell's read-only page over one run, an Epic's or a Ticket run's: each Ticket's pull request, Rounds and Findings fixed, skipped and left on the pull request, then the Parked Tickets with their reasons and the Manual work not yet done, with the run's cost and time. It opens by itself once every Ticket has its pull request or is Parked, and /summary opens it again, built fresh from bd, the state file and the Run directories.
+The Shell's read-only page over one run, an Epic's or a Ticket run's: each Ticket's pull request, Rounds and Findings fixed, skipped and left on the pull request, then the Parked Tickets with their reasons and the Manual work not yet done, with the run's cost and time. It opens by itself once every Ticket has its pull request or is Parked, or, for a run carrying the Release label, only once its Release ends, then naming the new version; /summary opens it again, built fresh from bd, the state file and the Run directories.
 _Avoid_: Report, recap
 
 **Brainstorm summary**:
