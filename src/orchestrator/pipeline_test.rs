@@ -583,6 +583,36 @@ fn a_pick_no_stage_skill_holds_is_not_shadowed() {
     assert_eq!(asked(&w), 0, "a Question was put");
 }
 
+/// A placeholder is filled in by the App of the Stage whose skill holds it:
+/// a committed Fix skill holding {{test-first}} loads tdd on the Fix's claude
+/// row, though Implement, the job's own row, runs on codex.
+#[test]
+fn a_pick_in_another_stages_skill_is_checked_on_that_stages_row() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.picked("test-first", "tdd");
+    write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "yours");
+    write_file(
+        &w.repo.join(".orqadence/config.json"),
+        r#"{"implement": {"app": "codex"}}"#,
+    );
+    let fix = w.repo.join(FILES).join("stage-fix/SKILL.md");
+    let body = std::fs::read_to_string(&fix).unwrap();
+    write_file(
+        &fix,
+        &format!("{body}\nUse the {{{{test-first}}}} skill.\n"),
+    );
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+
+    assert_eq!(
+        w.await_event(SHADOWS).text,
+        "your ~/.claude/skills/tdd shadows the committed tdd: claude runs yours"
+    );
+    answer(&w, &o, "hx-1", SHADOWS, 1, 0);
+    run.wait();
+    w.await_line("hx-1 PR #hx-1 opened");
+}
+
 /// codex's home folders are its own: a ~/.codex/skills/<pick> asks on a
 /// codex row, and on a claude row, which never loads it, does not.
 #[test]

@@ -9,14 +9,12 @@ use serde_json::json;
 use super::app;
 use super::result::{read_stage_result, ResultRequirements, StageResult};
 use super::stage::{
-    plural, pr_ref, result_name, stage_label, Orchestrator, Stage, StageError, AWAY, DEBATE, FIX,
-    IMPLEMENT, REVIEW,
+    plural, pr_ref, result_name, stage_label, Orchestrator, Stage, StageError, ADDRESS, AWAY,
+    DEBATE, FIX, IMPLEMENT, REVIEW,
 };
 use super::state::{STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
-use crate::skills::manifest::{
-    job_row, placeholder, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS,
-};
-use crate::skills::{stage_skill, SKILLS};
+use crate::skills::manifest::{placeholder, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS};
+use crate::skills::stage_skill;
 
 pub(crate) const MAX_ROUNDS: usize = 3;
 
@@ -447,18 +445,30 @@ impl Orchestrator {
         let implemented = read_stage_result(&implement, ResultRequirements::default())
             .1
             .is_empty();
-        let stages: Vec<String> = SKILLS
-            .iter()
-            .filter_map(|(name, _)| stage_skill(&worktree, name)?.ok())
-            .collect();
-        let loaded = JOBS
-            .iter()
-            .map(|(job, _)| (*job, job_row(job)))
-            .chain([("review", app::IF_LIMITED)])
-            .filter(|(job, _)| stages.iter().any(|s| s.contains(&placeholder(job))))
-            .filter(|(_, key)| !(implemented && *key == IMPLEMENT.name))
-            .map(|(job, key)| (manifest.pick(job), key))
-            .chain([("create-pr", FIX.name)]);
+        // Each Stage skill's placeholders on the row whose App fills them
+        // in and runs the Stage: the Debate's on side A's.
+        let rows = [
+            (&IMPLEMENT, IMPLEMENT.name),
+            (&REVIEW, REVIEW.name),
+            (&REVIEW, app::IF_LIMITED),
+            (&DEBATE, "side_a"),
+            (&FIX, FIX.name),
+            (&ADDRESS, ADDRESS.name),
+        ];
+        let mut loaded: Vec<(&str, &str)> = Vec::new();
+        for (st, key) in rows {
+            if implemented && st.name == IMPLEMENT.name {
+                continue;
+            }
+            let Some(Ok(skill)) = stage_skill(&worktree, st.skill) else {
+                continue;
+            };
+            let held = JOBS
+                .iter()
+                .filter(|(job, _)| skill.contains(&placeholder(job)));
+            loaded.extend(held.map(|(job, _)| (manifest.pick(job), key)));
+        }
+        loaded.push(("create-pr", FIX.name));
         for (name, key) in loaded {
             // a row that cannot be read is its Stage's to refuse
             let row = match key {
