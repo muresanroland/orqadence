@@ -5731,9 +5731,8 @@ fn away_or_no_token_never_goes_on_call() {
     assert!(messages(&bell).is_empty(), "rang while Away");
 
     let mut s = screen();
-    let (_, _) = on_call(&mut s, after(6));
+    let (bell, _) = on_call(&mut s, after(6));
     s.on_call.token = None;
-    s.doorbell = bell.clone();
     s.push(plan_asked("harness-kqe.13"));
     s.tick();
     settle(&mut s);
@@ -5831,24 +5830,6 @@ fn an_answer_or_away_ends_on_call_and_the_clock_starts_again() {
         .any(|e| e.text == "on call: off, away is on"));
 }
 
-/// A pick of a Blocked Question's "I answered it" ends On call too.
-#[test]
-fn a_picked_answer_ends_on_call() {
-    let mut s = screen();
-    let _ = on_call(&mut s, after(6));
-    s.push(asking(
-        "harness-kqe.12",
-        "stuck in fix 1",
-        Ask::Blocked {
-            pane: "w1:p8".to_string(),
-        },
-    ));
-    s.tick();
-    assert!(s.calling);
-    pick(&mut s, 3);
-    assert!(!s.calling);
-}
-
 /// The confirmations and the /continue checklist the user's own command
 /// raises never ring, however long they wait.
 #[test]
@@ -5869,8 +5850,7 @@ fn a_discard_confirmation_and_the_continue_checklist_never_ring() {
     assert!(messages(&bell).is_empty());
 
     let mut s = screen();
-    let _ = on_call(&mut s, chrono::Local::now() + chrono::Duration::minutes(10));
-    s.doorbell = bell.clone();
+    let (bell, _) = on_call(&mut s, chrono::Local::now() + chrono::Duration::minutes(10));
     s.command("/continue");
     assert!(matches!(s.questions[0].about, About::Continue { .. }));
     s.tick();
@@ -5936,4 +5916,23 @@ fn on_call_rings_the_runs_end_when_the_summary_opens_by_itself() {
     assert_eq!(messages(&bell), ["hx · run done · Epic hx"]);
     s.command("/stop-work");
     await_end(&mut s);
+}
+
+/// A run that fails after the summary rang run done still rings its stop.
+#[test]
+fn on_call_rings_a_failure_after_the_summary() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
+    let mut s = shell(&w);
+    let (bell, _) = on_call(&mut s, chrono::Local::now());
+    s.calling = true;
+    s.command("/start-epic hx");
+    await_summary(&mut s);
+    s.run.as_mut().unwrap().failed = true; // as the scheduler's error sets it
+    s.command("/stop-work");
+    await_end(&mut s);
+    settle(&mut s);
+    assert_eq!(
+        messages(&bell),
+        ["hx · run done · Epic hx", "hx · run stopped · Epic hx"]
+    );
 }

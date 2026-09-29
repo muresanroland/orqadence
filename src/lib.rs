@@ -107,11 +107,8 @@ pub(crate) mod tempdir {
         fn the_sweep_removes_a_dead_pids_dirs_and_keeps_a_live_ones() {
             // past every pid_max: never a running process; this run's pid as
             // the counter keeps a concurrent run off the same dir
-            let stale = std::env::temp_dir().join(format!(
-                "orqadence-{}-{}",
-                i32::MAX,
-                std::process::id()
-            ));
+            let stale =
+                std::env::temp_dir().join(format!("orqadence-{}-{}", i32::MAX, std::process::id()));
             std::fs::create_dir_all(stale.join(".orqadence-local")).unwrap();
             // a fresh dir of this process, removed by its own Drop
             let live = TempDir::create().unwrap();

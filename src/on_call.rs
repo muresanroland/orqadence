@@ -36,7 +36,7 @@ impl Default for OnCall {
 }
 
 /// The settings: MOSHI_WEBHOOK_TOKEN when set, else the file's token; the
-/// file's minutes when a whole number of at least 1, else 5. A file that is
+/// file's minutes when a whole number from 1 to u32::MAX, else 5. A file that is
 /// missing or unreadable is the defaults.
 pub(crate) fn load(repo: &Path, env: &dyn Fn(&str) -> String) -> OnCall {
     let doc: Value = fs::read_to_string(repo.join(CONFIG))
@@ -53,7 +53,7 @@ pub(crate) fn load(repo: &Path, env: &dyn Fn(&str) -> String) -> OnCall {
         token: (!token.is_empty()).then(|| token.to_string()),
         minutes: on_call["minutes"]
             .as_u64()
-            .filter(|m| *m >= 1)
+            .filter(|m| (1..=u32::MAX as u64).contains(m))
             .unwrap_or(DEFAULT_MINUTES),
     }
 }

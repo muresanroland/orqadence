@@ -551,8 +551,9 @@ impl Screen {
             return;
         }
         let run = self.run.take().unwrap();
-        // it stopped by itself: a long usage limit, or the scheduler's error
-        if !run.summarized && (run.failed || run.o.closed()) {
+        // it stopped by itself: a long usage limit, or the scheduler's error,
+        // which rings even after the summary rang run done
+        if run.failed || run.o.closed() {
             self.ring_end("run stopped");
         }
         self.running = false;
