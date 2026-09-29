@@ -566,6 +566,23 @@ fn an_implemented_ticket_is_not_asked_about_implements_picks() {
     assert_eq!(asked(&w), 0, "a Question was put");
 }
 
+/// A job whose placeholder the committed Stage skill lacks is never run:
+/// a personal copy of its pick shadows nothing.
+#[test]
+fn a_pick_no_stage_skill_holds_is_not_shadowed() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.picked("test-first", "tdd");
+    write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "yours");
+    let implement = w.repo.join(FILES).join("stage-implement/SKILL.md");
+    let body = std::fs::read_to_string(&implement).unwrap();
+    assert!(body.contains("{{test-first}}"));
+    write_file(&implement, &body.replace("{{test-first}}", "a test"));
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 0, "a Question was put");
+}
+
 /// codex's home folders are its own: a ~/.codex/skills/<pick> asks on a
 /// codex row, and on a claude row, which never loads it, does not.
 #[test]

@@ -13,7 +13,10 @@ use super::stage::{
     IMPLEMENT, REVIEW,
 };
 use super::state::{STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
-use crate::skills::manifest::{job_row, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS};
+use crate::skills::manifest::{
+    job_row, placeholder, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS,
+};
+use crate::skills::{stage_skill, SKILLS};
 
 pub(crate) const MAX_ROUNDS: usize = 3;
 
@@ -427,7 +430,8 @@ impl Orchestrator {
     /// on each entry, but for Implement's jobs once it is done: gone on
     /// with, it stands for the run (shadows); parked, /continue asks again.
     /// A pick not committed (a personal, plugin or built-in one, or one not
-    /// merged) has nothing to shadow.
+    /// merged) has nothing to shadow, nor has one whose placeholder no
+    /// committed Stage skill holds: no Stage loads it.
     fn ask_shadowed(&self, ticket: &str) -> Result<(), StageError> {
         let (repo, home) = (&self.cfg.repo, &self.cfg.home);
         // one that cannot be read Wakes the Stage that loads it
@@ -442,8 +446,13 @@ impl Orchestrator {
         let implemented = read_stage_result(&implement, ResultRequirements::default())
             .1
             .is_empty();
+        let stages: Vec<String> = SKILLS
+            .iter()
+            .filter_map(|(name, _)| stage_skill(&worktree, name)?.ok())
+            .collect();
         let loaded = JOBS
             .iter()
+            .filter(|(job, _)| stages.iter().any(|s| s.contains(&placeholder(job))))
             .map(|(job, _)| (manifest.pick(job), job_row(job)))
             .filter(|(_, key)| !(implemented && *key == IMPLEMENT.name))
             .chain([("create-pr", FIX.name)]);
