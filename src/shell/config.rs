@@ -1563,7 +1563,7 @@ impl Screen {
         self.keep_on_call(|kept| kept.token = token, text);
     }
 
-    /// On call's minutes typed: a whole number of at least 1 saves at once,
+    /// On call's minutes typed: a whole number from 1 to u32::MAX saves at once,
     /// nothing puts the default back; anything else is refused, the text
     /// kept to mend.
     fn keep_minutes(&mut self, text: String) {
@@ -1572,7 +1572,9 @@ impl Screen {
                 DEFAULT_MINUTES,
                 format!("On call after {DEFAULT_MINUTES} minutes, its default"),
             ),
-            Ok(n) if n >= 1 => (n, format!("On call after {}", plural(n as usize, "minute"))),
+            Ok(n) if (1..=u32::MAX as u64).contains(&n) => {
+                (n, format!("On call after {}", plural(n as usize, "minute")))
+            }
             _ => {
                 let st = self.settings.as_mut().unwrap();
                 let refused = format!(

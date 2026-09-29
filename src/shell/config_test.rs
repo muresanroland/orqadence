@@ -1924,3 +1924,20 @@ fn a_test_push_rings_once_and_says_sent_or_the_error() {
     assert_eq!(bell.rings.lock().unwrap().len(), 2);
     assert_eq!(note(&s), "test push failed: http status: 500");
 }
+
+/// Minutes past u32::MAX are refused as a file's are at load, so On call's
+/// wait never overflows.
+#[test]
+fn on_call_minutes_refuse_past_u32_max() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    on_call_page(&mut s);
+    keys(&mut s, &[KeyCode::Down, KeyCode::Enter]);
+    type_in(&mut s, "4294967296");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        note(&s),
+        "Refused: 4294967296 is not a whole number of at least 1. Nothing changed."
+    );
+    assert_eq!(s.on_call.minutes, 5);
+}

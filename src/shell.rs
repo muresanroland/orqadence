@@ -268,6 +268,16 @@ pub(crate) struct Screen {
     /// Where On call pushes go: Moshi, or in tests a FakeDoorbell, so no
     /// test rings the phone; a test keeps its own fake by putting it here.
     pub(crate) doorbell: Arc<dyn Doorbell>,
+    /// On call is on: off each time the Shell opens, like Away.
+    pub(crate) calling: bool,
+    /// When On call last ended: a Question's wait counts from then, if later
+    /// than its asking.
+    off_since: Option<chrono::DateTime<chrono::Local>>,
+    /// Each push's outcome, a thread's, read in poll() as the update checks are.
+    ring_sender: Sender<Result<(), String>>,
+    ring_receiver: Receiver<Result<(), String>>,
+    /// The pushes whose outcome poll() has not read yet.
+    pub(crate) pushes: usize,
     /// MOSHI_WEBHOOK_TOKEN was set at open: it wins over a token /config keeps.
     pub(crate) moshi_env: bool,
 }
@@ -282,6 +292,7 @@ impl Screen {
     ) -> Self {
         let (sender, receiver) = mpsc::channel();
         let (update_sender, update_receiver) = mpsc::channel();
+        let (ring_sender, ring_receiver) = mpsc::channel();
         Screen {
             folder,
             version: crate::version::version(),
@@ -328,6 +339,11 @@ impl Screen {
             doorbell: Arc::new(on_call::Moshi),
             #[cfg(test)]
             doorbell: Arc::new(on_call::FakeDoorbell::default()),
+            calling: false,
+            off_since: None,
+            ring_sender,
+            ring_receiver,
+            pushes: 0,
             moshi_env: false,
         }
     }
@@ -495,6 +511,12 @@ impl Screen {
         while let Ok(checked) = self.update_receiver.try_recv() {
             self.updated(checked);
         }
+        while let Ok(rung) = self.ring_receiver.try_recv() {
+            self.pushes -= 1;
+            if let Err(err) = rung {
+                self.refuse(&format!("on call: push failed: {err}"));
+            }
+        }
         self.probed();
         self.finished();
         let Some(run) = &mut self.run else {
@@ -521,6 +543,7 @@ impl Screen {
             self.run.as_mut().unwrap().summarized = true;
             let state = self.state.clone();
             self.summarize(&state, &state.epic);
+            self.ring_end("run done");
         }
         let over = self
             .run
@@ -530,6 +553,11 @@ impl Screen {
             return;
         }
         let run = self.run.take().unwrap();
+        // it stopped by itself: a long usage limit, or the scheduler's error,
+        // which rings even after the summary rang run done
+        if run.failed || run.o.closed() {
+            self.ring_end("run stopped");
+        }
         self.running = false;
         self.questions.retain(|q| q.ticket.is_none()); // never saved: derived again on resume
         self.composing = false;
@@ -615,7 +643,96 @@ impl Screen {
         if self.run.is_none() && self.update.is_some() && Instant::now() >= self.retry {
             self.install(true);
         }
+        self.go_on_call();
         demo::tick(self);
+    }
+
+    /// On call turns on once a counted Question (a Ticket's, not a
+    /// confirmation or the /continue checklist) has waited its minutes, the
+    /// clock started again by the last end; never Away, with no token or in
+    /// the demo. Every counted Question waiting rings.
+    fn go_on_call(&mut self) {
+        let away = self.cfg.away.load(Ordering::SeqCst);
+        if self.calling || away || self.on_call.token.is_none() || self.demo.is_some() {
+            return;
+        }
+        let now = (self.cfg.clock)();
+        let minutes = self.on_call.minutes;
+        let wait = chrono::Duration::minutes(minutes as i64);
+        let waited = |q: &Question| {
+            let since = self.off_since.map_or(q.asked, |off| off.max(q.asked));
+            matches!(q.about, About::Asked(_)) && now - since >= wait
+        };
+        if !self.questions.iter().any(waited) {
+            return;
+        }
+        self.calling = true;
+        self.say(&format!(
+            "on call: a Question has waited {minutes} minutes, pushing to your phone"
+        ));
+        for i in 0..self.questions.len() {
+            self.ring_question(i);
+        }
+    }
+
+    /// Pushes Question `i` when it counts: its Ticket, kind and Ticket
+    /// title; its own text and options never leave the Mac.
+    fn ring_question(&mut self, i: usize) {
+        let q = &self.questions[i];
+        let (Some(id), About::Asked(ask)) = (&q.ticket, &q.about) else {
+            return;
+        };
+        let kind = match ask {
+            Ask::Wake { .. } => "Wake",
+            Ask::Blocked { .. } => "Blocked session",
+            Ask::Plan { .. } => "Plan to approve",
+            Ask::PlanFailed { .. } => "Plan failed",
+            Ask::Limited { .. } => "Usage limit",
+            Ask::StageQuestion { .. } => "Stage question",
+            Ask::TicketStart { .. } => "Start question",
+        };
+        let mut message = format!("{id} · {kind}");
+        if let Some(title) = self.title(id) {
+            message = format!("{message} · {title}");
+        }
+        self.ring(message);
+    }
+
+    /// Ends On call with a RECENT line saying why; the clock starts again.
+    fn off_call(&mut self, why: &str) {
+        if self.calling {
+            self.calling = false;
+            self.off_since = Some((self.cfg.clock)());
+            self.say(&format!("on call: off, {why}"));
+        }
+    }
+
+    /// While On call, the run's end: the Epic (or 'Ticket run'), what
+    /// happened and the Epic's title.
+    fn ring_end(&mut self, what: &str) {
+        if !self.calling {
+            return;
+        }
+        let message = match self.saved() {
+            Some(e) => format!("{} · {what} · {}", e.id, e.title),
+            None if self.state.epic.is_empty() => format!("Ticket run · {what}"),
+            None => format!("{} · {what}", self.state.epic),
+        };
+        self.ring(message);
+    }
+
+    /// One push to the phone on a thread of its own, its outcome to poll().
+    fn ring(&mut self, message: String) {
+        let Some(token) = self.on_call.token.clone() else {
+            return;
+        };
+        if self.demo.is_some() {
+            return;
+        }
+        let (bell, tx) = (self.doorbell.clone(), self.ring_sender.clone());
+        let title = format!("orqa · {}", self.folder);
+        self.pushes += 1;
+        thread::spawn(move || _ = tx.send(bell.ring(&token, &title, &message)));
     }
 
     /// An Event from the Orchestrator; only panel lines show. Any line of
@@ -690,6 +807,9 @@ impl Screen {
             },
         );
         self.tell(Some(&id), &asking);
+        if self.calling {
+            self.ring_question(at);
+        }
     }
 
     /// A line on RECENT.
@@ -1094,6 +1214,7 @@ impl Screen {
                         _ => "your prompt",
                     };
                     self.reply(word, Answer::Prompt(prompt.trim().to_string()));
+                    self.off_call("you answered");
                 }
             }
             KeyCode::Enter => {
@@ -1171,6 +1292,8 @@ impl Screen {
 
     /// The user picked option `choice` of the front Question.
     fn answer(&mut self, choice: usize) {
+        // an answer takes the Question; open the pane and composing leave it
+        let waiting = self.questions.len();
         match (&self.questions[0].about, choice) {
             // a Wake's actions, then open the pane and a prompt of your own
             (About::Asked(Ask::Wake { actions, pane, .. }), _) => match actions.get(choice) {
@@ -1247,7 +1370,9 @@ impl Screen {
                     self.reply(&option.clone(), Answer::Prompt(option));
                 }
             }
+            // answered even when what it confirms asks again
             (About::Confirm(_), 0) => {
+                self.off_call("you answered");
                 let q = self.questions.remove(0);
                 let About::Confirm(pending) = q.about else {
                     unreachable!()
@@ -1270,6 +1395,9 @@ impl Screen {
             _ => {}
         }
         self.hidden = false;
+        if self.questions.len() < waiting {
+            self.off_call("you answered");
+        }
     }
 
     /// Closes the done Epic in bd, its summary in the reason, after a comment
@@ -1548,6 +1676,9 @@ impl Screen {
                     true => "away: on, a Stage's question parks its Ticket",
                     false => "away: off",
                 });
+                if away {
+                    self.off_call("away is on");
+                }
             }
             "/retry" | "/park" | "/address" => {
                 let waiting = self

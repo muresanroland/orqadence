@@ -100,13 +100,15 @@ fn no_token_anywhere_is_off() {
 }
 
 #[test]
-fn minutes_missing_zero_or_not_a_number_is_five() {
+fn minutes_missing_zero_too_big_or_not_a_number_is_five() {
     for minutes in [
         None,
         Some(json!(0)),
         Some(json!("ten")),
         Some(json!(-3)),
         Some(json!(2.5)),
+        Some(json!(u32::MAX as u64 + 1)),
+        Some(json!(u64::MAX)),
     ] {
         let on_call = match &minutes {
             Some(m) => json!({"token": "tok", "minutes": m}),
