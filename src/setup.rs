@@ -81,9 +81,11 @@ pub(crate) fn clean_old_checkout(
             write!(out, "  .orqadence/{name}\r\n")?;
         }
         for worktree in &worktrees {
-            // A status that fails cannot say it is clean.
+            // A status that fails cannot say it is clean. The flag overrides a
+            // status.showUntrackedFiles=no that would hide untracked files.
+            let status = ["git", "status", "--porcelain", "--untracked-files=normal"];
             if tools
-                .run(worktree, &["git", "status", "--porcelain"])
+                .run(worktree, &status)
                 .map_or(true, |status| !status.trim().is_empty())
             {
                 let name = worktree.strip_prefix(repo).unwrap_or(worktree);
@@ -97,13 +99,15 @@ pub(crate) fn clean_old_checkout(
                 "stopped: the old run files in .orqadence are kept; run orqa init again and answer y to delete them",
             ));
         }
+        let mut failed = Vec::new();
         for worktree in &worktrees {
             let path = worktree.display().to_string();
-            // Force twice removes a locked one too, whose record prune would
-            // keep. One git no longer knows, say: its folder goes with the rest.
+            // Force twice removes a locked one too. One git no longer knows,
+            // say: its folder goes with the rest.
             let remove = ["git", "worktree", "remove", "--force", "--force", &path];
             if let Err(err) = tools.run(repo, &remove) {
                 write!(out, "init: {err}; deleting its folder anyway\r\n")?;
+                failed.push(path);
             }
         }
         for name in leftovers {
@@ -114,10 +118,14 @@ pub(crate) fn clean_old_checkout(
                 fs::remove_file(path)?;
             }
         }
-        // A removal that failed left git's record of a now missing folder,
-        // its branch still checked out there: prune drops it.
-        if let Err(err) = tools.run(repo, &["git", "worktree", "prune"]) {
-            write!(out, "init: {err}; run git worktree prune yourself\r\n")?;
+        // A removal that failed may have left git's record of a now missing
+        // folder, its branch still checked out there: removing it again drops
+        // that record, and no other worktree's, as a bare prune would.
+        for path in failed {
+            let remove = ["git", "worktree", "remove", "--force", "--force", &path];
+            if let Err(err) = tools.run(repo, &remove) {
+                write!(out, "init: {err}\r\n")?;
+            }
         }
     }
     let ignore = repo.join(".gitignore");
@@ -412,14 +420,8 @@ fn install_integrations(
     for (name, state) in &stale {
         write!(out, "  {name}: {state}\r\n")?;
     }
-    if yes(
-        out,
-        input,
-        tty,
-        "Install herdr's integration for these?",
-        true,
-    )? == Some(true)
-    {
+    let question = "Install herdr's integration for these?";
+    if yes(out, input, tty, question, true)? == Some(true) {
         for (name, _) in &stale {
             match tools.run(repo, &["herdr", "integration", "install", name]) {
                 Ok(_) => write!(out, "init: installed herdr's {name} integration\r\n")?,
@@ -449,15 +451,8 @@ fn bd_init(
     input: &mut dyn Read,
     tty: bool,
 ) -> io::Result<()> {
-    if repo.join(".beads").exists()
-        || yes(
-            out,
-            input,
-            tty,
-            "No bd workspace here. Run bd init now?",
-            true,
-        )? != Some(true)
-    {
+    let question = "No bd workspace here. Run bd init now?";
+    if repo.join(".beads").exists() || yes(out, input, tty, question, true)? != Some(true) {
         return Ok(());
     }
     match tools.run(repo, &["bd", "init", "--non-interactive"]) {

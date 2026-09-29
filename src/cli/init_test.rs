@@ -264,7 +264,9 @@ fn old_checkout() -> TempDir {
 /// git no longer knows.
 fn old_tools() -> Arc<Fake> {
     Fake::new(|dir, argv| match argv {
-        ["git", "status", "--porcelain"] if dir.ends_with("t1") => Ok(" M f\n".to_string()),
+        ["git", "status", "--porcelain", "--untracked-files=normal"] if dir.ends_with("t1") => {
+            Ok(" M f\n".to_string())
+        }
         ["git", "worktree", "remove", "--force", "--force", path] if path.ends_with("t2") => {
             Err("fatal: not a working tree".to_string())
         }
@@ -297,11 +299,16 @@ fn init_deletes_the_old_run_files_on_yes_keeping_the_branches() {
         out.contains("not a working tree; deleting its folder anyway"),
         "t2's failure not said:\n{out}"
     );
-    let (removes, prune) = (
-        calls.iter().rposition(|call| call.contains("worktree remove")),
-        calls.iter().position(|call| call == "git worktree prune"),
+    let t2 = format!(
+        "git worktree remove --force --force {}",
+        old.join("worktrees/t2").display()
     );
-    assert!(prune > removes, "git's record of t2 not pruned after: {calls:?}");
+    let t2_removes = calls.iter().filter(|call| **call == t2).count();
+    assert_eq!(t2_removes, 2, "t2's record not removed again: {calls:?}");
+    assert!(
+        !calls.iter().any(|call| call.contains("worktree prune")),
+        "every missing worktree pruned: {calls:?}"
+    );
     assert!(
         !calls.iter().any(|call| call.contains("branch -D")),
         "a branch deleted: {calls:?}"
