@@ -59,12 +59,12 @@ orqa init
 - It installs the Stage skills and `create-pr` there. They are yours to edit from then on, and running `init` again asks before touching them. If the repo already has them committed in `.agents/skills`, those stay.
 - With no `bd` workspace, it offers to run `bd init`.
 - It offers to write the beads `docs/agents` setup the skills read, only what is missing: `docs/agents/issue-tracker.md`, `triage-labels.md`, `domain.md`, and an Agent skills block in `CLAUDE.md`, or `AGENTS.md` when there is no `CLAUDE.md`. A non-interactive `init` writes them too.
-- It asks whether to use TypeSafe, yes by default. Yes asks for the key, which it keeps in `.orqadence/typesafe-key`, and installs the `typesafe-ai` skill; an empty key is no. With `TYPESAFE_API_KEY` set it is on without asking. Without it, a non-interactive `init` leaves TypeSafe on only where it is already on with a kept key, and off everywhere else. On or off is kept in `.orqadence/config.json`.
+- It asks whether to use TypeSafe, yes by default. Yes asks for the key, which it keeps in `.orqadence-local/typesafe-key`, and installs the `typesafe-ai` skill; an empty key is no. With `TYPESAFE_API_KEY` set it is on without asking. Without it, a non-interactive `init` leaves TypeSafe on only where it is already on with a kept key, and off everywhere else. On or off is kept in `.orqadence/config.json`.
 - It installs each job's default skill, pinned by commit: `tdd`, `code-review`, `ponytail`, `caveman`, `ponytail-review` and `resolving-merge-conflicts`. At user level, a skill of the same name you already have stays as it is.
 - It offers to install herdr's integration for claude or codex when it is not installed or outdated, listing what each install writes. Without it herdr does not know a session's id, so `/continue` starts those Stages fresh instead of resuming them.
 - It runs a preflight that reports anything still missing: the `bd` workspace, `gh` auth, the git remote, the `create-pr` skill, a job's skill, an App a Stage runs on that is not on `PATH`, or herdr. It also warns about a personal skill that shadows an installed one on Claude, and about the superpowers plugin being enabled.
 
-`.orqadence/` is added to `.gitignore`.
+`.orqadence/` holds what gets committed: `config.json`, `skills.json`, `installed-skills.json` and the skill files. What depends on the machine, the person or the run goes in `.orqadence-local/`, which `init` makes with a `.gitignore` of `*` inside, so the folder ignores itself; `init` adds nothing to the repo's `.gitignore`. `orqa` opens the Shell only once `.orqadence-local/` exists.
 
 ## Run an Epic
 
@@ -111,11 +111,15 @@ Leaving the Shell never kills agent panes.
 
 ### What it writes
 
-Everything goes under `.orqadence/` in the Target repo:
+Committed, in `.orqadence/` in the Target repo: `config.json`, `skills.json`, `installed-skills.json` and the skills.
+
+Local, in `.orqadence-local/`, which ignores itself:
 - `orchestrator.log`: one line per event.
 - `state.json`: the run, so it can be resumed.
+- `lock`: one run per Target repo.
 - `runs/<ticket>/`: each Stage's results, diffs and Debate transcripts.
 - `worktrees/`: one worktree per Ticket.
+- `typesafe-key`: the TypeSafe key, readable only by you.
 
 ## Releasing
 

@@ -8,6 +8,7 @@ use crossterm::style::Stylize;
 
 use crate::orchestrator::app;
 use crate::orchestrator::stage::log_line;
+use crate::orchestrator::state::LOCAL;
 use crate::setup;
 use crate::tools::Tools;
 
@@ -28,9 +29,11 @@ pub fn run(
     tools: Arc<dyn Tools>,
     env: &dyn Fn(&str) -> String,
 ) -> i32 {
-    // orqa alone opens the Shell (ADR 0004), once init has made .orqadence.
+    // orqa alone opens the Shell (ADR 0004), once init has made
+    // .orqadence-local (ADR 0006): a fresh clone has the committed
+    // .orqadence but not it.
     let Some(name) = args.first() else {
-        if !repo.join(".orqadence").is_dir() {
+        if !repo.join(LOCAL).is_dir() {
             let _ = write!(
                 out,
                 "\n  {} {}\n\n  Run it to set this repo up, then start Orqadence again:\n\n    {}\n\n",

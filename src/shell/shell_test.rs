@@ -165,7 +165,7 @@ pub(super) fn notice(s: &Screen) -> &str {
 }
 
 pub(super) fn log(w: &World) -> String {
-    std::fs::read_to_string(w.repo.join(".orqadence/orchestrator.log")).unwrap_or_default()
+    std::fs::read_to_string(w.repo.join(".orqadence-local/orchestrator.log")).unwrap_or_default()
 }
 
 pub(super) fn render(s: &Screen, w: u16, h: u16) -> Buffer {
@@ -1056,7 +1056,7 @@ fn the_wheel_scrolls_the_box_under_the_pointer_and_never_moves_an_answer() {
         Ask::Wake {
             pane: "w1:p7".to_string(),
             tail: "Ran the tests: 12 passed.\n".to_string(),
-            file: PathBuf::from("/r/.orqadence/runs/harness-kqe.11/fix-1.md"),
+            file: PathBuf::from("/r/.orqadence-local/runs/harness-kqe.11/fix-1.md"),
             actions: Action::ALL[..4].to_vec(),
             judged: None,
         },
@@ -1121,7 +1121,7 @@ fn the_wheel_scrolls_the_box_under_the_pointer_and_never_moves_an_answer() {
 fn the_idle_tree_renders_from_a_fake_bd_with_the_saved_epic_resumable() {
     let repo = TempDir::new();
     write_file(
-        &repo.path().join(".orqadence/state.json"),
+        &repo.path().join(".orqadence-local/state.json"),
         r#"{"epic":"harness-kqe","tickets":{"harness-kqe.9":{"status":"running","stage":"review","round":2},"harness-kqe.10":{"status":"parked","stage":"implement","round":0,"reason":"went idle"}}}"#,
     );
     let fake = Fake::new(|_, argv| {
@@ -1609,7 +1609,7 @@ fn a_long_limit_ends_the_run_and_continue_after_the_reset_resumes_it() {
 fn the_reviews_limit_question_offers_the_fallback_and_its_answer_stands() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
     write_file(
-        &w.repo.join(".orqadence/runs/hx-1/implement.md"),
+        &w.repo.join(".orqadence-local/runs/hx-1/implement.md"),
         "STATUS: done\n",
     );
     write_file(
@@ -2963,7 +2963,9 @@ fn a_wake_docks_with_the_pane_tail_and_its_options_and_hides_on_esc() {
     let repo = TempDir::new();
     let fake = Fake::quiet();
     let mut s = screen_at(fake.clone(), repo.path());
-    let file = repo.path().join(".orqadence/runs/harness-kqe.11/fix-1.md");
+    let file = repo
+        .path()
+        .join(".orqadence-local/runs/harness-kqe.11/fix-1.md");
     let tail: String = (1..=60).map(|n| format!("step {n}\n")).collect();
     let tail = format!("{tail}Ran the tests: 12 passed.\n> Should I also update the docs?\n");
     let wake = || Ask::Wake {
@@ -3009,7 +3011,7 @@ fn a_wake_docks_with_the_pane_tail_and_its_options_and_hides_on_esc() {
         let (x, _) = find(&buf, "┏").unwrap();
         cols(&buf, 2, x as usize + 2, 318).trim_end().to_string()
     };
-    let path = ".orqadence/runs/harness-kqe.11/fix-1.md";
+    let path = ".orqadence-local/runs/harness-kqe.11/fix-1.md";
     assert_eq!(
         facts(&s),
         format!("fix, round 1 · asked 12:04:44 · result file {path} is missing · left for this session: a nudge, a retry")
@@ -3080,7 +3082,7 @@ fn a_wake_docks_with_the_pane_tail_and_its_options_and_hides_on_esc() {
     );
     s.running = false;
     assert!(
-        std::fs::read_to_string(repo.path().join(".orqadence/orchestrator.log"))
+        std::fs::read_to_string(repo.path().join(".orqadence-local/orchestrator.log"))
             .unwrap()
             .lines()
             .any(|l| l.get(20..) == Some("harness-kqe.11 asking you: stuck in fix 1"))
@@ -3288,7 +3290,7 @@ fn a_wake_question_nudges_opens_the_pane_and_parks() {
         question(&s),
         "stuck in implement: went idle without a result (pane 1-1)"
     );
-    let file = w.repo.join(".orqadence/runs/hx-1/implement.md");
+    let file = w.repo.join(".orqadence-local/runs/hx-1/implement.md");
     let pane = asked_pane(&s);
     assert_eq!(pane, s.state.tickets["hx-1"].panes["implement"]);
     // What the session was prompted with, the Stage prompt left out.
@@ -3565,7 +3567,7 @@ fn the_band_and_options_stay_whole_where_rows_are_fewest() {
 #[test]
 fn a_wake_docks_at_80x24_with_every_option_and_the_band_in_full() {
     let mut s = merge_and_limited();
-    let file = Path::new("/r/.orqadence/runs/harness-a.6/review-1.md");
+    let file = Path::new("/r/.orqadence-local/runs/harness-a.6/review-1.md");
     s.push(asking(
         "harness-a.6",
         "stuck in review 1: went idle without a result (pane 2-1)",
@@ -3819,7 +3821,7 @@ fn a_question_closes_when_its_ticket_moves_on_and_a_late_answer_is_dropped() {
         s.command("/start-epic hx");
         await_line(&mut s, "hx-1 asking you: stuck in implement");
         write_file(
-            &w.repo.join(".orqadence/runs/hx-1/implement.md"),
+            &w.repo.join(".orqadence-local/runs/hx-1/implement.md"),
             "STATUS: done\n",
         );
         let o = orchestrator(&s);
@@ -3891,7 +3893,7 @@ fn park_takes_a_running_ticket_out_at_its_stage() {
     // /continue takes a saved run of Parked Tickets alone: resume unparks
     // the Ticket at its Stage, where the result it wrote meanwhile is taken.
     write_file(
-        &w.repo.join(".orqadence/runs/hx-1/implement.md"),
+        &w.repo.join(".orqadence-local/runs/hx-1/implement.md"),
         "STATUS: done\n",
     );
     w.session(succeed);
@@ -3927,8 +3929,8 @@ fn the_continue_checklist_resets_a_ticket_to_implement() {
     await_line(&mut s, "hx-1 review 1 started: codex (pane 1-2)");
     s.command("/stop-work");
     await_end(&mut s);
-    let runs = w.repo.join(".orqadence/runs");
-    let state = std::fs::read_to_string(w.repo.join(".orqadence/state.json")).unwrap();
+    let runs = w.repo.join(".orqadence-local/runs");
+    let state = std::fs::read_to_string(w.repo.join(".orqadence-local/state.json")).unwrap();
     let closed = w.called("herdr pane close").len();
 
     // Another process's run holds the lock: nothing is closed, moved or saved.
@@ -3945,7 +3947,7 @@ fn the_continue_checklist_resets_a_ticket_to_implement() {
     assert_eq!(w.called("herdr pane close").len(), closed);
     assert!(runs.join("hx-1/implement.md").exists() && !runs.join("hx-1.reset-1").exists());
     assert_eq!(
-        std::fs::read_to_string(w.repo.join(".orqadence/state.json")).unwrap(),
+        std::fs::read_to_string(w.repo.join(".orqadence-local/state.json")).unwrap(),
         state
     );
     drop(other);
@@ -4000,7 +4002,7 @@ fn dump() {
 fn a_plan_question_takes_feedback_typed_in_the_modal_then_approval() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
     w.lock().merged = true;
-    let run = w.repo.join(".orqadence/runs/hx-1");
+    let run = w.repo.join(".orqadence-local/runs/hx-1");
     let words = vec!["word"; 60].join(" "); // four rows at 88 columns
     let steps: String = (1..=80).map(|n| format!("- step {n}\n")).collect();
     let plan = format!("{words}\n{steps}");
@@ -4173,7 +4175,8 @@ fn kept_feedback_can_be_resent_and_a_failed_plan_step_offers_retry() {
     pick(&mut s, 1);
     assert_eq!(fake.calls(), ["herdr agent focus w1:p7"]);
     assert_eq!(s.questions.len(), 1, "open the pane answered the Question");
-    let log = std::fs::read_to_string(repo.path().join(".orqadence/orchestrator.log")).unwrap();
+    let log =
+        std::fs::read_to_string(repo.path().join(".orqadence-local/orchestrator.log")).unwrap();
     for line in [
         "harness-kqe.11 you answered: feedback",
         "harness-kqe.11 asking you: stuck in implement",
@@ -4201,7 +4204,7 @@ fn answered(s: &mut Screen, w: &World, ticket: &str) {
     let pane = s.state.tickets[ticket].panes["implement"].clone();
     write_file(
         &w.repo
-            .join(format!(".orqadence/runs/{ticket}/implement.md")),
+            .join(format!(".orqadence-local/runs/{ticket}/implement.md")),
         "STATUS: done\n",
     );
     w.lock().agents.insert(pane, "idle".to_string());
@@ -4393,7 +4396,7 @@ fn plan_screen(repo: &Path) -> Screen {
         Ask::Wake {
             pane: "w1:p9".to_string(),
             tail: "Ran the tests.\n".to_string(),
-            file: PathBuf::from("/r/.orqadence/runs/harness-kqe.10/fix-1.md"),
+            file: PathBuf::from("/r/.orqadence-local/runs/harness-kqe.10/fix-1.md"),
             actions: Action::ALL[..4].to_vec(),
             judged: None,
         },
@@ -4896,7 +4899,7 @@ fn summary_world() -> (Arc<World>, Screen) {
         BdTicket::new("hx-3"),
     ]);
     w.lock().tickets[0].status = "closed".to_string();
-    let runs = w.repo.join(".orqadence/runs");
+    let runs = w.repo.join(".orqadence-local/runs");
     let files = [
         (
             "hx-1/verdict-1.md",
@@ -4941,7 +4944,7 @@ fn summary_world() -> (Arc<World>, Screen) {
         (
             ".claude/projects/{slug}/s1.jsonl",
             COST_CLAUDE,
-            w.repo.join(".orqadence/worktrees/hx-1"),
+            w.repo.join(".orqadence-local/worktrees/hx-1"),
         ),
         (
             ".codex/sessions/2026/09/24/rollout-1.jsonl",
@@ -4967,7 +4970,10 @@ fn summary_world() -> (Arc<World>, Screen) {
         "2026-09-24 19:05:00 hx-2 PR #2 opened after 3 rounds (https://example.test/pr/2)",
         "2026-09-24 19:10:00 hx-3 parked: the session asked which model name to use",
     ];
-    write_file(&w.repo.join(".orqadence/orchestrator.log"), &log.join("\n"));
+    write_file(
+        &w.repo.join(".orqadence-local/orchestrator.log"),
+        &log.join("\n"),
+    );
     let mut s = shell(&w);
     s.state.epic = "hx".to_string();
     s.state.tickets.insert(
@@ -5110,7 +5116,7 @@ fn summary_counts_each_tickets_rounds_and_findings_from_its_run_directory() {
 #[test]
 fn fixed_leaves_out_the_last_verdicts_fix_items() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
-    let runs = w.repo.join(".orqadence/runs");
+    let runs = w.repo.join(".orqadence-local/runs");
     let one = verdict(&["(low) src/a.rs:1 — one"], &[]);
     let files = [
         ("hx-1/verdict-1.md", verdict(&["(high) a", "(low) b"], &[])),
@@ -5303,7 +5309,7 @@ fn summary_at_an_epic_shows_that_epics_and_one_with_no_evidence_is_a_notice() {
         list
     });
     write_file(
-        &w.repo.join(".orqadence/runs/hy-1/verdict-1.md"),
+        &w.repo.join(".orqadence-local/runs/hy-1/verdict-1.md"),
         &verdict(&[], &["(low) src/y.rs:1 — why not"]),
     );
     s.reload_epics();
@@ -5335,7 +5341,7 @@ fn summary_at_an_epic_shows_that_epics_and_one_with_no_evidence_is_a_notice() {
 
     // A closed Epic by its id; three Rounds with no PR leave nothing on one,
     // and the cap's fix item is not fixed.
-    let runs = w.repo.join(".orqadence/runs/hw-1");
+    let runs = w.repo.join(".orqadence-local/runs/hw-1");
     for n in 1..=3 {
         let body = verdict(&["(low) src/w.rs:1 — w"], &[]);
         write_file(&runs.join(format!("verdict-{n}.md")), &body);
@@ -5517,7 +5523,7 @@ fn the_close_reason_keeps_a_parked_tickets_reason() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
     w.lock().tickets[0].status = "closed".to_string();
     write_file(
-        &w.repo.join(".orqadence/state.json"),
+        &w.repo.join(".orqadence-local/state.json"),
         r#"{"epic":"hx","tickets":{"hx-1":{"status":"parked","stage":"implement","round":0,"reason":"went idle"}}}"#,
     );
     let mut s = shell(&w);

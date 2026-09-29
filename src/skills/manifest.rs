@@ -10,6 +10,7 @@ use std::iter;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
+use crate::orchestrator::state::LOCAL;
 use crate::tempdir::TempDir;
 use crate::tools::Tools;
 
@@ -870,7 +871,7 @@ fn unmove_skill(repo: &Path, from: &Place, to: &Place, name: &str) -> io::Result
 fn relink(repo: &Path, name: &str, old: &Path, new: &Path) -> io::Result<()> {
     let mut failed = Ok(());
     for kind in ["worktrees", "runs"] {
-        for dir in fs::read_dir(repo.join(".orqadence").join(kind))
+        for dir in fs::read_dir(repo.join(LOCAL).join(kind))
             .into_iter()
             .flatten()
             .flatten()

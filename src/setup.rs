@@ -11,6 +11,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::orchestrator::app::{self, APPS};
+use crate::orchestrator::state::local_dir;
 use crate::skills::manifest::{self, Installed, Location, Manifest, Place, JOBS};
 use crate::skills::{stage_skill, SKILLS};
 use crate::tools::Tools;
@@ -18,7 +19,7 @@ use crate::tools::Tools;
 /// The record of every skill file init wrote, path to the text it wrote:
 /// under refresh, a file that still matches is unedited and is rewritten.
 const RECORD: &str = ".orqadence/installed-skills.json";
-pub(crate) const KEY_FILE: &str = ".orqadence/typesafe-key";
+pub(crate) const KEY_FILE: &str = ".orqadence-local/typesafe-key";
 
 #[derive(Clone, Copy)]
 enum Mode {
@@ -39,7 +40,9 @@ enum Mode {
 /// of its own is asked what to do with the shipped one, since the Fix Stage
 /// runs whichever /create-pr the repo ends up with; later inits keep that
 /// answer from the record. `input` answers the questions, in raw mode when
-/// `tty`.
+/// `tty`. .orqadence-local is made first, whatever the answers: orqa opens
+/// once it exists; a TypeSafe key an older init kept in .orqadence moves
+/// into it, unless one is already there.
 pub(crate) fn install_skills(
     repo: &Path,
     home: &Path,
@@ -49,6 +52,11 @@ pub(crate) fn install_skills(
     input: &mut dyn Read,
     tty: bool,
 ) -> io::Result<bool> {
+    local_dir(repo)?;
+    let old_key = repo.join(".orqadence/typesafe-key");
+    if old_key.exists() && !repo.join(KEY_FILE).exists() {
+        fs::rename(old_key, repo.join(KEY_FILE))?;
+    }
     let mut record: BTreeMap<String, String> = fs::read_to_string(repo.join(RECORD))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
@@ -177,7 +185,6 @@ pub(crate) fn install_skills(
         serde_json::to_string_pretty(&record)? + "\n",
     )?;
     manifest.save(repo).map_err(io::Error::other)?;
-    ignore_run_dir(repo)?;
     Ok(true)
 }
 
@@ -514,7 +521,7 @@ fn ask_typesafe_key(
 
 /// Keeps the TypeSafe key in KEY_FILE, readable only by the user.
 pub(crate) fn keep_key(repo: &Path, key: &str) -> io::Result<()> {
-    fs::create_dir_all(repo.join(".orqadence"))?;
+    local_dir(repo)?;
     File::options()
         .write(true)
         .create(true)
@@ -694,11 +701,6 @@ fn done(out: &mut dyn Write, options: &[&str], sel: usize) -> io::Result<usize> 
     write!(out, "\x1b[K\r\ninit: {}\r\n", options[sel])?;
     out.flush()?;
     Ok(sel)
-}
-
-/// Adds .orqadence/ to the Target repo's .gitignore once.
-pub(crate) fn ignore_run_dir(repo: &Path) -> io::Result<()> {
-    add_lines(&repo.join(".gitignore"), &[".orqadence/".to_string()])
 }
 
 /// Appends each line the file lacks, making the file and its folder if need be.

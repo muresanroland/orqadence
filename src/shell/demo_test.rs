@@ -69,7 +69,10 @@ fn the_demo_plays_a_run_asks_and_puts_the_shell_back() {
     assert!(prs[..3].iter().all(|pr| !pr.is_empty()), "{prs:?}");
     assert!(!s.running && s.questions.is_empty());
     assert_eq!((s.epics[0].id.clone(), s.state.clone()), (epics, state));
-    assert!(!repo.path().join(".orqadence/orchestrator.log").exists());
+    assert!(!repo
+        .path()
+        .join(".orqadence-local/orchestrator.log")
+        .exists());
 }
 
 /// /stop-demo, and /stop-work too, ends the demo mid-Question; with no

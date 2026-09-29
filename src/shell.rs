@@ -27,8 +27,8 @@ use crate::orchestrator::judgment::{self, Action};
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::{log_line, Answer, Ask, Config, Event, Orchestrator};
 use crate::orchestrator::state::{
-    acquire_lock, load_state, Lock, Review, State, TicketState, STATUS_MERGED, STATUS_PARKED,
-    STATUS_PR_OPEN, STATUS_RUNNING,
+    acquire_lock, load_state, local_dir, Lock, Review, State, TicketState, LOCAL, STATUS_MERGED,
+    STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING,
 };
 use crate::setup;
 use crate::tools::Tools;
@@ -690,10 +690,9 @@ impl Screen {
     /// Orchestrator's are, but for the demo's; None is a run-level line.
     fn tell(&mut self, ticket: Option<&str>, text: &str) {
         let time = chrono::Local::now();
-        let dir = self.cfg.repo.join(".orqadence");
         let log = match self.demo {
             Some(_) => Err(io::ErrorKind::Unsupported.into()),
-            None => fs::create_dir_all(&dir).and_then(|()| {
+            None => local_dir(&self.cfg.repo).and_then(|dir| {
                 File::options()
                     .create(true)
                     .append(true)
@@ -1775,7 +1774,7 @@ impl Screen {
             return None;
         }
         let repo = &self.cfg.repo;
-        let lock = match setup::ignore_run_dir(repo).and_then(|()| acquire_lock(repo)) {
+        let lock = match acquire_lock(repo) {
             Ok(lock) => lock,
             Err(err) => {
                 self.notice(&err.to_string(), NOTICE_WINDOW);
@@ -1785,7 +1784,7 @@ impl Screen {
         let log: Box<dyn io::Write + Send> = match File::options()
             .create(true)
             .append(true)
-            .open(repo.join(".orqadence").join("orchestrator.log"))
+            .open(repo.join(LOCAL).join("orchestrator.log"))
         {
             Ok(file) => Box::new(file),
             Err(_) => Box::new(io::sink()),

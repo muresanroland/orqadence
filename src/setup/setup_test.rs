@@ -336,7 +336,6 @@ fn install_skills_cancel_and_a_closed_stdin_touch_nothing() {
         let repo = TempDir::new();
         install(repo.path(), "");
         fs::write(repo.path().join(STAGE_FIX), "edited").unwrap();
-        fs::remove_file(repo.path().join(".gitignore")).unwrap();
         let before = snapshot(repo.path());
         let out = install(repo.path(), answer);
         assert!(
@@ -363,7 +362,7 @@ fn ask_typesafe_key_stores_the_typed_key_read_only_to_the_user() {
     let repo = TempDir::new();
     let out = ask_key(repo.path(), "", "sk-typed\n");
     assert!(out.contains("TypeSafe API key"), "not asked:\n{out}");
-    let path = repo.path().join(".orqadence/typesafe-key");
+    let path = repo.path().join(".orqadence-local/typesafe-key");
     assert_eq!(fs::read_to_string(&path).unwrap().trim(), "sk-typed");
     assert_eq!(
         fs::metadata(&path).unwrap().permissions().mode() & 0o777,
@@ -391,7 +390,7 @@ fn ask_typesafe_key_skips_when_the_variable_is_set_or_stdin_is_silent() {
         !out.contains("TypeSafe API key"),
         "asked with the variable set:\n{out}"
     );
-    assert!(!repo.path().join(".orqadence/typesafe-key").exists());
+    assert!(!repo.path().join(".orqadence-local/typesafe-key").exists());
 
     for typed in ["", "\n", "sk-a\x03", "sk-b\x04sk-c\n", "\x1b[A\t\n"] {
         let out = ask_key(repo.path(), "", typed);
@@ -400,14 +399,17 @@ fn ask_typesafe_key_skips_when_the_variable_is_set_or_stdin_is_silent() {
             "{typed:?}: not asked:\n{out}"
         );
         assert!(
-            !repo.path().join(".orqadence/typesafe-key").exists(),
+            !repo.path().join(".orqadence-local/typesafe-key").exists(),
             "{typed:?}: stored anyway"
         );
     }
     assert_eq!(typesafe_key(repo.path(), &|_| String::new()), None);
     // Control bytes and an arrow key never reach the key.
     ask_key(repo.path(), "", "\x1b[Ask-\x01d\x7f\n");
-    assert_eq!(read(repo.path(), ".orqadence/typesafe-key").trim(), "sk-");
+    assert_eq!(
+        read(repo.path(), ".orqadence-local/typesafe-key").trim(),
+        "sk-"
+    );
 }
 
 #[test]

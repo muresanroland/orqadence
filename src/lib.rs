@@ -111,7 +111,7 @@ pub(crate) mod tempdir {
                 i32::MAX,
                 std::process::id()
             ));
-            std::fs::create_dir_all(stale.join(".orqadence")).unwrap();
+            std::fs::create_dir_all(stale.join(".orqadence-local")).unwrap();
             // a fresh dir of this process, removed by its own Drop
             let live = TempDir::create().unwrap();
 

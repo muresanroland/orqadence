@@ -1,5 +1,6 @@
 //! The state file and the lock: what the Orchestrator knows about every
-//! Ticket, saved atomically, and one run per Target repo.
+//! Ticket, saved atomically, and one run per Target repo. Both live in
+//! .orqadence-local, the checkout's uncommitted folder, made here.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -116,8 +117,29 @@ fn null_is_empty<'de, D: serde::Deserializer<'de>>(
     Option::deserialize(d).map(Option::unwrap_or_default)
 }
 
+/// The checkout's folder for what depends on the machine, the person or the
+/// run (ADR 0006); .orqadence/ holds only what gets committed.
+pub(crate) const LOCAL: &str = ".orqadence-local";
+
+/// Makes LOCAL, the only way it gets made, with a .gitignore of * inside so
+/// the folder ignores itself; an existing .gitignore is left as it is.
+pub(crate) fn local_dir(repo: &Path) -> io::Result<PathBuf> {
+    let dir = repo.join(LOCAL);
+    fs::create_dir_all(&dir)?;
+    match File::options()
+        .write(true)
+        .create_new(true)
+        .open(dir.join(".gitignore"))
+    {
+        Ok(mut file) => file.write_all(b"*\n")?,
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(err) => return Err(err),
+    }
+    Ok(dir)
+}
+
 fn state_path(repo: &Path) -> PathBuf {
-    repo.join(".orqadence").join("state.json")
+    repo.join(LOCAL).join("state.json")
 }
 
 pub(crate) fn load_state(repo: &Path) -> io::Result<State> {
@@ -137,7 +159,7 @@ impl State {
     pub(crate) fn save(&self, repo: &Path) -> io::Result<()> {
         let path = state_path(repo);
         let raw = serde_json::to_vec_pretty(self)?;
-        fs::create_dir_all(path.parent().unwrap())?;
+        local_dir(repo)?;
         let tmp = path.with_extension("json.tmp");
         fs::write(&tmp, raw)?;
         fs::rename(tmp, path)
@@ -145,7 +167,7 @@ impl State {
 }
 
 fn lock_path(repo: &Path) -> PathBuf {
-    repo.join(".orqadence").join("lock")
+    repo.join(LOCAL).join("lock")
 }
 
 /// The lock on a Target repo: an advisory flock the kernel releases when the
@@ -180,7 +202,7 @@ const LOCK_PATIENCE: Duration = Duration::from_millis(500);
 /// Enforces one run per Target repo.
 pub(crate) fn acquire_lock(repo: &Path) -> io::Result<Lock> {
     let path = lock_path(repo);
-    fs::create_dir_all(path.parent().unwrap())?;
+    local_dir(repo)?;
     let mut file = File::options().create(true).append(true).open(&path)?;
     let patience = Instant::now() + LOCK_PATIENCE;
     loop {

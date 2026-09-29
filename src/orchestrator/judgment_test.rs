@@ -603,7 +603,7 @@ fn the_prototype_cases_build_judge_pys_request() {
         let line = src[from..].lines().next().unwrap();
         serde_json::from_str(line.trim_end_matches(',')).unwrap()
     };
-    let file = Path::new(".orqadence/runs/hx-1/implement.md");
+    let file = Path::new(".orqadence-local/runs/hx-1/implement.md");
     let prompts: Vec<String> = py_dict(&src, "PROMPTS")
         .into_iter()
         .map(|(_, p)| p.replace("{result_file}", &file.display().to_string()))
