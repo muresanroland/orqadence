@@ -9,11 +9,12 @@ use serde_json::json;
 use super::app;
 use super::result::{read_stage_result, ResultRequirements, StageResult};
 use super::stage::{
-    plural, pr_ref, result_name, stage_label, Orchestrator, Stage, StageError, AWAY, DEBATE, FIX,
-    IMPLEMENT, REVIEW,
+    plural, pr_ref, result_name, stage_label, Orchestrator, Stage, StageError, ADDRESS, AWAY,
+    DEBATE, FIX, IMPLEMENT, REVIEW,
 };
 use super::state::{STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
-use crate::skills::manifest::{has_skill, job_row, unlink_checkout_skills, Manifest, JOBS};
+use crate::skills::manifest::{placeholder, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS};
+use crate::skills::stage_skill;
 
 pub(crate) const MAX_ROUNDS: usize = 3;
 
@@ -428,7 +429,8 @@ impl Orchestrator {
     /// on each entry, but for Implement's jobs once it is done: gone on
     /// with, it stands for the run (shadows); parked, /continue asks again.
     /// A pick not committed (a personal, plugin or built-in one, or one not
-    /// merged) has nothing to shadow.
+    /// merged) has nothing to shadow, nor has one whose placeholder no
+    /// committed Stage skill holds: no Stage loads it.
     fn ask_shadowed(&self, ticket: &str) -> Result<(), StageError> {
         let (repo, home) = (&self.cfg.repo, &self.cfg.home);
         // one that cannot be read Wakes the Stage that loads it
@@ -443,14 +445,30 @@ impl Orchestrator {
         let implemented = read_stage_result(&implement, ResultRequirements::default())
             .1
             .is_empty();
-        let loaded = JOBS
-            .iter()
-            .map(|(job, _)| (manifest.pick(job), job_row(job)))
-            .filter(|(_, key)| !(implemented && *key == IMPLEMENT.name))
-            .chain([
-                ("create-pr", FIX.name),
-                (manifest.pick("review"), app::IF_LIMITED),
-            ]);
+        // Each Stage skill's placeholders on the row whose App fills them
+        // in and runs the Stage: the Debate's on side A's.
+        let rows = [
+            (&IMPLEMENT, IMPLEMENT.name),
+            (&REVIEW, REVIEW.name),
+            (&REVIEW, app::IF_LIMITED),
+            (&DEBATE, "side_a"),
+            (&FIX, FIX.name),
+            (&ADDRESS, ADDRESS.name),
+        ];
+        let mut loaded: Vec<(&str, &str)> = Vec::new();
+        for (st, key) in rows {
+            if implemented && st.name == IMPLEMENT.name {
+                continue;
+            }
+            let Some(Ok(skill)) = stage_skill(&worktree, st.skill) else {
+                continue;
+            };
+            let held = JOBS
+                .iter()
+                .filter(|(job, _)| skill.contains(&placeholder(job)));
+            loaded.extend(held.map(|(job, _)| (manifest.pick(job), key)));
+        }
+        loaded.push(("create-pr", FIX.name));
         for (name, key) in loaded {
             // a row that cannot be read is its Stage's to refuse
             let row = match key {
@@ -460,7 +478,14 @@ impl Orchestrator {
             let Some(row) = row else {
                 continue;
             };
-            if !has_skill(&worktree, name) {
+            // committed where the row's App loads it; one not merged is
+            // left out of the Stage, whatever older copy the base holds
+            let committed = !manifest.unmerged(&worktree, name)
+                && LINKS.into_iter().chain([FILES]).any(|dir| {
+                    row.app.loads(name, Path::new(dir))
+                        && worktree.join(dir).join(name).join("SKILL.md").exists()
+                });
+            if !committed {
                 continue;
             }
             for dir in row.app.home_skills {
@@ -517,12 +542,7 @@ impl Orchestrator {
                 }
             }
             drop(shadows);
-            if self.consume(&format!("park-{ticket}")) {
-                return Err(StageError::Parked("by you at its start".to_string()));
-            }
-            if !self.sleep() {
-                return Err(StageError::Stopped);
-            }
+            self.wait_at_start(ticket)?;
         }
     }
 }

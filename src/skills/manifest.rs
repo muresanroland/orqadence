@@ -140,15 +140,6 @@ pub(crate) fn links(repo: &Path, name: &str) -> [PathBuf; 2] {
     LINKS.map(|dir| repo.join(dir).join(name))
 }
 
-/// Whether the skill is in the repo's .agents/skills, .claude/skills or
-/// .orqadence/skills: in a Ticket's worktree, committed on its base.
-pub(crate) fn has_skill(repo: &Path, name: &str) -> bool {
-    LINKS
-        .into_iter()
-        .chain([FILES])
-        .any(|dir| repo.join(dir).join(name).join("SKILL.md").exists())
-}
-
 /// What each link points at: both links' folders are two deep.
 pub(crate) fn target(name: &str) -> PathBuf {
     Path::new("../..").join(FILES).join(name)

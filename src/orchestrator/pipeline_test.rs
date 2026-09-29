@@ -3,6 +3,7 @@ use super::stage::{Answer, Ask, Orchestrator};
 use super::state::{STATUS_PARKED, STATUS_PR_OPEN};
 use super::world::{new_world, spawn_ticket, succeed, BdTicket, Prompt, World};
 use super::write_file;
+use crate::skills::manifest::{copy_dir, Manifest, FILES};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
@@ -329,11 +330,6 @@ fn asked(w: &World) -> usize {
     w.events().iter().filter(|e| e.ask.is_some()).count()
 }
 
-/// Answers the Ticket-start Question about tdd with option `n`, from 0.
-fn answer_tdd(w: &World, o: &Orchestrator, nth: usize, n: usize) {
-    answer(w, o, "hx-1", "picked for test-first", nth, n);
-}
-
 /// Answers the `nth` Ticket-start Question saying `about` with option `n`.
 fn answer(w: &World, o: &Orchestrator, ticket: &str, about: &str, nth: usize, n: usize) {
     let asked = w.await_nth(about, nth);
@@ -355,7 +351,7 @@ fn a_pick_not_merged_on_the_base_is_a_question_when_the_ticket_starts() {
 
     assert_eq!(w.await_event("picked for test-first").text, UNMERGED);
     assert!(w.called("herdr agent start").is_empty(), "a Stage started");
-    answer_tdd(&w, &o, 1, 1);
+    answer(&w, &o, "hx-1", UNMERGED, 1, 1);
     run.wait();
 
     w.await_line("hx-1 running without tdd: the test-first line is left out");
@@ -381,7 +377,7 @@ fn run_without_a_pick_not_merged_leaves_out_a_personal_skill_of_its_name() {
     }
     let o = Arc::new(o);
     let mut run = spawn_ticket(o.clone(), "hx-1");
-    answer_tdd(&w, &o, 1, 1);
+    answer(&w, &o, "hx-1", UNMERGED, 1, 1);
     run.wait();
 
     w.await_line("hx-1 PR #hx-1 opened");
@@ -401,7 +397,7 @@ fn parked_for_a_pick_not_merged_a_ticket_asks_again_until_it_is() {
     let mut runs = Vec::new(); // kept to the end: dropping one stops the run
     for nth in 1..=2 {
         runs.push(spawn_ticket(o.clone(), "hx-1")); // /continue @hx-1, the second time
-        answer_tdd(&w, &o, nth, 0);
+        answer(&w, &o, "hx-1", UNMERGED, nth, 0);
         runs.last_mut().unwrap().wait();
         let ts = o.ticket("hx-1");
         assert_eq!(
@@ -446,7 +442,7 @@ fn away_a_pick_not_merged_parks_the_ticket_without_asking() {
     o.cfg.away.store(false, Ordering::SeqCst);
     let o = Arc::new(o);
     let mut run = spawn_ticket(o.clone(), "hx-1");
-    answer_tdd(&w, &o, 1, 1);
+    answer(&w, &o, "hx-1", UNMERGED, 1, 1);
     run.wait();
     w.await_line("hx-1 PR #hx-1 opened");
 }
@@ -488,7 +484,7 @@ fn a_failed_pull_on_continue_parks_the_ticket() {
     w.unmerged("test-first", "tdd");
     let o = Arc::new(o);
     let mut run = spawn_ticket(o.clone(), "hx-1");
-    answer_tdd(&w, &o, 1, 0);
+    answer(&w, &o, "hx-1", UNMERGED, 1, 0);
     run.wait();
 
     w.merge();
@@ -570,6 +566,53 @@ fn an_implemented_ticket_is_not_asked_about_implements_picks() {
     assert_eq!(asked(&w), 0, "a Question was put");
 }
 
+/// A job whose placeholder the committed Stage skill lacks is never run:
+/// a personal copy of its pick shadows nothing.
+#[test]
+fn a_pick_no_stage_skill_holds_is_not_shadowed() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.picked("test-first", "tdd");
+    write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "yours");
+    let implement = w.repo.join(FILES).join("stage-implement/SKILL.md");
+    let body = std::fs::read_to_string(&implement).unwrap();
+    assert!(body.contains("{{test-first}}"));
+    write_file(&implement, &body.replace("{{test-first}}", "a test"));
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 0, "a Question was put");
+}
+
+/// A placeholder is filled in by the App of the Stage whose skill holds it:
+/// a committed Fix skill holding {{test-first}} loads tdd on the Fix's claude
+/// row, though Implement, the job's own row, runs on codex.
+#[test]
+fn a_pick_in_another_stages_skill_is_checked_on_that_stages_row() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.picked("test-first", "tdd");
+    write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "yours");
+    write_file(
+        &w.repo.join(".orqadence/config.json"),
+        r#"{"implement": {"app": "codex"}}"#,
+    );
+    let fix = w.repo.join(FILES).join("stage-fix/SKILL.md");
+    let body = std::fs::read_to_string(&fix).unwrap();
+    write_file(
+        &fix,
+        &format!("{body}\nUse the {{{{test-first}}}} skill.\n"),
+    );
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+
+    assert_eq!(
+        w.await_event(SHADOWS).text,
+        "your ~/.claude/skills/tdd shadows the committed tdd: claude runs yours"
+    );
+    answer(&w, &o, "hx-1", SHADOWS, 1, 0);
+    run.wait();
+    w.await_line("hx-1 PR #hx-1 opened");
+}
+
 /// codex's home folders are its own: a ~/.codex/skills/<pick> asks on a
 /// codex row, and on a claude row, which never loads it, does not.
 #[test]
@@ -601,6 +644,51 @@ fn a_codex_home_skill_asks_on_a_codex_row_alone() {
             "rename your ~/.codex/skills/tdd, then /continue @hx-2"
         )
     );
+}
+
+/// A pick committed only in .claude/skills, which codex never loads, has
+/// nothing for a personal ~/.codex/skills copy to shadow on a codex row.
+#[test]
+fn a_pick_committed_where_the_app_does_not_load_it_is_not_shadowed() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    let mut manifest = Manifest::load(&w.repo).unwrap();
+    manifest
+        .picks
+        .insert("test-first".to_string(), "tdd".to_string());
+    manifest.save(&w.repo).unwrap();
+    let worktree = o.worktree("hx-1"); // the base: its Stage skills, tdd in .claude/skills
+    copy_dir(&w.repo.join(FILES), &worktree.join(FILES), true).unwrap();
+    write_file(&worktree.join(".claude/skills/tdd/SKILL.md"), "ours");
+    write_file(&w.home.join(".codex/skills/tdd/SKILL.md"), "yours");
+    write_file(
+        &w.repo.join(".orqadence/config.json"),
+        r#"{"implement": {"app": "codex"}}"#,
+    );
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 0, "a Question was put");
+}
+
+/// A pick not merged is left out of the Stage once run without it: an
+/// older copy the base holds under .claude/skills leaves nothing for a
+/// personal copy to shadow.
+#[test]
+fn a_pick_not_merged_is_not_shadowed_by_an_older_copy_on_the_base() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.unmerged("test-first", "tdd");
+    write_file(
+        &o.worktree("hx-1").join(".claude/skills/tdd/SKILL.md"),
+        "old",
+    );
+    write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "yours");
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    answer(&w, &o, "hx-1", UNMERGED, 1, 1);
+    run.wait();
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 1, "asked about a line left out");
 }
 
 /// A personal create-pr shadows the committed one the Fix loads by name:
