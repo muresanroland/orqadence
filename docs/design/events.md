@@ -1,6 +1,6 @@
 # Events: the RECENT panel and the log
 
-Every Orchestrator event is one plain-language line, the same words on the Shell's RECENT panel and in `.orqadence/orchestrator.log`. There is no machine-readable line; `.orqadence/state.json` is the machine record. Decided on the map ticket "Human-readable event vocabulary for the RECENT panel and the log" (harness-7bj.6).
+Every Orchestrator event is one plain-language line, the same words on the Shell's RECENT panel and in `.orqadence-local/orchestrator.log`. There is no machine-readable line; `.orqadence-local/state.json` is the machine record. Decided on the map ticket "Human-readable event vocabulary for the RECENT panel and the log" (harness-7bj.6).
 
 ## Line shape
 
