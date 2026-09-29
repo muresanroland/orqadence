@@ -1,17 +1,17 @@
-//! The thin 'orqa init': installs the shipped skills and every job's
-//! default where the user says, offers bd init, the docs/agents setup and
-//! herdr's integrations, keeps TypeSafe on or off and its key, and
-//! preflights the Target repo.
+//! The thin 'orqa init': tidies a checkout an older init set up, installs
+//! the shipped skills and every job's default where the user says, offers
+//! bd init, the docs/agents setup and herdr's integrations, keeps TypeSafe
+//! on or off and its key, and preflights the Target repo.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::iter;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use crate::orchestrator::app::{self, APPS};
-use crate::orchestrator::state::local_dir;
+use crate::orchestrator::state::{self, local_dir};
 use crate::skills::manifest::{self, Installed, Location, Manifest, Place, JOBS};
 use crate::skills::{stage_skill, SKILLS};
 use crate::tools::Tools;
@@ -28,6 +28,109 @@ enum Mode {
     Overwrite,
 }
 
+/// The run files an init from before .orqadence-local left in .orqadence.
+const OLD_RUN_FILES: [&str; 5] = [
+    "state.json",
+    "lock",
+    "orchestrator.log",
+    "runs",
+    "worktrees",
+];
+
+/// Tidies a checkout an init from before .orqadence-local set up (ADR 0006),
+/// before the skills step. The run files it left in .orqadence are not
+/// moved: a saved Stage's conversation holds their paths. So one question,
+/// the worktrees with uncommitted changes named: yes removes the worktrees,
+/// their branches kept (one git fails to remove is said, its folder
+/// deleted), and deletes the rest; no, or nobody answering,
+/// stops init with everything left as it was. Then the .orqadence/ line
+/// that init added to the Target repo's .gitignore goes, since .orqadence
+/// is committed now.
+pub(crate) fn clean_old_checkout(
+    repo: &Path,
+    tools: &dyn Tools,
+    out: &mut dyn Write,
+    input: &mut dyn Read,
+    tty: bool,
+) -> io::Result<()> {
+    let old = repo.join(".orqadence");
+    // ponytail: a Shell locking in this same instant has no pid written yet,
+    // reads as 0 and is not refused; nobody starts an old Shell mid-init.
+    if state::lock_file_holder(&old.join("lock")) != 0 {
+        return Err(io::Error::other(
+            "a Shell is running in this checkout; close it, then run orqa init again",
+        ));
+    }
+    let leftovers: Vec<&str> = OLD_RUN_FILES
+        .into_iter()
+        .filter(|name| fs::symlink_metadata(old.join(name)).is_ok())
+        .collect();
+    if !leftovers.is_empty() {
+        let worktrees: Vec<PathBuf> = fs::read_dir(old.join("worktrees"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        write!(
+            out,
+            "init: an older Orqadence left its run files in .orqadence:\r\n"
+        )?;
+        for name in &leftovers {
+            write!(out, "  .orqadence/{name}\r\n")?;
+        }
+        for worktree in &worktrees {
+            // A status that fails cannot say it is clean.
+            if tools
+                .run(worktree, &["git", "status", "--porcelain"])
+                .map_or(true, |status| !status.trim().is_empty())
+            {
+                let name = worktree.strip_prefix(repo).unwrap_or(worktree);
+                write!(out, "  {} has uncommitted changes\r\n", name.display())?;
+            }
+        }
+        let question =
+            "Delete them? The worktrees are removed, their branches kept, and a saved run is lost.";
+        if yes(out, input, tty, question, false)? != Some(true) {
+            return Err(io::Error::other(
+                "stopped: the old run files in .orqadence are kept; run orqa init again and answer y to delete them",
+            ));
+        }
+        for worktree in &worktrees {
+            let path = worktree.display().to_string();
+            // One git no longer knows, say: its folder goes with the rest.
+            if let Err(err) = tools.run(repo, &["git", "worktree", "remove", "--force", &path]) {
+                write!(out, "init: {err}; deleting its folder anyway\r\n")?;
+            }
+        }
+        for name in leftovers {
+            let path = old.join(name);
+            if path.is_dir() {
+                fs::remove_dir_all(path)?;
+            } else {
+                fs::remove_file(path)?;
+            }
+        }
+    }
+    let ignore = repo.join(".gitignore");
+    let Ok(text) = fs::read_to_string(&ignore) else {
+        return Ok(());
+    };
+    let kept: String = text
+        .split_inclusive('\n')
+        .filter(|line| line.trim() != ".orqadence/")
+        .collect();
+    if kept != text {
+        fs::write(&ignore, kept)?;
+        write!(
+            out,
+            "init: removed .orqadence/ from .gitignore: its settings are committed now\r\n"
+        )?;
+    }
+    Ok(())
+}
+
 /// Asks where the skills go (Location), the current place the default, and
 /// moves the ones Orqadence installed when the answer changes, but those
 /// the repo has committed (`tools` asks git). Then writes
@@ -42,7 +145,8 @@ enum Mode {
 /// answer from the record. `input` answers the questions, in raw mode when
 /// `tty`. .orqadence-local is made first, whatever the answers: orqa opens
 /// once it exists; a TypeSafe key an older init kept in .orqadence moves
-/// into it, unless one is already there.
+/// into it, readable only by the user, or is deleted when one is already
+/// there, since that one wins.
 pub(crate) fn install_skills(
     repo: &Path,
     home: &Path,
@@ -56,6 +160,10 @@ pub(crate) fn install_skills(
     let old_key = repo.join(".orqadence/typesafe-key");
     if old_key.exists() && !repo.join(KEY_FILE).exists() {
         fs::rename(old_key, repo.join(KEY_FILE))?;
+        fs::set_permissions(repo.join(KEY_FILE), fs::Permissions::from_mode(0o600))?;
+    } else if old_key.exists() {
+        // The kept key wins; the old one, no longer ignored, could be committed.
+        fs::remove_file(old_key)?;
     }
     let mut record: BTreeMap<String, String> = fs::read_to_string(repo.join(RECORD))
         .ok()
@@ -294,7 +402,14 @@ fn install_integrations(
     for (name, state) in &stale {
         write!(out, "  {name}: {state}\r\n")?;
     }
-    if yes(out, input, tty, "Install herdr's integration for these?")? == Some(true) {
+    if yes(
+        out,
+        input,
+        tty,
+        "Install herdr's integration for these?",
+        true,
+    )? == Some(true)
+    {
         for (name, _) in &stale {
             match tools.run(repo, &["herdr", "integration", "install", name]) {
                 Ok(_) => write!(out, "init: installed herdr's {name} integration\r\n")?,
@@ -325,7 +440,13 @@ fn bd_init(
     tty: bool,
 ) -> io::Result<()> {
     if repo.join(".beads").exists()
-        || yes(out, input, tty, "No bd workspace here. Run bd init now?")? != Some(true)
+        || yes(
+            out,
+            input,
+            tty,
+            "No bd workspace here. Run bd init now?",
+            true,
+        )? != Some(true)
     {
         return Ok(());
     }
@@ -387,7 +508,7 @@ fn write_agent_docs(
         return Ok(());
     }
     let question = "Write the beads docs/agents setup (issue tracker, triage labels, domain, Agent skills block)?";
-    if yes(out, input, tty, question)? == Some(false) {
+    if yes(out, input, tty, question, true)? == Some(false) {
         return Ok(());
     }
     for (path, text) in docs {
@@ -481,7 +602,7 @@ pub(crate) fn ask_typesafe(
     let on = if !env_key.trim().is_empty() {
         true
     } else {
-        match yes(out, input, tty, question)? {
+        match yes(out, input, tty, question, true)? {
             Some(true) => kept || ask_typesafe_key(repo, out, input, tty)?,
             Some(false) => false,
             None => kept && app::typesafe(repo),
@@ -531,21 +652,25 @@ pub(crate) fn keep_key(repo: &Path, key: &str) -> io::Result<()> {
         .write_all(format!("{key}\n").as_bytes())
 }
 
-/// Puts a [Y/n] question: enter or y is yes, Ctrl-C, Ctrl-D or any other
-/// answer no. None when the input ends unanswered: a non-interactive init.
-/// A line, not a key, so the enter after a y never answers the next one.
+/// Puts a [Y/n] question, or [y/N] when not `default`: enter is the
+/// default, y is yes, Ctrl-C, Ctrl-D or any other answer no. None when the
+/// input ends unanswered: a non-interactive init. A line, not a key, so the
+/// enter after a y never answers the next one.
 fn yes(
     out: &mut dyn Write,
     input: &mut dyn Read,
     tty: bool,
     question: &str,
+    default: bool,
 ) -> io::Result<Option<bool>> {
-    write!(out, "init: {question} [Y/n] ")?;
+    let hint = if default { "[Y/n]" } else { "[y/N]" };
+    write!(out, "init: {question} {hint} ")?;
     out.flush()?;
     let answer = raw(tty, || read_line(out, input, true))?;
     write!(out, "\r\n")?;
     Ok(match answer {
-        Line::Text(a) => Some(a.is_empty() || a.starts_with(['y', 'Y'])),
+        Line::Text(a) if a.is_empty() => Some(default),
+        Line::Text(a) => Some(a.starts_with(['y', 'Y'])),
         Line::Cancel => Some(false),
         Line::End => None,
     })
@@ -879,4 +1004,4 @@ pub(crate) fn report_missing(out: &mut dyn Write, missing: &[String]) -> i32 {
 }
 
 #[cfg(test)]
-mod setup_test;
+pub(crate) mod setup_test;

@@ -181,11 +181,16 @@ pub(crate) struct Lock {
 
 /// The pid of the live Orchestrator holding this Target repo's lock, or 0.
 pub(crate) fn lock_holder(repo: &Path) -> u32 {
-    let Ok(file) = File::open(lock_path(repo)) else {
+    lock_file_holder(&lock_path(repo))
+}
+
+/// The pid of the live process holding the lock file at `lock`, or 0.
+pub(crate) fn lock_file_holder(lock: &Path) -> u32 {
+    let Ok(file) = File::open(lock) else {
         return 0;
     };
     match file.try_lock() {
-        Err(TryLockError::WouldBlock) => fs::read_to_string(lock_path(repo))
+        Err(TryLockError::WouldBlock) => fs::read_to_string(lock)
             .ok()
             .and_then(|raw| raw.trim().parse().ok())
             .unwrap_or(0),

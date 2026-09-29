@@ -64,7 +64,7 @@ orqa init
 - It offers to install herdr's integration for claude or codex when it is not installed or outdated, listing what each install writes. Without it herdr does not know a session's id, so `/continue` starts those Stages fresh instead of resuming them.
 - It runs a preflight that reports anything still missing: the `bd` workspace, `gh` auth, the git remote, the `create-pr` skill, a job's skill, an App a Stage runs on that is not on `PATH`, or herdr. It also warns about a personal skill that shadows an installed one on Claude, and about the superpowers plugin being enabled.
 
-`.orqadence/` holds what gets committed: `config.json`, `skills.json`, `installed-skills.json` and the skill files. What depends on the machine, the person or the run goes in `.orqadence-local/`, which `init` makes with a `.gitignore` of `*` inside, so the folder ignores itself; `init` adds nothing to the repo's `.gitignore`. `orqa` opens the Shell only once `.orqadence-local/` exists.
+`.orqadence/` holds what gets committed: `config.json`, `skills.json`, `installed-skills.json` and the skill files. What depends on the machine, the person or the run goes in `.orqadence-local/`, which `init` makes with a `.gitignore` of `*` inside, so the folder ignores itself; `init` adds nothing to the repo's `.gitignore`, and takes out the `.orqadence/` line an older `init` added. In a checkout an older Orqadence set up, `init` first lists the run files it left in `.orqadence/`, naming each worktree with uncommitted changes, and deletes them once you answer yes: the worktrees are removed, their branches kept, and a saved run is lost. No, or nobody answering, stops `init` with nothing changed. `orqa` opens the Shell only once `.orqadence-local/` exists.
 
 ## Run an Epic
 

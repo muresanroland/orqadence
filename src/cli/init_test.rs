@@ -1,5 +1,6 @@
 use super::run;
 use crate::orchestrator::write_file;
+use crate::setup::setup_test::snapshot;
 use crate::setup::TYPESAFE_SKILL;
 use crate::skills::manifest::{Location, Manifest, JOBS};
 use crate::tempdir::TempDir;
@@ -7,6 +8,7 @@ use crate::tools::fake::Fake;
 use crate::tools::Tools;
 use std::fs;
 use std::io::Read;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -211,6 +213,152 @@ fn init_leaves_the_repos_gitignore_byte_for_byte() {
     );
 }
 
+/// The .orqadence/ line an older init added goes, since .orqadence is
+/// committed now; with no old run files there is nothing to ask.
+#[test]
+fn init_drops_the_old_gitignore_line_and_asks_nothing_without_old_run_files() {
+    let repo = prepared_repo();
+    let ignore = repo.path().join(".gitignore");
+    fs::write(&ignore, "node_modules/\n.orqadence/\ntarget/\n").unwrap();
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "init exit {code}:\n{out}");
+    assert_eq!(
+        fs::read_to_string(&ignore).unwrap(),
+        "node_modules/\ntarget/\n"
+    );
+    assert!(
+        out.contains("init: removed .orqadence/ from .gitignore: its settings are committed now"),
+        "not said:\n{out}"
+    );
+    assert!(!out.contains("[y/N]"), "asked:\n{out}");
+}
+
+/// The run files an init from before .orqadence-local left in .orqadence.
+const OLD_RUN_FILES: [&str; 5] = [
+    "state.json",
+    "lock",
+    "orchestrator.log",
+    "runs",
+    "worktrees",
+];
+
+/// A checkout from before .orqadence-local: the old .gitignore line, and
+/// the run files of a saved run in .orqadence, two worktrees among them.
+fn old_checkout() -> TempDir {
+    let repo = prepared_repo();
+    fs::write(repo.path().join(".gitignore"), ".orqadence/\n").unwrap();
+    for file in [
+        "state.json",
+        "lock",
+        "orchestrator.log",
+        "runs/t1/implement.md",
+        "worktrees/t1/f",
+        "worktrees/t2/f",
+    ] {
+        write_file(&repo.path().join(".orqadence").join(file), "old");
+    }
+    repo
+}
+
+/// ok_tools, with uncommitted changes in the worktree of t1, and t2's one
+/// git no longer knows.
+fn old_tools() -> Arc<Fake> {
+    Fake::new(|dir, argv| match argv {
+        ["git", "status", "--porcelain"] if dir.ends_with("t1") => Ok(" M f\n".to_string()),
+        ["git", "worktree", "remove", "--force", path] if path.ends_with("t2") => {
+            Err("fatal: not a working tree".to_string())
+        }
+        _ => ok(dir, argv),
+    })
+}
+
+#[test]
+fn init_deletes_the_old_run_files_on_yes_keeping_the_branches() {
+    let (repo, home) = (old_checkout(), TempDir::new());
+    let tools = old_tools();
+    let (code, out) = init_with(repo.path(), home.path(), tools.clone(), &["y\n"], "");
+    assert_eq!(code, 0, "init exit {code}:\n{out}");
+    let old = repo.path().join(".orqadence");
+    let question = &out[..out.find("[y/N]").expect("not asked")];
+    assert!(
+        question.contains(".orqadence/worktrees/t1 has uncommitted changes"),
+        "t1 not named:\n{question}"
+    );
+    assert!(!question.contains("t2 has"), "clean t2 named:\n{question}");
+    let calls = tools.calls();
+    for ticket in ["t1", "t2"] {
+        let remove = format!(
+            "git worktree remove --force {}",
+            old.join("worktrees").join(ticket).display()
+        );
+        assert!(calls.contains(&remove), "no {remove}: {calls:?}");
+    }
+    assert!(
+        out.contains("not a working tree; deleting its folder anyway"),
+        "t2's failure not said:\n{out}"
+    );
+    assert!(
+        !calls.iter().any(|call| call.contains("branch -D")),
+        "a branch deleted: {calls:?}"
+    );
+    for file in OLD_RUN_FILES {
+        assert!(!old.join(file).exists(), "{file} left");
+    }
+}
+
+/// No, a plain enter (the default is no) or nobody answering: init stops
+/// before the skills step with nothing touched, and says why.
+#[test]
+fn init_keeps_the_old_run_files_and_fails_unless_told_yes() {
+    for keys in [&["n\n"][..], &["\n"], &[]] {
+        let (repo, home) = (old_checkout(), TempDir::new());
+        let before = snapshot(repo.path());
+        let tools = old_tools();
+        let (code, out) = init_with(repo.path(), home.path(), tools.clone(), keys, "");
+        assert_ne!(code, 0, "{keys:?}: init went on:\n{out}");
+        assert!(
+            out.contains("init: stopped: the old run files in .orqadence are kept"),
+            "{keys:?}: no reason:\n{out}"
+        );
+        assert!(
+            !out.contains("where should the skills go"),
+            "{keys:?}: reached the skills step:\n{out}"
+        );
+        assert_eq!(snapshot(repo.path()), before, "{keys:?}: touched");
+        assert!(
+            !tools
+                .calls()
+                .iter()
+                .any(|call| call.contains("worktree remove")),
+            "{keys:?}: {:?}",
+            tools.calls()
+        );
+    }
+}
+
+/// A Shell from before .orqadence-local still holds .orqadence/lock: init
+/// refuses, even told yes, and touches nothing.
+#[test]
+fn init_refuses_while_a_shell_holds_the_old_lock() {
+    let (repo, home) = (old_checkout(), TempDir::new());
+    let lock = repo.path().join(".orqadence/lock");
+    fs::write(&lock, std::process::id().to_string()).unwrap();
+    let held = fs::File::open(&lock).unwrap();
+    held.lock().unwrap();
+    let before = snapshot(repo.path());
+    let tools = old_tools();
+    let (code, out) = init_with(repo.path(), home.path(), tools.clone(), &["y\n"], "");
+    assert_ne!(code, 0, "init went on:\n{out}");
+    assert!(
+        out.contains(
+            "init: a Shell is running in this checkout; close it, then run orqa init again"
+        ),
+        "no refusal:\n{out}"
+    );
+    assert_eq!(snapshot(repo.path()), before, "touched");
+    assert_eq!(tools.calls(), Vec::<String>::new());
+}
+
 /// A checkout from before .orqadence-local, its skills installed: an init
 /// that cancels at the skills gate still makes the folder orqa opens on,
 /// and moves the TypeSafe key kept in .orqadence into it.
@@ -219,7 +367,9 @@ fn init_cancelled_at_the_skills_gate_still_makes_the_local_folder() {
     let repo = prepared_repo();
     run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
     fs::remove_dir_all(repo.path().join(".orqadence-local")).unwrap();
-    fs::write(repo.path().join(".orqadence/typesafe-key"), "sk-old").unwrap();
+    let old_key = repo.path().join(".orqadence/typesafe-key");
+    fs::write(&old_key, "sk-old").unwrap();
+    fs::set_permissions(&old_key, fs::Permissions::from_mode(0o644)).unwrap();
     let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
     assert_eq!(code, 0, "init exit {code}:\n{out}");
     assert!(out.contains("already installed"), "no gate:\n{out}");
@@ -231,7 +381,22 @@ fn init_cancelled_at_the_skills_gate_still_makes_the_local_folder() {
         fs::read_to_string(repo.path().join(".orqadence-local/typesafe-key")).unwrap(),
         "sk-old"
     );
-    assert!(!repo.path().join(".orqadence/typesafe-key").exists());
+    let key = fs::metadata(repo.path().join(".orqadence-local/typesafe-key")).unwrap();
+    assert_eq!(
+        key.permissions().mode() & 0o777,
+        0o600,
+        "readable by others"
+    );
+    assert!(!old_key.exists());
+
+    // An old key beside the kept one: the kept one wins, the old one goes.
+    fs::write(&old_key, "sk-stale").unwrap();
+    run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(
+        fs::read_to_string(repo.path().join(".orqadence-local/typesafe-key")).unwrap(),
+        "sk-old"
+    );
+    assert!(!old_key.exists(), "a stale key left to be committed");
 }
 
 #[test]
