@@ -35,7 +35,6 @@ use crate::tools::{RunError, Tools};
 const CONFIG: &str = ", saved uncommitted in .orqadence/config.json";
 const PICK: &str = ", saved uncommitted in .orqadence/skills.json";
 const SKILL: &str = "; saved uncommitted: Tickets take the change once it is merged";
-const LOCAL: &str = ", saved in .orqadence-local/config.json";
 
 /// One row of config.json: its key, its name, the lead of its settings'
 /// labels on a section's page ("" for the section's own row), the section
@@ -1544,7 +1543,7 @@ impl Screen {
             self.on_call.token = kept.token;
         }
         self.on_call.minutes = kept.minutes;
-        self.done(text, LOCAL);
+        self.done(text, &format!(", saved in {}", on_call::CONFIG));
     }
 
     /// The Moshi token typed: kept, or cleared by an empty entry.
@@ -1553,8 +1552,15 @@ impl Screen {
             true => "On call token cleared: On call off",
             false => "On call token set",
         };
+        let text = match self.moshi_env {
+            true => format!(
+                "{text}; {} in the environment still wins",
+                on_call::TOKEN_VAR
+            ),
+            false => text.to_string(),
+        };
         let token = (!token.is_empty()).then_some(token);
-        self.keep_on_call(|kept| kept.token = token, text.to_string());
+        self.keep_on_call(|kept| kept.token = token, text);
     }
 
     /// On call's minutes typed: a whole number of at least 1 saves at once,

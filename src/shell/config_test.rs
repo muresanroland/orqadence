@@ -1838,6 +1838,19 @@ fn a_typed_moshi_token_saves_masked_and_an_empty_one_clears_it() {
         note(&s),
         "On call token cleared: On call off, saved in .orqadence-local/config.json"
     );
+
+    // MOSHI_WEBHOOK_TOKEN set wins: the Screen keeps it, and the foot says so.
+    s.moshi_env = true;
+    s.on_call.token = Some("env-tok".to_string());
+    keys(&mut s, &[KeyCode::Enter]);
+    type_in(&mut s, "file-tok");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(on_call_json(repo.path())["token"], "file-tok");
+    assert_eq!(s.on_call.token.as_deref(), Some("env-tok"));
+    assert_eq!(
+        note(&s),
+        "On call token set; MOSHI_WEBHOOK_TOKEN in the environment still wins, saved in .orqadence-local/config.json"
+    );
 }
 
 /// The minutes: 0 is refused, the text kept to mend; 10 saves; nothing puts

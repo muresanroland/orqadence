@@ -393,7 +393,9 @@ fn ask_on_call(
         return Ok(());
     }
     kept.token = Some(token);
-    on_call::save(repo, &kept)?;
+    if let Err(err) = on_call::save(repo, &kept) {
+        return write!(out, "init: On call off, the token not kept: {err}\r\n");
+    }
     write!(
         out,
         "init: On call on: Moshi token kept in {}, readable only by you\r\n",

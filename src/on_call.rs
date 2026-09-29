@@ -89,8 +89,11 @@ pub(crate) fn save(repo: &Path, on_call: &OnCall) -> io::Result<()> {
     fs::rename(&tmp, &path)
 }
 
+// Moshi is the Screen's doorbell outside tests only.
+#[cfg_attr(test, allow(dead_code))]
 const URL: &str = "https://api.getmoshi.app/api/webhook";
 /// A push is one small POST; the Shell never waits long on it.
+#[cfg_attr(test, allow(dead_code))]
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The seam to the phone: one push. An error never carries the token.
@@ -100,6 +103,7 @@ pub(crate) trait Doorbell: Send + Sync {
 
 /// The real Doorbell: Moshi's webhook, over ureq. ureq's own User-Agent
 /// stays: Moshi's Cloudflare refuses some defaults (403, error 1010).
+#[cfg_attr(test, allow(dead_code))]
 pub(crate) struct Moshi;
 
 impl Doorbell for Moshi {
