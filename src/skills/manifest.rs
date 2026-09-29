@@ -690,8 +690,9 @@ pub(crate) fn link(repo: &Path, name: &str) -> io::Result<()> {
 /// Removes from a Ticket's worktree the links an Orqadence from before ADR
 /// 0006 made there, absolute ones to the checkout's .orqadence/skills: left,
 /// a resumed Ticket would run the checkout's skills, not its base's. The
-/// worktree's own links, relative, stay.
-pub(crate) fn unlink_checkout_skills(repo: &Path, worktree: &Path) {
+/// worktree's own links, relative, stay. One that cannot be removed is the
+/// error: the Ticket must not start with it.
+pub(crate) fn unlink_checkout_skills(repo: &Path, worktree: &Path) -> io::Result<()> {
     let from = repo.join(FILES);
     for dir in LINKS.iter().filter(|dir| own(worktree, dir)) {
         for entry in fs::read_dir(worktree.join(dir))
@@ -701,10 +702,11 @@ pub(crate) fn unlink_checkout_skills(repo: &Path, worktree: &Path) {
         {
             if fs::read_link(entry.path()).is_ok_and(|to| to.is_absolute() && to.starts_with(&from))
             {
-                let _ = fs::remove_file(entry.path());
+                fs::remove_file(entry.path())?;
             }
         }
     }
+    Ok(())
 }
 
 /// Puts each skill the manifest names into .orqadence/skills from where an

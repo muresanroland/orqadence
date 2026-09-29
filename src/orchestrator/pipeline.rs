@@ -355,8 +355,11 @@ impl Orchestrator {
             }
             self.report(ticket, &format!("branch {ticket} created"));
         }
-        unlink_checkout_skills(repo, &worktree);
-        Ok(())
+        unlink_checkout_skills(repo, &worktree).map_err(|err| {
+            StageError::Parked(format!(
+                "old link to the checkout's skills not removed: {err}"
+            ))
+        })
     }
 
     /// A job's pick the checkout's Skill manifest records as installed but
