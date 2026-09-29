@@ -265,7 +265,8 @@ pub(crate) struct Screen {
     /// The On call settings, loaded once at open: the one copy the On call
     /// state and /config read and change.
     pub(crate) on_call: OnCall,
-    /// Where On call pushes go; tests put a FakeDoorbell in.
+    /// Where On call pushes go: Moshi, or in tests a FakeDoorbell, so no
+    /// test rings the phone; a test keeps its own fake by putting it here.
     #[allow(dead_code)] // the On call state (harness-we9.2) rings it
     pub(crate) doorbell: Arc<dyn Doorbell>,
 }
@@ -322,7 +323,10 @@ impl Screen {
             last: State::default(),
             demo: None,
             on_call: OnCall::default(),
+            #[cfg(not(test))]
             doorbell: Arc::new(on_call::Moshi),
+            #[cfg(test)]
+            doorbell: Arc::new(on_call::FakeDoorbell::default()),
         }
     }
 

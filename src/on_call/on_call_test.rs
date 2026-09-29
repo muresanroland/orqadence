@@ -117,3 +117,19 @@ fn minutes_missing_zero_or_not_a_number_is_five() {
         assert_eq!(load(repo.path(), &no_env).minutes, 5, "minutes {minutes:?}");
     }
 }
+
+#[test]
+fn save_keeps_the_files_other_keys_and_never_writes_over_a_broken_file() {
+    let repo = TempDir::new();
+    let path = repo.path().join(".orqadence-local/config.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, r#"{"theme": "dark"}"#).unwrap();
+    save(repo.path(), &OnCall::default()).unwrap();
+    let doc: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(doc["theme"], "dark");
+    for broken in ["[1]", "{not json"] {
+        fs::write(&path, broken).unwrap();
+        assert!(save(repo.path(), &OnCall::default()).is_err(), "{broken}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), broken);
+    }
+}

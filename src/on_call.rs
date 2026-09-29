@@ -59,26 +59,33 @@ pub(crate) fn load(repo: &Path, env: &dyn Fn(&str) -> String) -> OnCall {
 }
 
 /// Keeps the settings in the per-person config.json, its other keys as they
-/// were, readable only by the user since it holds the token.
+/// were, readable only by the user since it holds the token. A file that is
+/// not a JSON object refuses, so a save never writes over it.
 #[allow(dead_code)] // /config's On call page (harness-we9.3) saves
 pub(crate) fn save(repo: &Path, on_call: &OnCall) -> io::Result<()> {
     local_dir(repo)?;
     let path = repo.join(CONFIG);
-    let mut doc: Value = fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .filter(Value::is_object)
-        .unwrap_or_else(|| json!({}));
+    let mut doc = match fs::read(&path) {
+        Ok(raw) => serde_json::from_slice::<Value>(&raw)
+            .ok()
+            .filter(Value::is_object)
+            .ok_or_else(|| io::Error::other(format!("{CONFIG}: not a JSON object")))?,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => json!({}),
+        Err(err) => return Err(err),
+    };
     doc["on_call"] = json!({"token": on_call.token, "minutes": on_call.minutes});
+    // Whole through a temp file, as app::write, so a load never reads half.
+    let tmp = path.with_extension("json.tmp");
     let mut file = File::options()
         .write(true)
         .create(true)
         .truncate(true)
         .mode(0o600)
-        .open(&path)?;
-    // mode() only sets a new file's; one made otherwise is narrowed too.
+        .open(&tmp)?;
+    // mode() only sets a new file's; one a crash left is narrowed too.
     file.set_permissions(fs::Permissions::from_mode(0o600))?;
-    file.write_all(format!("{doc:#}\n").as_bytes())
+    file.write_all(format!("{doc:#}\n").as_bytes())?;
+    fs::rename(&tmp, &path)
 }
 
 const URL: &str = "https://api.getmoshi.app/api/webhook";
@@ -125,15 +132,16 @@ impl Doorbell for FakeDoorbell {
     fn ring(&self, token: &str, title: &str, message: &str) -> Result<(), String> {
         let ring = (token.to_string(), title.to_string(), message.to_string());
         self.rings.lock().unwrap().push(ring);
-        match self.fail.load(std::sync::atomic::Ordering::SeqCst) {
-            true => Err("http status: 500".to_string()),
-            false => Ok(()),
+        if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+            Err("http status: 500".to_string())
+        } else {
+            Ok(())
         }
     }
 }
 
 /// The webhook's JSON body.
-pub(crate) fn body(token: &str, title: &str, message: &str) -> String {
+fn body(token: &str, title: &str, message: &str) -> String {
     json!({"token": token, "title": title, "message": message}).to_string()
 }
 
