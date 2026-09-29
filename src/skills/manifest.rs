@@ -202,6 +202,12 @@ impl Manifest {
         }
     }
 
+    /// A skill recorded here that `worktree`, a checkout of a Ticket's base,
+    /// lacks: added in /config and not yet merged.
+    pub(crate) fn unmerged(&self, worktree: &Path, name: &str) -> bool {
+        self.skills.contains_key(name) && !skill_dir(worktree, name).exists()
+    }
+
     /// A Stage skill with each job's placeholder filled in with the job's
     /// pick, after the App's mention prefix. A pick of none drops the
     /// placeholder's line, leaving the Stage skill's own instruction around it, and so

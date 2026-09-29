@@ -324,6 +324,28 @@ fn a_pick_not_merged_on_the_base_is_a_question_when_the_ticket_starts() {
     );
 }
 
+/// Run without it leaves the line out even when a personal skill has the
+/// pick's name: the pick is the manifest's, which the base lacks.
+#[test]
+fn run_without_a_pick_not_merged_leaves_out_a_personal_skill_of_its_name() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.unmerged("test-first", "tdd");
+    for dir in [".claude/skills", ".agents/skills"] {
+        write_file(
+            &w.home.join(dir).join("tdd/SKILL.md"),
+            "---\nname: tdd\n---\n",
+        );
+    }
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    answer_tdd(&w, &o, 1, 1);
+    run.wait();
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert!(!w.prompt("implement.md").contains("Use the tdd skill"));
+    assert!(not_installed(&w).contains("tdd (test-first)"));
+}
+
 /// Park parks the Ticket with the reason, and /continue asks again until
 /// the skill is merged: then the branch, still the base's, is brought up
 /// to it, and the job's line names it.

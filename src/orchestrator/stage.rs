@@ -824,9 +824,12 @@ impl Orchestrator {
         // claude and codex find its Delegate skill by walking up to the
         // checkout's .claude/skills or .agents/skills: the checkout's copy,
         // not the base's. Its Stage skill body is the worktree's all the same.
+        // A pick not merged is not had, though a personal skill has its name:
+        // run without it, its line is left out (ask_unmerged_picks).
         let have: Vec<String> = manifest::list(&worktree, home, &*self.cfg.tools)
             .into_iter()
             .filter(|(name, path)| path.parent().is_some_and(|dir| runs.loads(name, dir)))
+            .filter(|(name, _)| !manifest.unmerged(&worktree, name))
             .map(|(name, _)| name)
             .collect();
         let (skill, lacking) = manifest.fill_jobs(&skill, &have, runs.built_in, runs.mention);

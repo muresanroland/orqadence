@@ -12,7 +12,7 @@ use super::stage::{
     IMPLEMENT, REVIEW,
 };
 use super::state::{STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
-use crate::skills::manifest::{skill_dir, unlink_checkout_skills, Manifest, JOBS};
+use crate::skills::manifest::{unlink_checkout_skills, Manifest, JOBS};
 
 pub(crate) const MAX_ROUNDS: usize = 3;
 
@@ -363,11 +363,10 @@ impl Orchestrator {
     /// the Ticket's worktree, a checkout of its base, lacks was added in
     /// /config and not yet merged: a Question before any Stage, one per
     /// pick. Run without it, its line is left out, as a pick not installed
-    /// is. Personal, plugin and built-in picks are not the manifest's.
+    /// is, even with a personal skill of its name (attempt's have). Personal,
+    /// plugin and built-in picks are not the manifest's.
     /// Asked at the start alone: once a Stage has run, the branch holds the
     /// Ticket's work and no longer takes the base as it moves.
-    // ponytail: a personal skill named as the pick still fills its line when
-    // run without it; harness-7ji.5's shadow Question is where to say so.
     fn ask_unmerged_picks(&self, ticket: &str) -> Result<(), StageError> {
         if !self.ticket(ticket).stage.is_empty() {
             return Ok(());
@@ -377,8 +376,7 @@ impl Orchestrator {
             return Ok(());
         };
         let worktree = self.worktree(ticket);
-        let missing =
-            |pick: &str| manifest.skills.contains_key(pick) && !skill_dir(&worktree, pick).exists();
+        let missing = |pick: &str| manifest.unmerged(&worktree, pick);
         if !JOBS.iter().any(|(job, _)| missing(manifest.pick(job))) {
             return Ok(());
         }
