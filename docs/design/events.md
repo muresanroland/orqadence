@@ -109,6 +109,17 @@ Decided on the map ticket "Delegate skills" (harness-0sx.12, Asks). A Stage writ
 | answered in the pane instead | carrying on |
 | asked while Away | parked: asked you while away *(a bd comment on the Ticket asks for a manual resume, /continue @ticket; the pane stays open; an Address question, its PR open, waits as a Question instead)* |
 
+## Ticket-start questions
+
+Decided on harness-bsg.19 and ADR 0006: a Ticket runs the skills committed on its base, as its worktree has them. A job's pick the checkout's Skill manifest records as installed but the worktree lacks was added in /config and not yet merged. Right after the worktree is prepared, while no Stage has run, the branch is brought up to the base (`git pull --ff-only`), and a pick still missing is a Question with no pane, one per pick.
+
+| Moment | Wording |
+|---|---|
+| a pick missing on the base | asking you: tdd, picked for test-first, is not on this Ticket's base branch: added in /config and not yet merged *(options: park: commit and merge tdd, then /continue @ticket · run without it: the test-first line is left out)* |
+| run without it | running without tdd: the test-first line is left out *(the Stage's Inputs say Not installed: tdd (test-first))* |
+| park | parked: tdd not merged: commit and merge it, then /continue @ticket *(/continue @ticket asks again until it is merged)* |
+| asked while Away | parked: asked you while away *(a bd comment on the Ticket asks for a manual resume; /continue @ticket asks again)* |
+
 ## Questions and answers
 
 Decided on the map ticket "The Shell's Question panel" (harness-7bj.7). A Question is a form above the input line; answering it logs two lines, the first naming the user, the second the outcome in the Judgment's own words.

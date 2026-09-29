@@ -740,53 +740,10 @@ pub(crate) fn move_in(repo: &Path, name: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Links every skill in the checkout's .orqadence/skills into each dir's
-/// .claude/skills and .agents/skills, where nothing is there already and
-/// that folder is dir's own (own), and hides the links from git in the repo's .git/info/exclude: a Ticket's
-/// worktree, and the Review's Run directory. Absolute: they are never
-/// committed.
-pub(crate) fn link_checkout_skills(repo: &Path, dirs: &[&Path]) -> io::Result<()> {
-    let from = repo.join(FILES);
-    let mut names: Vec<String> = fs::read_dir(&from)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| safe_name(name)) // not update's staging folders
-        .collect();
-    names.sort();
-    if names.is_empty() {
-        return Ok(());
-    }
-    // Hidden first, so that no link git would see is ever made.
-    // ponytail: a Target checkout whose .git is a file (itself a worktree)
-    // gets no links; ask git rev-parse --git-path info/exclude if one does.
-    let hidden: Vec<String> = names
-        .iter()
-        .flat_map(|name| LINKS.map(|sub| format!("/{sub}/{name}")))
-        .collect();
-    crate::setup::add_lines(&repo.join(".git/info/exclude"), &hidden)?;
-    for name in &names {
-        for sub in LINKS {
-            for dir in dirs {
-                if !own(dir, sub) {
-                    continue;
-                }
-                let link = dir.join(sub).join(name);
-                if fs::symlink_metadata(&link).is_err() {
-                    fs::create_dir_all(dir.join(sub))?;
-                    symlink(from.join(name), link)?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Copies files and folders, and links as links when links is set. A clone
 /// is copied without them, so that a link in it cannot pull in anything from
 /// outside it; a skill being moved keeps them, as a rename would.
-fn copy_dir(from: &Path, to: &Path, links: bool) -> io::Result<()> {
+pub(crate) fn copy_dir(from: &Path, to: &Path, links: bool) -> io::Result<()> {
     fs::create_dir_all(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?;

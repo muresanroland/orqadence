@@ -645,7 +645,8 @@ impl Screen {
             Ask::Blocked { .. }
             | Ask::Plan { .. }
             | Ask::Limited { .. }
-            | Ask::StageQuestion { .. } => text.as_str(),
+            | Ask::StageQuestion { .. }
+            | Ask::TicketStart { .. } => text.as_str(),
         };
         let asking = format!("asking you: {short}");
         // /continue @ticket's goes after a confirmation, and the Question
@@ -814,6 +815,7 @@ impl Screen {
                 .cloned()
                 .chain(["an answer of your own", "open the pane", "park"].map(str::to_string))
                 .collect(),
+            About::Asked(Ask::TicketStart { options }) => options.clone(),
             About::Confirm(_) => ["yes", "no"].map(str::to_string).to_vec(),
             About::Continue { rows } => rows
                 .iter()
@@ -1222,6 +1224,12 @@ impl Screen {
                     (None, _) => self.reply("park", Answer::Act(Action::Park)),
                 }
             }
+            // its options alone, the one picked sent word for word
+            (About::Asked(Ask::TicketStart { options }), n) => {
+                if let Some(option) = options.get(n).cloned() {
+                    self.reply(&option.clone(), Answer::Prompt(option));
+                }
+            }
             (About::Confirm(_), 0) => {
                 let q = self.questions.remove(0);
                 let About::Confirm(pending) = q.about else {
@@ -1319,17 +1327,18 @@ impl Screen {
         if self.demo.is_some() {
             return demo::answered(self, &id, &q.about, answer);
         }
-        if let (
-            Some(run),
+        let pane = match &q.about {
             About::Asked(
                 Ask::Wake { pane, .. }
                 | Ask::Blocked { pane }
                 | Ask::Plan { pane, .. }
                 | Ask::PlanFailed { pane, .. }
                 | Ask::StageQuestion { pane, .. },
-            ),
-        ) = (&self.run, &q.about)
-        {
+            ) => pane.as_str(),
+            About::Asked(Ask::TicketStart { .. }) => "", // no session: the Ticket's own
+            _ => return,
+        };
+        if let Some(run) = &self.run {
             run.o.answer(&id, pane, answer);
         }
     }
