@@ -17,8 +17,8 @@ rings only after it has itself waited the minutes.
 
 Nothing parks for On call: a Stage's question waits and rings. `/away` wins:
 turning Away on ends On call, and under Away nothing rings and the Shell never
-goes On call. On call is off each
-time the Shell opens, and stays off while no token is kept.
+goes On call. On call is off each time the Shell opens, and stays off while it
+has no token.
 
 ## Moshi
 
@@ -59,7 +59,8 @@ from anywhere else. Use [Tailscale](https://tailscale.com):
 
 ## The token and the push
 
-The token is kept in `.orqadence-local/config.json`, readable only by you.
+A token given to `orqa init` or `/config` is kept in
+`.orqadence-local/config.json`, readable only by you.
 
 A push says which Ticket waits and on what: its id, the kind of Question and the
 Ticket's title, for example
@@ -69,11 +70,7 @@ in the Shell; the run goes on.
 
 ## Pitfalls
 
-- **The clipboard holds a command, not the token.** Copying a command such as
-  `orqa init` after the token replaces the token on the clipboard, and you
-  paste the command as the token. Copy the token last, just before you paste
-  it, and send a test push to check.
+- **The clipboard holds a command, not the token.** Copy the token last, just
+  before you paste it; the test push in step 4 confirms it.
 - **The Mac is asleep, or the Shell is not running.** Nothing rings: the Shell
   is what pushes. Keep the Mac awake and the Shell open while you are away.
-- **The phone is off the tailnet.** Away from home, Moshi cannot reach the Mac
-  until Tailscale's VPN toggle is on and the phone is on the Mac's tailnet.
