@@ -297,6 +297,11 @@ fn init_deletes_the_old_run_files_on_yes_keeping_the_branches() {
         out.contains("not a working tree; deleting its folder anyway"),
         "t2's failure not said:\n{out}"
     );
+    let (removes, prune) = (
+        calls.iter().rposition(|call| call.contains("worktree remove")),
+        calls.iter().position(|call| call == "git worktree prune"),
+    );
+    assert!(prune > removes, "git's record of t2 not pruned after: {calls:?}");
     assert!(
         !calls.iter().any(|call| call.contains("branch -D")),
         "a branch deleted: {calls:?}"
@@ -397,6 +402,16 @@ fn init_cancelled_at_the_skills_gate_still_makes_the_local_folder() {
         "sk-old"
     );
     assert!(!old_key.exists(), "a stale key left to be committed");
+
+    // A key an earlier init moved but left readable by others is narrowed.
+    let kept = repo.path().join(".orqadence-local/typesafe-key");
+    fs::set_permissions(&kept, fs::Permissions::from_mode(0o644)).unwrap();
+    run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(
+        fs::metadata(&kept).unwrap().permissions().mode() & 0o777,
+        0o600,
+        "a moved key left readable by others"
+    );
 }
 
 #[test]

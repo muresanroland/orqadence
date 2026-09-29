@@ -112,6 +112,11 @@ pub(crate) fn clean_old_checkout(
                 fs::remove_file(path)?;
             }
         }
+        // A removal that failed left git's record of a now missing folder,
+        // its branch still checked out there: prune drops it.
+        if let Err(err) = tools.run(repo, &["git", "worktree", "prune"]) {
+            write!(out, "init: {err}; run git worktree prune yourself\r\n")?;
+        }
     }
     let ignore = repo.join(".gitignore");
     let Ok(text) = fs::read_to_string(&ignore) else {
@@ -160,10 +165,13 @@ pub(crate) fn install_skills(
     let old_key = repo.join(".orqadence/typesafe-key");
     if old_key.exists() && !repo.join(KEY_FILE).exists() {
         fs::rename(old_key, repo.join(KEY_FILE))?;
-        fs::set_permissions(repo.join(KEY_FILE), fs::Permissions::from_mode(0o600))?;
     } else if old_key.exists() {
         // The kept key wins; the old one, no longer ignored, could be committed.
         fs::remove_file(old_key)?;
+    }
+    // Also repairs a key an earlier init moved without narrowing its mode.
+    if repo.join(KEY_FILE).exists() {
+        fs::set_permissions(repo.join(KEY_FILE), fs::Permissions::from_mode(0o600))?;
     }
     let mut record: BTreeMap<String, String> = fs::read_to_string(repo.join(RECORD))
         .ok()
