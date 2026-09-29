@@ -12,13 +12,14 @@ waiting is pushed once. While it is on, every Question after it and the end of
 the run are pushed to the phone at once. The status row shows ON CALL.
 
 You answer in the Shell, from the phone over SSH. Answering any Question ends
-On call, whichever Question it is and wherever you typed it. The next Question
-rings only after it has itself waited the minutes.
+On call. The next Question rings only after it has itself waited the minutes.
 
 Nothing parks for On call: a Stage's question waits and rings. `/away` wins:
 turning Away on ends On call, and under Away nothing rings and the Shell never
 goes On call. On call is off each time the Shell opens, and stays off while it
 has no token.
+
+Nothing rings if the Mac sleeps or the Shell is closed: the Shell is what pushes.
 
 ## Moshi
 
@@ -67,10 +68,3 @@ Ticket's title, for example
 `harness-bsg.4 · Plan to approve · Brainstorm loop: ...`. The Question's text
 and its options never leave the Mac. A push that fails shows as a notice line
 in the Shell; the run goes on.
-
-## Pitfalls
-
-- **The clipboard holds a command, not the token.** Copy the token last, just
-  before you paste it; the test push in step 4 confirms it.
-- **The Mac is asleep, or the Shell is not running.** Nothing rings: the Shell
-  is what pushes. Keep the Mac awake and the Shell open while you are away.
