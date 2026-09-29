@@ -388,14 +388,12 @@ impl Orchestrator {
         // Merged since a park, say: the branch, still the base's, is
         // brought up to it. Not brought up, the worktree says nothing about
         // the base: park rather than ask or build on a stale one.
-        self.cfg
-            .tools
-            .run(&worktree, &["git", "pull", "--ff-only", "origin", "HEAD"])
-            .map_err(|err| {
-                StageError::Parked(format!(
-                    "branch not brought up to origin's default branch: {err}"
-                ))
-            })?;
+        let pull = ["git", "pull", "--ff-only", "origin", "HEAD"];
+        if let Err(err) = self.cfg.tools.run(&worktree, &pull) {
+            return Err(StageError::Parked(format!(
+                "branch not brought up to origin's default branch: {err}"
+            )));
+        }
         for (job, _) in JOBS {
             let pick = manifest.pick(job);
             if !missing(pick) {
@@ -454,11 +452,13 @@ impl Orchestrator {
             let Ok(row) = app::row(repo, key) else {
                 continue;
             };
-            // committed where the row's App loads it
-            let committed = LINKS.into_iter().chain([FILES]).any(|dir| {
-                row.app.loads(name, Path::new(dir))
-                    && worktree.join(dir).join(name).join("SKILL.md").exists()
-            });
+            // committed where the row's App loads it; one not merged is
+            // left out of the Stage, whatever older copy the base holds
+            let committed = !manifest.unmerged(&worktree, name)
+                && LINKS.into_iter().chain([FILES]).any(|dir| {
+                    row.app.loads(name, Path::new(dir))
+                        && worktree.join(dir).join(name).join("SKILL.md").exists()
+                });
             if !committed {
                 continue;
             }

@@ -623,6 +623,27 @@ fn a_pick_committed_where_the_app_does_not_load_it_is_not_shadowed() {
     assert_eq!(asked(&w), 0, "a Question was put");
 }
 
+/// A pick not merged is left out of the Stage once run without it: an
+/// older copy the base holds under .claude/skills leaves nothing for a
+/// personal copy to shadow.
+#[test]
+fn a_pick_not_merged_is_not_shadowed_by_an_older_copy_on_the_base() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.unmerged("test-first", "tdd");
+    write_file(
+        &o.worktree("hx-1").join(".claude/skills/tdd/SKILL.md"),
+        "old",
+    );
+    write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "yours");
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    answer(&w, &o, "hx-1", UNMERGED, 1, 1);
+    run.wait();
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 1, "asked about a line left out");
+}
+
 /// A personal create-pr shadows the committed one the Fix loads by name:
 /// asked at the Ticket's start, before any Stage, the Fix among them.
 #[test]

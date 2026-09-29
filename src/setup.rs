@@ -224,7 +224,7 @@ pub(crate) fn install_skills(
         .find(|name| record.contains_key(&record_key(name)));
     let pr = match (recorded, mode) {
         (Some(name), _) => name,
-        (None, _) if !manifest::has_skill(repo, "create-pr") => "create-pr",
+        (None, _) if !has_skill(repo, "create-pr") => "create-pr",
         (None, Mode::Fresh) if !committed => ask_about_create_pr(out, input, tty)?,
         (None, _) => "", // the repo's own, kept on the first init
     };
@@ -920,6 +920,15 @@ pub(crate) fn warnings(repo: &Path, tools: &dyn Tools) -> Vec<String> {
         );
     }
     warn
+}
+
+/// Whether the skill is in the repo's .agents/skills, .claude/skills or
+/// .orqadence/skills.
+fn has_skill(repo: &Path, name: &str) -> bool {
+    LINKS
+        .into_iter()
+        .chain([FILES])
+        .any(|dir| repo.join(dir).join(name).join("SKILL.md").exists())
 }
 
 /// Prints each missing prerequisite and returns the exit code.
