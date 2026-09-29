@@ -120,7 +120,7 @@ Decided on harness-bsg.19 and ADR 0006: a Ticket runs the skills committed on it
 | park | parked: tdd not merged: commit and merge it, then /continue @ticket *(/continue @ticket asks again until it is merged)* |
 | asked while Away | parked: asked you while away *(a bd comment on the Ticket asks for a manual resume; /continue @ticket asks again)* |
 
-Then, each time the Ticket enters the Pipeline: a committed skill its Stages load by name (each job's pick, create-pr for the Fix; Implement's jobs only until Implement is done) with a personal copy of that name in a home folder of the App on the row that loads it (claude: ~/.claude/skills; codex: ~/.agents/skills, ~/.codex/skills) is a Question, one per copy. Going on with it stands for the run: no later Ticket asks about that copy, and a Ticket starting while another's Question about it is out waits for that answer. On a codex row the Question says codex may run yours.
+Then, each time the Ticket enters the Pipeline: a committed skill its Stages load by name (each job's pick, create-pr for the Fix, the review pick on review_if_limited's row too while it is set; Implement's jobs only until Implement is done) with a personal copy of that name in a home folder of the App on the row that loads it (claude: ~/.claude/skills; codex: ~/.agents/skills, ~/.codex/skills) is a Question, one per copy. Going on with it stands for the run: no later Ticket asks about that copy, and a Ticket starting while another's Question about it is out waits for that answer. On a codex row the Question says codex may run yours.
 
 | Moment | Wording |
 |---|---|

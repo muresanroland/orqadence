@@ -424,7 +424,8 @@ impl Orchestrator {
     }
 
     /// A personal skill with the name of a committed one a Stage loads by
-    /// name (each job's pick, create-pr for the Fix), in a home folder of
+    /// name (each job's pick, create-pr for the Fix, the review pick on
+    /// review_if_limited's row too while it is set), in a home folder of
     /// the App on the row that loads it (home_skills), shadows it: claude
     /// runs the personal one, codex may. A Question each, before any Stage
     /// on each entry, but for Implement's jobs once it is done: gone on
@@ -452,13 +453,19 @@ impl Orchestrator {
             .collect();
         let loaded = JOBS
             .iter()
+            .map(|(job, _)| (*job, job_row(job)))
+            .chain([("review", app::IF_LIMITED)])
             .filter(|(job, _)| stages.iter().any(|s| s.contains(&placeholder(job))))
-            .map(|(job, _)| (manifest.pick(job), job_row(job)))
             .filter(|(_, key)| !(implemented && *key == IMPLEMENT.name))
+            .map(|(job, key)| (manifest.pick(job), key))
             .chain([("create-pr", FIX.name)]);
         for (name, key) in loaded {
             // a row that cannot be read is its Stage's to refuse
-            let Ok(row) = app::row(repo, key) else {
+            let row = match key {
+                app::IF_LIMITED => app::fallback_row(repo).ok().flatten(),
+                _ => app::row(repo, key).ok(),
+            };
+            let Some(row) = row else {
                 continue;
             };
             // committed where the row's App loads it; one not merged is
