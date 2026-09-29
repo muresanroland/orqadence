@@ -1366,7 +1366,9 @@ impl Screen {
                     self.reply(&option.clone(), Answer::Prompt(option));
                 }
             }
+            // answered even when what it confirms asks again
             (About::Confirm(_), 0) => {
+                self.off_call("you answered");
                 let q = self.questions.remove(0);
                 let About::Confirm(pending) = q.about else {
                     unreachable!()

@@ -5578,7 +5578,8 @@ fn the_close_reason_keeps_a_parked_tickets_reason() {
 }
 
 /// A failed close asks again: yes retries the comment only if it failed,
-/// then bd close, so the comment never goes in twice.
+/// then bd close, so the comment never goes in twice. The yes was an
+/// answer: it ends On call though the same question is back.
 #[test]
 fn a_failed_close_asks_again_and_never_comments_twice() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
@@ -5588,8 +5589,10 @@ fn a_failed_close_asks_again_and_never_comments_twice() {
     await_end(&mut s);
     s.key(key(KeyCode::Esc));
     w.fail_once("bd comments add hx ", "comment failed");
+    s.calling = true;
     s.key(key(KeyCode::Char('y')));
     assert_eq!(question(&s), "close Epic hx Epic hx?");
+    assert!(!s.calling, "the answer left On call on");
     assert!(w.called("bd close hx ").is_empty());
     w.fail_once("bd close hx ", "close failed");
     s.key(key(KeyCode::Char('y')));
@@ -5661,10 +5664,11 @@ fn settle(s: &mut Screen) {
 }
 
 fn messages(bell: &crate::on_call::FakeDoorbell) -> Vec<String> {
-    let rings = bell.rings.lock().unwrap();
-    rings
+    bell.rings
+        .lock()
+        .unwrap()
         .iter()
-        .map(|(_, _, message)| message.clone())
+        .map(|r| r.2.clone())
         .collect()
 }
 
@@ -5757,11 +5761,14 @@ fn on_call_rings_each_question_once_and_a_new_one_at_once() {
     s.tick();
     s.tick();
     settle(&mut s);
+    // a thread per push: they land in either order
+    let mut rang = messages(&bell);
+    rang.sort();
     assert_eq!(
-        messages(&bell),
+        rang,
         [
-            "harness-kqe.13 · Plan to approve · Plan mode",
             "harness-kqe.12 · Blocked session · Judgment",
+            "harness-kqe.13 · Plan to approve · Plan mode",
         ]
     );
 
@@ -5903,22 +5910,8 @@ fn on_call_shows_on_the_status_row_while_on() {
     );
 }
 
-/// While On call, the summary opening by itself rings the run's end.
-#[test]
-fn on_call_rings_the_runs_end_when_the_summary_opens_by_itself() {
-    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
-    let mut s = shell(&w);
-    let (bell, _) = on_call(&mut s, chrono::Local::now());
-    s.calling = true;
-    s.command("/start-epic hx");
-    await_summary(&mut s);
-    settle(&mut s);
-    assert_eq!(messages(&bell), ["hx · run done · Epic hx"]);
-    s.command("/stop-work");
-    await_end(&mut s);
-}
-
-/// A run that fails after the summary rang run done still rings its stop.
+/// While On call, the summary opening by itself rings the run's end; a run
+/// that fails after it still rings its stop.
 #[test]
 fn on_call_rings_a_failure_after_the_summary() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
@@ -5927,6 +5920,7 @@ fn on_call_rings_a_failure_after_the_summary() {
     s.calling = true;
     s.command("/start-epic hx");
     await_summary(&mut s);
+    settle(&mut s);
     s.run.as_mut().unwrap().failed = true; // as the scheduler's error sets it
     s.command("/stop-work");
     await_end(&mut s);
