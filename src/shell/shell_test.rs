@@ -83,6 +83,7 @@ pub(super) fn screen_at(tools: Arc<dyn Tools>, repo: &Path) -> Screen {
             issue("harness-kqe.13", "Plan mode", "open"),
             issue("harness-kqe.14", "Self-update", "open"),
         ],
+        blockers: Vec::new(),
     };
     let mut state = State {
         epic: "harness-kqe".to_string(),
@@ -640,6 +641,7 @@ fn lists_screen() -> Screen {
         id: id.to_string(),
         title: title.to_string(),
         tickets,
+        blockers: Vec::new(),
     };
     let epics = vec![
         epic(
@@ -1786,6 +1788,7 @@ fn a_tall_tree_scrolls_to_its_last_epic_and_one_that_fits_never_scrolls() {
             tickets: (0..5)
                 .map(|i| issue(&format!("harness-e{n}.{i}"), "work", "open"))
                 .collect(),
+            blockers: Vec::new(),
         });
     }
     // 80x24 leaves TICKETS 7 of its 26 rows: six rows and the tail.
@@ -2498,6 +2501,72 @@ fn start_ticket_refuses_one_waiting_on_a_ticket_outside_the_run() {
         matches!((closed, started), (Some(c), Some(s)) if s > c),
         "hx-2 started before hx-1 closed ({closed:?}, {started:?})"
     );
+}
+
+/// bd hides a blocked Epic's children from bd ready: a run on it would idle
+/// until what blocks the Epic closes. Refused, for a Ticket of it too; a
+/// closed blocker, or one in the live run, refuses nothing, and that one
+/// stays in the run. A Ticket that waits on an open Epic itself is refused
+/// too.
+#[test]
+fn start_epic_and_start_ticket_refuse_an_epic_waiting_on_an_open_one() {
+    let loose = BdTicket {
+        no_epic: true,
+        ..BdTicket::new("lx")
+    };
+    let on_epic = BdTicket {
+        deps: vec!["ax".to_string()],
+        ..BdTicket::new("hx-2")
+    };
+    let (w, _) = new_world(vec![BdTicket::new("hx-1"), on_epic, loose]);
+    let blocker = BdTicket {
+        status: "open".to_string(),
+        issue_type: "epic".to_string(),
+        no_epic: true,
+        ..BdTicket::new("ax")
+    };
+    w.lock().tickets.push(blocker);
+    w.lock().epic_deps = vec!["ax".to_string(), "lx".to_string()];
+    let mut s = shell(&w);
+    s.command("/start-ticket hx-2");
+    assert_eq!(
+        notice(&s),
+        "refused: hx-2 waits on ax, which is not in the run"
+    );
+    s.command("/start-epic hx");
+    assert_eq!(
+        notice(&s),
+        "refused: hx waits on ax, lx, which are not in the run"
+    );
+    assert!(s.run.is_none());
+    s.command("/start-ticket hx-1");
+    assert_eq!(
+        notice(&s),
+        "refused: hx waits on ax, lx, which are not in the run"
+    );
+    assert!(s.run.is_none());
+
+    w.lock()
+        .tickets
+        .iter_mut()
+        .find(|t| t.id == "ax")
+        .unwrap()
+        .status = "closed".to_string();
+    s.command("/start-ticket hx-1");
+    assert_eq!(
+        notice(&s),
+        "refused: hx waits on lx, which is not in the run"
+    );
+    assert!(s.run.is_none());
+
+    s.command("/start-ticket lx");
+    s.command("/start-ticket hx-1");
+    assert_eq!(s.state.queue, ["lx", "hx-1"]);
+    s.command("/remove-ticket lx");
+    assert_eq!(notice(&s), "refused: hx-1 waits on lx, remove hx-1 first");
+    w.lock().merged = true;
+    await_line(&mut s, "Ticket run done, every Ticket closed");
+    await_end(&mut s);
 }
 
 /// A single-Ticket run saved before the queue, its PR open, was never

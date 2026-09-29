@@ -111,6 +111,8 @@ pub(crate) struct Epic {
     pub(crate) id: String,
     pub(crate) title: String,
     pub(crate) tickets: Vec<BdIssue>,
+    /// What the Epic waits on: its bd blocks dependencies.
+    pub(crate) blockers: Vec<String>,
 }
 
 /// The live run: the Orchestrator, its scheduler thread and the lock, held
@@ -1563,7 +1565,10 @@ impl Screen {
                 }
                 self.reload_epics();
                 if let Some(id) = self.resolve(query, true) {
-                    self.start(&[id], true, false);
+                    match self.epic_waits(&id, &|_| false) {
+                        Some(text) => self.refuse(&text),
+                        None => self.start(&[id], true, false),
+                    }
                 }
             }
             // on a live Ticket run it adds to the run
@@ -1781,7 +1786,7 @@ impl Screen {
     /// The open Tickets /start-ticket names: every word an open Ticket's id
     /// exactly, as the @ list fills them in, or else the one Ticket resolve
     /// finds. A Ticket blocked by an open one that is neither named nor in
-    /// the run would never start: refused.
+    /// the run would never start: refused, as is one whose Epic waits so.
     fn tickets_named(&mut self, query: &str) -> Option<Vec<String>> {
         let words: Vec<&str> = query
             .split_whitespace()
@@ -1795,11 +1800,16 @@ impl Screen {
         };
         let theirs = |b: &str| ids.iter().chain(&self.state.queue).any(|t| t == b);
         let waits = ids.iter().find_map(|id| {
-            let mut blockers = find(&self.epics, id).into_iter().flat_map(|t| t.blockers());
-            let b = blockers.find(|b| open(&self.epics, b) && !theirs(b))?;
-            Some(format!(
-                "refused: {id} waits on {b}, which is not in the run"
-            ))
+            let t = find(&self.epics, id)?;
+            match t
+                .blockers()
+                .find(|b| unfinished(&self.epics, b) && !theirs(b))
+            {
+                Some(b) => Some(format!(
+                    "refused: {id} waits on {b}, which is not in the run"
+                )),
+                None => self.epic_waits(&t.parent, &theirs),
+            }
         });
         match waits {
             Some(text) => {
@@ -1810,13 +1820,43 @@ impl Screen {
         }
     }
 
-    /// An open Ticket of the Ticket run that waits on `ticket`, itself open:
-    /// removed, its merge would go unpolled and that one never start.
+    /// What `epic` waits on, open and not `theirs`, as a refusal: bd hides a
+    /// blocked Epic's children from bd ready, so a run on them would idle.
+    fn epic_waits(&self, epic: &str, theirs: &dyn Fn(&str) -> bool) -> Option<String> {
+        let e = self.epics.iter().find(|e| e.id == epic)?;
+        let waits: Vec<&str> = e
+            .blockers
+            .iter()
+            .map(String::as_str)
+            .filter(|b| unfinished(&self.epics, b) && !theirs(b))
+            .collect();
+        let which = if waits.len() == 1 {
+            "which is"
+        } else {
+            "which are"
+        };
+        (!waits.is_empty()).then(|| {
+            format!(
+                "refused: {epic} waits on {}, {which} not in the run",
+                waits.join(", ")
+            )
+        })
+    }
+
+    /// An open Ticket of the Ticket run that waits on `ticket`, itself open,
+    /// or whose Epic does: removed, its merge would go unpolled and that one
+    /// never start.
     fn waits_on(&self, ticket: &str) -> Option<String> {
         let open = |id: &str| find(&self.epics, id).filter(|t| t.status != "closed");
         open(ticket)?;
+        let epic_waits = |t: &BdIssue| {
+            let epic = self.epics.iter().find(|e| e.id == t.parent);
+            epic.is_some_and(|e| e.blockers.iter().any(|b| b == ticket))
+        };
         let mut queue = self.state.queue.iter();
-        let waits = |t: &&String| open(t).is_some_and(|t| t.blockers().any(|b| b == ticket));
+        let waits = |t: &&String| {
+            open(t).is_some_and(|t| t.blockers().any(|b| b == ticket) || epic_waits(t))
+        };
         queue.find(waits).cloned()
     }
 
@@ -2063,6 +2103,12 @@ fn find<'a>(epics: &'a [Epic], id: &str) -> Option<&'a BdIssue> {
     epics.iter().flat_map(|e| &e.tickets).find(|t| t.id == id)
 }
 
+/// A blocker still open: an open Epic, or an open Ticket; one off the tree
+/// is closed, as the tree keeps every open Epic and Ticket.
+fn unfinished(epics: &[Epic], id: &str) -> bool {
+    epics.iter().any(|e| e.id == id) || find(epics, id).is_some_and(|t| t.status != "closed")
+}
+
 /// Every issue, Epics and closed ones too, from one bd list call.
 fn bd_list(repo: &Path, tools: &dyn Tools) -> Result<Vec<BdIssue>, String> {
     let out = tools
@@ -2085,12 +2131,14 @@ fn load_epics(repo: &Path, tools: &dyn Tools, queue: &[String]) -> Result<Vec<Ep
             id: i.id.clone(),
             title: i.title.clone(),
             tickets: Vec::new(),
+            blockers: i.blockers().map(String::from).collect(),
         })
         .collect();
     let mut no_epic = Epic {
         id: String::new(),
         title: "no Epic".to_string(),
         tickets: Vec::new(),
+        blockers: Vec::new(),
     };
     issues.sort_by_key(|i| suffix_order(&i.id));
     for issue in issues {

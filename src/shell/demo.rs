@@ -298,6 +298,7 @@ pub(super) fn start(s: &mut Screen) {
         id: EPIC.to_string(),
         title: "Demo: resumable uploads".to_string(),
         tickets,
+        blockers: Vec::new(),
     };
     let state = State {
         epic: EPIC.to_string(),

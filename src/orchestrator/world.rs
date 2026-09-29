@@ -177,6 +177,8 @@ pub(crate) struct Inner {
     /// Width, height in cells of every pane; zero means roomy and square.
     pub(crate) rect: (usize, usize),
     pub(crate) tickets: Vec<BdTicket>,
+    /// Ids the Epic waits on: its bd blocks dependencies.
+    pub(crate) epic_deps: Vec<String>,
     /// PR url -> gh JSON.
     pub(crate) prs: BTreeMap<String, String>,
     /// Command prefix -> the error its next call fails with.
@@ -529,7 +531,16 @@ impl World {
                 .collect();
             if !parent && ids.is_none() {
                 // the Shell's bd cache: the Epic row too, with its title
-                all.push(json!({ "id": EPIC, "title": "Epic hx", "status": "open", "issue_type": "epic" }));
+                let epic = BdTicket {
+                    status: "open".to_string(),
+                    issue_type: "epic".to_string(),
+                    deps: w.epic_deps.clone(),
+                    no_epic: true,
+                    ..BdTicket::new(EPIC)
+                };
+                let mut row = epic.json();
+                row["title"] = json!("Epic hx");
+                all.push(row);
             }
             return Ok(json!(all).to_string());
         }
