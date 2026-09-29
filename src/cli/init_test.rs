@@ -865,10 +865,7 @@ fn cancel_at_the_gate_on_a_committed_checkout_goes_on_to_this_machines_steps() {
 fn a_repo_whose_config_json_is_untracked_asks_every_question() {
     let (repo, home) = (prepared_repo(), TempDir::new());
     write_file(&repo.path().join(".orqadence/config.json"), "{}");
-    let tools = Fake::new(|dir, argv| match argv {
-        ["git", "ls-files", ..] => Ok(String::new()),
-        _ => ok(dir, argv),
-    });
+    let tools = ok_tools();
     let (_, out) = init_with(repo.path(), home.path(), tools.clone(), &[], "");
     assert!(!out.contains(COMMITTED), "{out}");
     for question in [
