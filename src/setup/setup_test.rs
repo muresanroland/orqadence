@@ -234,7 +234,7 @@ fn record(repo: &Path) -> BTreeMap<String, String> {
 }
 
 /// Every file under the repo with its content, to prove a run touched nothing.
-fn snapshot(repo: &Path) -> BTreeMap<String, Vec<u8>> {
+pub(crate) fn snapshot(repo: &Path) -> BTreeMap<String, Vec<u8>> {
     fn walk(dir: &Path, into: &mut BTreeMap<String, Vec<u8>>) {
         for entry in fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
