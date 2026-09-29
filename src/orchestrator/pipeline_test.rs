@@ -331,11 +331,16 @@ fn asked(w: &World) -> usize {
 
 /// Answers the Ticket-start Question about tdd with option `n`, from 0.
 fn answer_tdd(w: &World, o: &Orchestrator, nth: usize, n: usize) {
-    let asked = w.await_nth("picked for test-first", nth);
+    answer(w, o, "hx-1", "picked for test-first", nth, n);
+}
+
+/// Answers the `nth` Ticket-start Question saying `about` with option `n`.
+fn answer(w: &World, o: &Orchestrator, ticket: &str, about: &str, nth: usize, n: usize) {
+    let asked = w.await_nth(about, nth);
     let Some(Ask::TicketStart { options }) = asked.ask else {
         panic!("no Ticket-start Question: {:?}", asked.ask);
     };
-    o.answer("hx-1", "", Answer::Prompt(options[n].clone()));
+    o.answer(ticket, "", Answer::Prompt(options[n].clone()));
 }
 
 /// A pick the checkout's Skill manifest records but the base lacks was
@@ -499,6 +504,114 @@ fn a_failed_pull_on_continue_parks_the_ticket() {
     );
     assert_eq!(asked(&w), 1, "asked again on a stale base");
     assert!(w.called("herdr agent start").is_empty(), "a Stage started");
+}
+
+/// What the Ticket-start Question says of a personal copy of a committed skill.
+const SHADOWS: &str = "shadows the committed";
+
+/// A personal ~/.claude/skills/<pick> shadows the committed pick on a
+/// claude row: a Question before any Stage. Gone on with, it stands for the
+/// run: the next Ticket loading that skill asks nothing.
+#[test]
+fn a_personal_copy_of_a_pick_is_asked_once_a_run() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    w.picked("test-first", "tdd");
+    write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "yours");
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+
+    assert_eq!(
+        w.await_event(SHADOWS).text,
+        "your ~/.claude/skills/tdd shadows the committed tdd: claude runs yours"
+    );
+    assert!(w.called("herdr agent start").is_empty(), "a Stage started");
+    answer(&w, &o, "hx-1", SHADOWS, 1, 0);
+    run.wait();
+    w.await_line("hx-1 going on with your ~/.claude/skills/tdd");
+    w.await_line("hx-1 implement started");
+    w.await_line("hx-1 PR #hx-1 opened");
+
+    o.run_ticket("hx-2");
+    w.await_line("hx-2 PR #hx-2 opened");
+    assert_eq!(asked(&w), 1, "asked again in the same run");
+}
+
+/// codex's home folders are its own: a ~/.codex/skills/<pick> asks on a
+/// codex row, and on a claude row, which never loads it, does not.
+#[test]
+fn a_codex_home_skill_asks_on_a_codex_row_alone() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    w.picked("test-first", "tdd");
+    write_file(&w.home.join(".codex/skills/tdd/SKILL.md"), "yours");
+    o.run_ticket("hx-1");
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 0, "asked on a claude row");
+
+    write_file(
+        &w.repo.join(".orqadence/config.json"),
+        r#"{"implement": {"app": "codex"}}"#,
+    );
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-2");
+    assert_eq!(
+        w.await_event(SHADOWS).text,
+        "your ~/.codex/skills/tdd shadows the committed tdd: codex runs yours"
+    );
+    answer(&w, &o, "hx-2", SHADOWS, 1, 1);
+    run.wait();
+    let ts = o.ticket("hx-2");
+    assert_eq!(
+        (ts.status.as_str(), ts.reason.as_str()),
+        (
+            STATUS_PARKED,
+            "rename your ~/.codex/skills/tdd, then /continue @hx-2"
+        )
+    );
+}
+
+/// A personal create-pr shadows the committed one the Fix loads by name:
+/// asked at the Ticket's start, before any Stage, the Fix among them.
+#[test]
+fn a_personal_create_pr_is_asked_before_the_fix_loads_it() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    write_file(&w.home.join(".claude/skills/create-pr/SKILL.md"), "yours");
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+
+    assert_eq!(
+        w.await_event(SHADOWS).text,
+        "your ~/.claude/skills/create-pr shadows the committed create-pr: claude runs yours"
+    );
+    assert!(w.called("herdr agent start").is_empty(), "a Stage started");
+    answer(&w, &o, "hx-1", SHADOWS, 1, 0);
+    run.wait();
+    w.await_line("hx-1 PR #hx-1 opened");
+}
+
+/// Park parks the Ticket, and the answer is not kept: /continue asks again.
+#[test]
+fn parked_for_a_shadowing_skill_a_ticket_asks_again_on_continue() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.picked("test-first", "tdd");
+    write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "yours");
+    let o = Arc::new(o);
+    let mut runs = vec![spawn_ticket(o.clone(), "hx-1")];
+    answer(&w, &o, "hx-1", SHADOWS, 1, 1);
+    runs[0].wait();
+    let reason = "rename your ~/.claude/skills/tdd, then /continue @hx-1";
+    let ts = o.ticket("hx-1");
+    assert_eq!(
+        (ts.status.as_str(), ts.reason.as_str()),
+        (STATUS_PARKED, reason)
+    );
+    w.await_line(&format!("hx-1 parked: {reason}"));
+    assert!(w.called("herdr agent start").is_empty(), "a Stage started");
+
+    runs.push(spawn_ticket(o.clone(), "hx-1")); // /continue @hx-1
+    answer(&w, &o, "hx-1", SHADOWS, 2, 0);
+    runs[1].wait();
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 2);
 }
 
 /// A Review or a Debate that leaves the worktree dirty, or commits, is put

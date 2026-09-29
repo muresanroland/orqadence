@@ -156,7 +156,7 @@ _Avoid_: LLM call, Main session
 What an Implement session writes before it may edit: the changes and tests it intends for its Ticket, the decisions it made with the answer taken, and an open question only when it has one. A Judgment approves it when it covers every acceptance criterion, stays in scope and asks nothing; otherwise the user reads it and answers, and the session revises it. An open question always goes to the user.
 
 **Question**:
-What the Shell puts to the user when the Orchestrator cannot act alone: a Wake the Judgment was unsure about, a blocked session, a plan to approve, a Stage's own question, a pick not yet merged on a Ticket's base when the Ticket starts, Manual work its session waits on, the Review's App at its usage limit, or a confirmation. It holds only its Ticket (the Review's limit, every Ticket reaching the Review on that App until it is answered), is answered from a fixed set of options or a line of the user's own text, and is never saved: on resume it is derived again from the live session or the Stage result.
+What the Shell puts to the user when the Orchestrator cannot act alone: a Wake the Judgment was unsure about, a blocked session, a plan to approve, a Stage's own question, a pick not yet merged on a Ticket's base or a personal skill shadowing a committed one when the Ticket starts, Manual work its session waits on, the Review's App at its usage limit, or a confirmation. It holds only its Ticket (the Review's limit, every Ticket reaching the Review on that App until it is answered), is answered from a fixed set of options or a line of the user's own text, and is never saved: on resume it is derived again from the live session or the Stage result.
 _Avoid_: Prompt, dialog, alert, form, popup
 
 **Parked**:

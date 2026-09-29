@@ -1,6 +1,6 @@
 use super::{ask_typesafe, install_skills, preflight, typesafe_key, warnings};
 use crate::orchestrator::write_file;
-use crate::skills::manifest::{Installed, Manifest, JOBS, NONE};
+use crate::skills::manifest::{Manifest, JOBS, NONE};
 use crate::skills::SKILLS;
 use crate::tempdir::TempDir;
 use crate::tools::fake::Fake;
@@ -514,24 +514,9 @@ fn preflight_fails_on_a_missing_pick_naming_its_job_and_none_opts_out() {
 }
 
 #[test]
-fn preflight_warns_of_a_personal_copy_shadowing_an_installed_skill_and_of_superpowers() {
-    let (repo, home) = (TempDir::new(), TempDir::new());
-    let mut manifest = Manifest::default();
-    manifest.skills.insert("tdd".into(), Installed::default());
-    manifest.save(repo.path()).unwrap();
-    let env = home_env(home.path());
-    assert_eq!(
-        warnings(repo.path(), &*Fake::quiet(), &env),
-        Vec::<String>::new()
-    );
-
-    write_file(&home.path().join(".claude/skills/tdd/SKILL.md"), "yours");
-    let got = warnings(repo.path(), &*Fake::quiet(), &env);
-    assert!(
-        got.len() == 1 && got[0].contains("tdd") && got[0].contains("personal"),
-        "{got:?}"
-    );
-    fs::remove_dir_all(home.path().join(".claude/skills/tdd")).unwrap();
+fn preflight_warns_of_superpowers() {
+    let repo = TempDir::new();
+    assert_eq!(warnings(repo.path(), &*Fake::quiet()), Vec::<String>::new());
 
     let plugins = |enabled: bool| {
         let reply = serde_json::json!([
@@ -543,13 +528,13 @@ fn preflight_warns_of_a_personal_copy_shadowing_an_installed_skill_and_of_superp
             other => Err(format!("unexpected: {other}")),
         })
     };
-    let got = warnings(repo.path(), &*plugins(true), &env);
+    let got = warnings(repo.path(), &*plugins(true));
     assert!(
         got.len() == 1 && got[0].contains("superpowers") && got[0].contains("SessionStart"),
         "{got:?}"
     );
     assert_eq!(
-        warnings(repo.path(), &*plugins(false), &env),
+        warnings(repo.path(), &*plugins(false)),
         Vec::<String>::new()
     );
 }
@@ -588,8 +573,7 @@ fn preflight_names_each_row_whose_app_is_not_on_path() {
 /// that job's pick: the preflight warns, naming both.
 #[test]
 fn preflight_warns_of_a_stage_skill_that_lost_a_placeholder() {
-    let (repo, home) = (TempDir::new(), TempDir::new());
-    let env = home_env(home.path());
+    let repo = TempDir::new();
     let shipped = SKILLS
         .iter()
         .find(|(name, _)| *name == "stage-implement")
@@ -597,10 +581,7 @@ fn preflight_warns_of_a_stage_skill_that_lost_a_placeholder() {
         .1;
     let at = repo.path().join(".agents/skills/stage-implement/SKILL.md");
     write_file(&at, shipped);
-    assert_eq!(
-        warnings(repo.path(), &*Fake::quiet(), &env),
-        Vec::<String>::new()
-    );
+    assert_eq!(warnings(repo.path(), &*Fake::quiet()), Vec::<String>::new());
 
     let edited: Vec<&str> = shipped
         .lines()
@@ -608,7 +589,7 @@ fn preflight_warns_of_a_stage_skill_that_lost_a_placeholder() {
         .collect();
     write_file(&at, &edited.join("\n"));
     assert_eq!(
-        warnings(repo.path(), &*Fake::quiet(), &env),
+        warnings(repo.path(), &*Fake::quiet()),
         ["the installed stage-implement lacks {{test-first}}: the test first skill you pick never runs there; put the line back, or refresh it with orqa init"]
     );
 }

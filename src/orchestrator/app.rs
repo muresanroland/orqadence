@@ -61,6 +61,10 @@ pub(crate) struct App {
     /// Its own skills folder, at the repo and at home; it loads
     /// .orqadence/skills too, which both folders link Orqadence's skills to.
     pub(crate) skill_dir: &'static str,
+    /// The folders under home whose personal skill it runs over, or beside,
+    /// a committed one of the same name (ask_shadowed); none for the Apps
+    /// whose order is not known.
+    pub(crate) home_skills: &'static [&'static str],
     /// Whether it loads its enabled plugins' skills, named plugin:skill.
     pub(crate) plugins: bool,
     /// Its row is from its docs, never run here: /config says so.
@@ -148,6 +152,7 @@ pub(crate) static APPS: [App; 6] = [
         mention: "",
         built_in: &[],
         skill_dir: ".claude/skills",
+        home_skills: &[".claude/skills"],
         plugins: true,
         experimental: false,
     },
@@ -186,6 +191,7 @@ pub(crate) static APPS: [App; 6] = [
         built_in: &["review-agent"],
         // Never Claude's .claude/skills or its plugins.
         skill_dir: ".agents/skills",
+        home_skills: &[".agents/skills", ".codex/skills"],
         plugins: false,
         experimental: false,
     },
@@ -213,6 +219,7 @@ pub(crate) static APPS: [App; 6] = [
         mention: "",
         built_in: &[],
         skill_dir: ".agents/skills",
+        home_skills: &[],
         plugins: false,
         experimental: true,
     },
@@ -250,6 +257,7 @@ pub(crate) static APPS: [App; 6] = [
         mention: "",
         built_in: &[],
         skill_dir: ".agents/skills",
+        home_skills: &[],
         plugins: false,
         experimental: true,
     },
@@ -290,6 +298,7 @@ pub(crate) static APPS: [App; 6] = [
         mention: "",
         built_in: &[],
         skill_dir: ".agents/skills",
+        home_skills: &[],
         plugins: false,
         experimental: true,
     },
@@ -327,6 +336,7 @@ pub(crate) static APPS: [App; 6] = [
         mention: "",
         built_in: &[],
         skill_dir: ".agents/skills",
+        home_skills: &[],
         plugins: false,
         experimental: true,
     },
