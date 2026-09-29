@@ -248,6 +248,10 @@ pub(crate) struct Orchestrator {
     /// with other text is a newer one. In memory, so a restarted run judges
     /// the plan on screen again.
     pub(super) plans: Mutex<BTreeMap<String, String>>,
+    /// Each personal skill, as ~/<folder>/<name>, shadowing a committed one
+    /// (ask_shadowed): false while a Ticket asks about it, true once the
+    /// user went on with it, for this run alone.
+    pub(super) shadows: Mutex<BTreeMap<String, bool>>,
     /// The Ticket threads, which the binary never joins; the tests do, so a
     /// failure on one fails the test.
     #[cfg(test)]
@@ -284,6 +288,7 @@ impl Orchestrator {
             asked: Mutex::new(BTreeSet::new()),
             deadlines: Mutex::new(BTreeMap::new()),
             plans: Mutex::new(BTreeMap::new()),
+            shadows: Mutex::new(BTreeMap::new()),
             #[cfg(test)]
             threads: Mutex::new(Vec::new()),
         }

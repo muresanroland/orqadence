@@ -224,7 +224,7 @@ pub(crate) fn install_skills(
         .find(|name| record.contains_key(&record_key(name)));
     let pr = match (recorded, mode) {
         (Some(name), _) => name,
-        (None, _) if !has_skill(repo, "create-pr") => "create-pr",
+        (None, _) if !manifest::has_skill(repo, "create-pr") => "create-pr",
         (None, Mode::Fresh) if !committed => ask_about_create_pr(out, input, tty)?,
         (None, _) => "", // the repo's own, kept on the first init
     };
@@ -890,31 +890,12 @@ pub(crate) fn preflight(
     missing
 }
 
-/// What the preflight warns of without failing: a personal skill that shadows
-/// one Orqadence installed, since Claude Code runs a personal skill over a
-/// project one of the same name, the superpowers plugin, and an installed
-/// Stage skill that lost a job's placeholder, which the shipped one holds.
-pub(crate) fn warnings(
-    repo: &Path,
-    tools: &dyn Tools,
-    env: &dyn Fn(&str) -> String,
-) -> Vec<String> {
-    let home = PathBuf::from(env("HOME"));
+/// What the preflight warns of without failing: the superpowers plugin, and
+/// an installed Stage skill that lost a job's placeholder, which the shipped
+/// one holds. A personal skill shadowing a committed one is a Question when
+/// a Ticket starts (ask_shadowed).
+pub(crate) fn warnings(repo: &Path, tools: &dyn Tools) -> Vec<String> {
     let mut warn = Vec::new();
-    // A garbled manifest is the preflight's to fail on.
-    let manifest = Manifest::load(repo).unwrap_or_default();
-    if !home.as_os_str().is_empty() {
-        for name in manifest.skills.keys() {
-            if home
-                .join(".claude/skills")
-                .join(name)
-                .join("SKILL.md")
-                .exists()
-            {
-                warn.push(format!("your personal ~/.claude/skills/{name} shadows the installed {name}: Claude Code runs a personal skill over a project one"));
-            }
-        }
-    }
     for (name, shipped) in SKILLS {
         let Some(Ok(installed)) = stage_skill(repo, name) else {
             continue;
@@ -939,15 +920,6 @@ pub(crate) fn warnings(
         );
     }
     warn
-}
-
-/// Whether the skill is in the repo's .agents/skills, .claude/skills or
-/// .orqadence/skills.
-fn has_skill(repo: &Path, name: &str) -> bool {
-    LINKS
-        .into_iter()
-        .chain([FILES])
-        .any(|dir| repo.join(dir).join(name).join("SKILL.md").exists())
 }
 
 /// Prints each missing prerequisite and returns the exit code.

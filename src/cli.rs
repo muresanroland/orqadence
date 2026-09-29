@@ -185,7 +185,7 @@ fn preflight(
             "preflight: no TypeSafe key: every Wake will be a Question"
         );
     }
-    for warning in setup::warnings(repo, tools, env) {
+    for warning in setup::warnings(repo, tools) {
         let _ = writeln!(out, "preflight: {warning}");
     }
     setup::report_missing(out, &setup::preflight(repo, tools, env))
