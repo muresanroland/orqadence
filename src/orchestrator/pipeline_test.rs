@@ -286,6 +286,11 @@ fn not_installed(w: &World) -> String {
     line.unwrap_or_default().to_string()
 }
 
+/// How many Events put a Question.
+fn asked(w: &World) -> usize {
+    w.events().iter().filter(|e| e.ask.is_some()).count()
+}
+
 /// Answers the Ticket-start Question about tdd with option `n`, from 0.
 fn answer_tdd(w: &World, o: &Orchestrator, nth: usize, n: usize) {
     let asked = w.await_nth("picked for test-first", nth);
@@ -305,13 +310,9 @@ fn a_pick_not_merged_on_the_base_is_a_question_when_the_ticket_starts() {
     let o = Arc::new(o);
     let mut run = spawn_ticket(o.clone(), "hx-1");
 
-    let asked = w.await_event("picked for test-first");
-    assert_eq!(asked.text, UNMERGED);
-    let Some(Ask::TicketStart { options }) = asked.ask else {
-        panic!("no Ticket-start Question: {:?}", asked.ask);
-    };
+    assert_eq!(w.await_event("picked for test-first").text, UNMERGED);
     assert!(w.called("herdr agent start").is_empty(), "a Stage started");
-    o.answer("hx-1", "", Answer::Prompt(options[1].clone()));
+    answer_tdd(&w, &o, 1, 1);
     run.wait();
 
     w.await_line("hx-1 running without tdd: the test-first line is left out");
@@ -350,8 +351,7 @@ fn parked_for_a_pick_not_merged_a_ticket_asks_again_until_it_is() {
     runs.push(spawn_ticket(o.clone(), "hx-1"));
     runs.last_mut().unwrap().wait();
     w.await_line("hx-1 PR #hx-1 opened");
-    let asked = w.events().iter().filter(|e| e.ask.is_some()).count();
-    assert_eq!(asked, 2, "asked again once merged");
+    assert_eq!(asked(&w), 2, "asked again once merged");
     assert!(w.prompt("implement.md").contains("Use the tdd skill"));
 }
 
@@ -375,10 +375,7 @@ fn away_a_pick_not_merged_parks_the_ticket_without_asking() {
             && comments[0].contains("- run without it: the test-first line is left out"),
         "bd comments = {comments:?}"
     );
-    assert!(
-        w.events().iter().all(|e| e.ask.is_none()),
-        "Away still asked"
-    );
+    assert_eq!(asked(&w), 0, "Away still asked");
     assert!(w.called("herdr agent start").is_empty(), "a Stage started");
 
     o.cfg.away.store(false, Ordering::SeqCst);
@@ -398,10 +395,7 @@ fn a_pick_merged_on_the_base_asks_nothing() {
     o.run_ticket("hx-1");
 
     w.await_line("hx-1 PR #hx-1 opened");
-    assert!(
-        w.events().iter().all(|e| e.ask.is_none()),
-        "a Question was put"
-    );
+    assert_eq!(asked(&w), 0, "a Question was put");
     assert!(w.prompt("implement.md").contains("Use the tdd skill"));
     assert!(!not_installed(&w).contains("tdd"), "{}", not_installed(&w));
 }
@@ -417,10 +411,7 @@ fn a_ticket_past_its_start_is_not_asked() {
     o.run_ticket("hx-1");
 
     w.await_line("hx-1 PR #hx-1 opened");
-    assert!(
-        w.events().iter().all(|e| e.ask.is_none()),
-        "a Question was put"
-    );
+    assert_eq!(asked(&w), 0, "a Question was put");
     assert!(not_installed(&w).contains("tdd (test-first)"));
 }
 
@@ -446,8 +437,7 @@ fn a_failed_pull_on_continue_parks_the_ticket() {
         "{}",
         ts.reason
     );
-    let asked = w.events().iter().filter(|e| e.ask.is_some()).count();
-    assert_eq!(asked, 1, "asked again on a stale base");
+    assert_eq!(asked(&w), 1, "asked again on a stale base");
     assert!(w.called("herdr agent start").is_empty(), "a Stage started");
 }
 
