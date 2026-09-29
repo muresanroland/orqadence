@@ -23,6 +23,7 @@ use crossterm::event::{
 use ratatui::layout::{Position, Rect};
 use ratatui::DefaultTerminal;
 
+use crate::on_call::{self, Doorbell, OnCall};
 use crate::orchestrator::judgment::{self, Action};
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::{log_line, Answer, Ask, Config, Event, Orchestrator};
@@ -261,6 +262,13 @@ pub(crate) struct Screen {
     last: State,
     /// /demo's scripted run, in place of the Shell's Epics, State and RECENT.
     pub(crate) demo: Option<demo::Demo>,
+    /// The On call settings, loaded once at open: the one copy the On call
+    /// state and /config read and change.
+    pub(crate) on_call: OnCall,
+    /// Where On call pushes go: Moshi, or in tests a FakeDoorbell, so no
+    /// test rings the phone; a test keeps its own fake by putting it here.
+    #[allow(dead_code)] // the On call state (harness-we9.2) rings it
+    pub(crate) doorbell: Arc<dyn Doorbell>,
 }
 
 impl Screen {
@@ -314,6 +322,11 @@ impl Screen {
             summary: None,
             last: State::default(),
             demo: None,
+            on_call: OnCall::default(),
+            #[cfg(not(test))]
+            doorbell: Arc::new(on_call::Moshi),
+            #[cfg(test)]
+            doorbell: Arc::new(on_call::FakeDoorbell::default()),
         }
     }
 
@@ -350,6 +363,7 @@ impl Screen {
         };
         let mut screen = Screen::new(cfg, folder, truecolor, Vec::new(), state);
         screen.missing = missing;
+        screen.on_call = on_call::load(repo, env);
         screen.reload_epics();
         match update::exe_path() {
             Ok(exe) => {
