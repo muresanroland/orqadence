@@ -44,7 +44,7 @@ Every Stage that needs a decision asks through a Question; under Away its Ticket
 | Label | Extra review | Position | Debate |
 |---|---|---|---|
 | orqa:security | getsentry security-review | every Round | on |
-| orqa:infra | its offline checks (terraform, tflint, trivy, hadolint, kubeconform, actionlint); what exactly it runs is its own Waypoint | every Round | off: the Fix fixes what fails |
+| orqa:infra | infra-review, a Shipped skill that runs the offline checks (below) | every Round | off: the Fix fixes what fails |
 | the other Area labels | none | | |
 
 Modifier labels never carry one. A Ticket has at most one Area label, so it has at most one Extra review.
@@ -56,3 +56,33 @@ Modifier labels never carry one. A Ticket has at most one Area label, so it has 
 - **A new label:** its Extra review defaults to every Round, Debate on.
 - **Rounds:** Findings that skip the Debate count as fix items, so they keep the Rounds going. Any still open at Round 3's cap go on the PR with the other leftovers.
 - **Config:** on the /config Ticket labels page, each label has an Extra review skill, a position, the Debate switch, and an App, model and effort.
+- **fetch.sh:** before an Extra review, if its skill's folder has a fetch.sh, the Orchestrator runs it in the worktree with network, in the background, and passes it a cache directory. If the script fails, a Question offers Retry or Run without.
+
+## orqa:infra's offline checks
+
+Decided on the Waypoint "orqa:infra's Extra review: what the check runs, and fetching its offline prerequisites" (harness-bsg.21). The tool facts are in docs/research/infra-label.md on research/infra-label.
+
+- **Tools.** infra-review runs only the tools that match files the diff touches:
+  - terraform fmt, validate, and test with mock_provider;
+  - tflint, with its bundled ruleset plus any plugins the repo's .tflint.hcl names;
+  - trivy config --skip-check-update;
+  - hadolint;
+  - helm lint, and helm template piped into kubeconform;
+  - actionlint, with shellcheck.
+
+  checkov is left out, because trivy covers the same ground and gives severities.
+- **Findings.** Every result is a Finding, because the review cannot change code and the Debate is off.
+  - Severities follow the research's §3.3.
+  - An unformatted file is `(low) path — run terraform fmt`.
+  - A failing mocked test is `(high)` on its .tftest.hcl file.
+  - kubeconform and helm lint give no line, so the skill finds the line from the kind, name and path, or reports the file alone.
+  - Checks that did not run go in a `## Not run` section of the result file, and the last Fix copies it onto the PR.
+- **Preflight.** With orqa:infra configured, preflight blocks while any of these is missing: terraform ≥ 1.7, tflint, trivy, hadolint, helm, kubeconform, actionlint, shellcheck.
+- **Prerequisites.** infra-review's fetch.sh runs before every infra Extra review, so it picks up providers a Round adds. It writes to .orqadence-local/cache/infra, which every worktree of the checkout shares.
+  - It works on temp copies of the touched Terraform roots and never writes the worktree.
+  - It fills the provider cache.
+  - It runs tflint --init, taking GITHUB_TOKEN from gh auth token.
+  - It warms kubeconform's schema cache.
+- **In the review.** The worktree is read-only, so each touched Terraform root is copied to $TMPDIR, then initialised offline with init -backend=false -plugin-dir pointing at the cache. A CRD with no schema is skipped and listed under Not run.
+- **Fetch failure.** On Run without, validate, the mocked tests, kubeconform and tflint's plugins are marked not run. Under Away, the Ticket parks.
+- **Lock file.** The review and fetch.sh never touch the worktree's .terraform.lock.hcl. Implement and Fix commit a change to it only when the Ticket adds or upgrades a provider. Then they regenerate it with terraform providers lock for every platform the lock file already lists. Without network, that step is Manual work.
