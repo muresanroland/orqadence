@@ -6,12 +6,17 @@ set -eu
 
 cargo fetch --locked >&2
 echo "orqa includes the following third-party crates, under their own licenses."
-cargo metadata --format-version 1 --locked \
-  --filter-platform aarch64-apple-darwin --filter-platform x86_64-unknown-linux-gnu |
+# Each step is its own assignment so set -e sees a failed cargo or jq, which a
+# pipeline into the loop would hide behind a header-only file.
+metadata=$(cargo metadata --format-version 1 --locked \
+  --filter-platform aarch64-apple-darwin --filter-platform x86_64-unknown-linux-gnu)
+crates=$(printf '%s' "$metadata" |
   jq -r '[.resolve.nodes[].id] as $used | .packages[]
     | select(.source != null and (.id | IN($used[])))
     | [.name, .version, (.manifest_path | rtrimstr("/Cargo.toml")), (.license // "unknown"), (.authors | join(", "))]
-    | @tsv' |
+    | @tsv')
+[ -n "$crates" ] || { echo "no third-party crates found" >&2; exit 1; }
+printf '%s\n' "$crates" |
   sort -u |
   while IFS="$(printf '\t')" read -r name version dir license authors; do
     printf '\n%s\n%s %s\nLicense: %s\n' "================================================================" "$name" "$version" "$license"
