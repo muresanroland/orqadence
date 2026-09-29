@@ -19,7 +19,7 @@ use crate::shell::config::{
     TYPESAFE_PAGE,
 };
 use crate::shell::Screen;
-use crate::skills::manifest::{Location, NONE};
+use crate::skills::manifest::NONE;
 
 /// The ground of the row under the cursor, and of the section whose page has it.
 const SEL_BG: Color = Color::Rgb(44, 36, 78);
@@ -148,21 +148,16 @@ fn item(
     }
 }
 
-/// The Skills page: where init put the skills, read-only, then each skill
+/// The Skills page: where the skills live, read-only, then each skill
 /// Orqadence installed with its source @ commit and the jobs using it.
 fn skills_page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
     let about = "The skills Orqadence installed, from their sources; the Skill manifest is .orqadence/skills.json.";
     let summary = format!("{} installed", st.skills());
     let mut lines = head("Skills", summary, about, width);
     lines.push(Line::default());
-    let location = match st.manifest.location.unwrap_or(Location::Repo) {
-        Location::Checkout => ("this checkout, uncommitted", ".orqadence/skills"),
-        Location::Repo => ("the repo, committed", ".agents/skills"),
-        Location::User => ("user level", "~/.agents/skills"),
-    };
     let value = vec![
-        Span::styled(location.0, fg(TEXT)),
-        Span::styled(format!("  {}", location.1), fg(MUTED)),
+        Span::styled(".orqadence/skills", fg(TEXT)),
+        Span::styled(", committed", fg(MUTED)),
     ];
     let mut at = 0;
     let selected = |i: usize| st.open && st.setting == i;
@@ -174,6 +169,11 @@ fn skills_page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
         value,
         width,
     );
+    let linked = vec![(
+        "linked from .agents/skills and .claude/skills".to_string(),
+        fg(MUTED),
+    )];
+    lines.extend(wrap_spans(linked, width, "    ", "      ", fg(MUTED)));
     lines.push(Line::default());
     for (i, name) in st.skill_names().into_iter().enumerate() {
         let skill = &st.manifest.skills[&name];
@@ -680,12 +680,12 @@ fn foot_lines(s: &Screen, st: &Settings, width: usize) -> Vec<Line<'static>> {
             Typing::Floor(floor) => (
                 format!("{} › ", floor_name(floor)),
                 text.clone(),
-                "A number from 0 to 1, or nothing for the default, saved at once to .orqadence/config.json; the next Judgment reads it.".to_string(),
+                "A number from 0 to 1, or nothing for the default, saved at once, uncommitted, to .orqadence/config.json; the next Judgment reads it.".to_string(),
             ),
             Typing::MaxTickets => (
                 "tickets at once › ".to_string(),
                 text.clone(),
-                "A whole number of at least 1, or nothing for the default, saved at once to .orqadence/config.json; the live run's next pass reads it.".to_string(),
+                "A whole number of at least 1, or nothing for the default, saved at once, uncommitted, to .orqadence/config.json; the live run's next pass reads it.".to_string(),
             ),
         };
         let (help, color) = st.note.clone().unwrap_or((help, MUTED));

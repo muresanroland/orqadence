@@ -27,6 +27,13 @@ use crate::setup;
 use crate::skills::manifest::{self, job_row, parse_source, Added, Manifest, JOBS, NONE};
 use crate::tools::{RunError, Tools};
 
+/// What a save line adds (ADR 0006): the file is the working copy's, for
+/// you to commit. A setting or a pick applies at once from it; a skill
+/// change reaches a Ticket through its base.
+const CONFIG: &str = ", saved uncommitted in .orqadence/config.json";
+const PICK: &str = ", saved uncommitted in .orqadence/skills.json";
+const SKILL: &str = "; saved uncommitted: Tickets take the change once it is merged";
+
 /// One row of config.json: its key, its name, the lead of its settings'
 /// labels on a section's page ("" for the section's own row), the section
 /// it sits in, and what it runs.
@@ -838,11 +845,13 @@ impl Settings {
         self.manifest.skills.keys().cloned().collect()
     }
 
-    /// The foot's note on the Skills page's row i: the location, or a skill.
+    /// The foot's note on the Skills page's row i: where the skills live, or
+    /// a skill.
     pub(crate) fn skills_note(&self, i: usize) -> String {
         let names = self.skill_names();
         let Some(name) = i.checked_sub(1).map(|i| &names[i]) else {
-            return "Run orqa init again to change where skills are installed.".to_string();
+            return "Committed: a skill change here takes effect for Tickets once it is merged."
+                .to_string();
         };
         match self.manifest.skills[name].shipped {
             true => format!("{name} is a Shipped skill: orqa init installs and updates it, and it cannot be removed."),
@@ -852,7 +861,7 @@ impl Settings {
 
     /// The foot's note on the TypeSafe page's row i.
     pub(crate) fn typesafe_note(&self, i: usize) -> String {
-        let floor = "Enter types a number from 0 to 1, or nothing for the default, saved at once: the next Judgment reads it.";
+        let floor = "Enter types a number from 0 to 1, or nothing for the default, saved at once, uncommitted: the next Judgment reads it.";
         match i {
             0 => "Judges a Wake's next step, a Plan's approval and a Finding the Debate still disputes; Enter turns it on or off.".to_string(),
             1 => format!("Kept in {}, readable only by you; TYPESAFE_API_KEY in the environment wins over it.", setup::KEY_FILE),
@@ -863,7 +872,7 @@ impl Settings {
 
     /// The foot's note on the Run page.
     pub(crate) fn run_note(&self) -> String {
-        "Tickets in the Pipeline at once, in an Epic run or a Ticket run. Enter types a whole number of at least 1, or nothing for the default, saved at once: the live run's next pass reads it.".to_string()
+        "Tickets in the Pipeline at once, in an Epic run or a Ticket run. Enter types a whole number of at least 1, or nothing for the default, saved at once, uncommitted: the live run's next pass reads it.".to_string()
     }
 
     /// max_tickets as the Run page shows it: its number, and whether that is
@@ -1375,13 +1384,13 @@ impl Screen {
         }
     }
 
-    /// A change saved outside config.json's rows: the foot says it, and
-    /// during a run RECENT and the log.
-    fn done(&mut self, text: String) {
+    /// A change saved outside config.json's rows: the foot says it with
+    /// tail, CONFIG, PICK or SKILL, and during a run RECENT and the log.
+    fn done(&mut self, text: String, tail: &str) {
         let live = self.run.is_some();
         let st = self.settings.as_mut().unwrap();
         st.saved = Some(chrono::Local::now().format("%H:%M:%S").to_string());
-        st.note = Some((text.clone(), GREEN));
+        st.note = Some((format!("{text}{tail}"), GREEN));
         if live {
             self.say(&format!("config: {text}"));
         }
@@ -1398,7 +1407,10 @@ impl Screen {
         match app::set_typesafe(repo, on).and_then(|()| app::read_object(repo)) {
             Ok((_, doc)) => {
                 self.settings.as_mut().unwrap().doc = doc;
-                self.done(format!("TypeSafe {}", if on { "on" } else { "off" }));
+                self.done(
+                    format!("TypeSafe {}", if on { "on" } else { "off" }),
+                    CONFIG,
+                );
             }
             Err(err) => self.refused(&err),
         }
@@ -1425,10 +1437,11 @@ impl Screen {
             Ok((_, doc)) => {
                 self.settings.as_mut().unwrap().doc = doc;
                 let name = floor_name(floor);
-                self.done(match value {
+                let text = match value {
                     Some(value) => format!("{name} {value:.2}"),
                     None => format!("{name} {:.2}, its default", floor.default),
-                });
+                };
+                self.done(text, CONFIG);
             }
             Err(err) => self.refused(&err),
         }
@@ -1455,10 +1468,11 @@ impl Screen {
         match app::set_max_tickets(repo, value).and_then(|()| app::read_object(repo)) {
             Ok((_, doc)) => {
                 self.settings.as_mut().unwrap().doc = doc;
-                self.done(match value {
+                let text = match value {
                     Some(n) => format!("{} at once", plural(n, "Ticket")),
                     None => format!("{DEFAULT_MAX_TICKETS} Tickets at once, its default"),
-                });
+                };
+                self.done(text, CONFIG);
             }
             Err(err) => self.refused(&err),
         }
@@ -1483,13 +1497,13 @@ impl Screen {
     fn off_thread(
         &mut self,
         text: String,
-        work: impl FnOnce(&Path, &Path, &dyn Tools) -> Done + Send + 'static,
+        work: impl FnOnce(&Path, &dyn Tools) -> Done + Send + 'static,
     ) {
         let (repo, home) = (self.cfg.repo.clone(), self.cfg.home.clone());
         let tools = self.cfg.tools.clone();
         let (tx, done) = mpsc::channel();
         thread::spawn(move || {
-            let done = work(&repo, &home, &*tools);
+            let done = work(&repo, &*tools);
             let _ = tx.send((done, found(&repo, &home, &*tools)));
         });
         self.settings.as_mut().unwrap().busy = Some(Busy { text, done });
@@ -1508,8 +1522,8 @@ impl Screen {
             }
         };
         let said = format!("cloning {}…", short(&source.repo));
-        self.off_thread(said, move |repo, home, tools| {
-            let added = manifest::add(repo, home, tools, &text, None);
+        self.off_thread(said, move |repo, tools| {
+            let added = manifest::add(repo, tools, &text, None);
             Done::Added(text, added)
         });
     }
@@ -1532,9 +1546,9 @@ impl Screen {
         }
         let source = st.listing.take().unwrap().source;
         let said = format!("cloning {source} for {}…", names.join(", "));
-        self.off_thread(said, move |repo, home, tools| {
+        self.off_thread(said, move |repo, tools| {
             let added = names.into_iter().map(|name| {
-                let added = manifest::add(repo, home, tools, &source, Some(&name));
+                let added = manifest::add(repo, tools, &source, Some(&name));
                 (name, added)
             });
             Done::Ticked(added.collect())
@@ -1546,9 +1560,7 @@ impl Screen {
         let from = parse_source(source).map_or(source.to_string(), |s| short(&s.repo).into());
         self.off_thread(
             format!("cloning {from} for {name}…"),
-            move |repo, home, tools| {
-                Done::ForJob(j, manifest::add(repo, home, tools, source, Some(name)))
-            },
+            move |repo, tools| Done::ForJob(j, manifest::add(repo, tools, source, Some(name))),
         );
     }
 
@@ -1574,7 +1586,7 @@ impl Screen {
             return false;
         }
         self.settings.as_mut().unwrap().manifest = manifest;
-        self.done(format!("{} picks {name}", job_said(j)));
+        self.done(format!("{} picks {name}", job_said(j)), PICK);
         true
     }
 
@@ -1594,10 +1606,10 @@ impl Screen {
             ),
             None => "fetching every skill's source…".to_string(),
         };
-        self.off_thread(said, move |repo, home, tools| {
+        self.off_thread(said, move |repo, tools| {
             let failed = match &one {
-                Some(name) => manifest::update(repo, home, tools, name).map(|()| Vec::new()),
-                None => manifest::update_all(repo, home, tools),
+                Some(name) => manifest::update(repo, tools, name).map(|()| Vec::new()),
+                None => manifest::update_all(repo, tools),
             };
             Done::Updated(one, failed)
         });
@@ -1632,7 +1644,7 @@ impl Screen {
     /// A yes to removing a skill: no clone, so on the screen thread.
     fn remove_skill(&mut self, name: &str) {
         let jobs = self.settings.as_ref().unwrap().jobs_using(name);
-        if let Err(err) = manifest::remove(&self.cfg.repo, &self.cfg.home, name) {
+        if let Err(err) = manifest::remove(&self.cfg.repo, name) {
             return self.refused(&err);
         }
         let found = found(&self.cfg.repo, &self.cfg.home, &*self.cfg.tools);
@@ -1642,7 +1654,7 @@ impl Screen {
             0 => format!("removed {name}"),
             _ => format!("removed {name}; {} {is} none", jobs.join(", ")),
         };
-        self.done(text);
+        self.done(text, SKILL);
     }
 
     /// The Skill manifest read again after a change, with the skills you
@@ -1694,7 +1706,7 @@ impl Screen {
         let st = self.settings.as_mut().unwrap();
         match done {
             Done::Added(_, Err(err)) | Done::ForJob(_, Err(err)) => self.refused(&err),
-            Done::Added(_, Ok(Added::Installed(name))) => self.done(self.installed(&name)),
+            Done::Added(_, Ok(Added::Installed(name))) => self.done(self.installed(&name), SKILL),
             Done::Added(source, Ok(Added::Choose(names))) => {
                 let repo = parse_source(&source).map(|s| s.repo).unwrap_or_default();
                 let names = names
@@ -1720,9 +1732,9 @@ impl Screen {
                 };
                 let installed = self.installed(&name);
                 if self.set_pick(j, &name) {
-                    self.done(format!("{installed}; {} uses it", job_said(j)));
+                    self.done(format!("{installed}; {} uses it", job_said(j)), SKILL);
                 } else {
-                    self.done(installed);
+                    self.done(installed, SKILL);
                 }
             }
             Done::Ticked(added) => {
@@ -1738,7 +1750,7 @@ impl Screen {
                     }
                 }
                 match failed {
-                    false => self.done(said.join("; ")),
+                    false => self.done(said.join("; "), SKILL),
                     true => self.refused(&said.join("; ")),
                 }
             }
@@ -1774,7 +1786,7 @@ impl Screen {
                     .join("; ");
                 match (failed.is_empty(), changed.is_empty()) {
                     (true, true) => st.note = Some((said, GREEN)),
-                    (true, false) => self.done(said),
+                    (true, false) => self.done(said, SKILL),
                     _ => self.refused(&said),
                 }
             }
@@ -1802,9 +1814,9 @@ impl Screen {
         let name = ROWS[row].name;
         let text = match live {
             true => format!(
-                "saved: {name} {new}. Stages that start from now use it; running ones keep theirs."
+                "saved: {name} {new}, uncommitted. Stages that start from now use it; running ones keep theirs."
             ),
-            false => format!("saved: {name} {new}, in .orqadence/config.json"),
+            false => format!("saved: {name} {new}, uncommitted in .orqadence/config.json"),
         };
         st.note = Some((text, GREEN));
         if live {

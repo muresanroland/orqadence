@@ -1,12 +1,11 @@
 use super::{ask_typesafe, install_skills, preflight, typesafe_key, warnings};
 use crate::orchestrator::write_file;
-use crate::skills::manifest::{Installed, Location, Manifest, JOBS, NONE};
+use crate::skills::manifest::{Installed, Manifest, JOBS, NONE};
 use crate::skills::SKILLS;
 use crate::tempdir::TempDir;
 use crate::tools::fake::Fake;
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
@@ -22,18 +21,16 @@ fn repo_with_own_pr() -> TempDir {
     repo
 }
 
-/// init in the repo Location (its own keystroke first), then `answer`.
+/// init's skills step, `answer` on its input.
 fn install(repo: &Path, answer: &str) -> String {
     let mut out = Vec::new();
     let home = TempDir::new();
-    let mut keys = b"2".chain(answer.as_bytes());
     install_skills(
         repo,
         home.path(),
-        &*Fake::quiet(),
         false,
         &mut out,
-        &mut keys,
+        &mut answer.as_bytes(),
         false,
     )
     .unwrap();
@@ -120,7 +117,6 @@ fn install_skills_force_skips_the_questions_and_keeps_the_repos_own_create_pr() 
     install_skills(
         repo.path(),
         home.path(),
-        &*Fake::quiet(),
         true,
         &mut out,
         &mut "2\n".as_bytes(),
@@ -129,12 +125,10 @@ fn install_skills_force_skips_the_questions_and_keeps_the_repos_own_create_pr() 
     .unwrap();
     let out = String::from_utf8(out).unwrap();
     assert!(!out.contains("already"), "--force still asked:\n{out}");
-    assert!(!out.contains("where should"), "--force asked where:\n{out}");
     assert_eq!(
         read(repo.path(), ".agents/skills/create-pr/SKILL.md"),
         "the repo's own"
     );
-    // A fresh repo's place, as a silent init takes it.
     assert!(read(repo.path(), ".orqadence/skills/stage-fix/SKILL.md").contains("name: stage-fix"));
 }
 
@@ -164,69 +158,57 @@ fn install_skills_overwrite_keeps_the_repos_own_create_pr_beside_the_recorded_on
     );
 }
 
+/// A checkout an older init set up at user level, run without HOME: its
+/// skills cannot be copied, so init stops rather than install afresh.
 #[test]
-fn moving_an_older_install_leaves_the_shipped_skills_the_repo_committed() {
+fn skills_at_user_level_without_home_stop_init() {
     let repo = TempDir::new();
-    install(repo.path(), ""); // the repo Location: no gate yet
-                              // An older init kept only its record.
-    fs::remove_file(repo.path().join(".orqadence/skills.json")).unwrap();
-    // git tracks stage-fix alone.
-    let git = Fake::new(|_, argv| {
-        Ok(match argv {
-            ["git", "ls-files", "--", ".agents/skills/stage-fix"] => STAGE_FIX.to_string(),
-            _ => String::new(),
-        })
-    });
-    let (mut out, home) = (Vec::new(), TempDir::new());
-    // This checkout, then the gate on a closed stdin: cancel.
-    let went_on = install_skills(
-        repo.path(),
-        home.path(),
-        &*git,
-        false,
-        &mut out,
-        &mut "1".as_bytes(),
-        false,
-    )
-    .unwrap();
-    let out = String::from_utf8(out).unwrap();
-    assert!(!went_on, "{out}");
-    assert!(out.contains("stage-fix stays at"), "{out}");
-    assert!(repo.path().join(STAGE_FIX).exists(), "{out}");
-    assert!(
-        repo.path()
-            .join(".orqadence/skills/stage-implement/SKILL.md")
-            .exists(),
-        "{out}"
+    write_file(
+        &repo.path().join(".orqadence/skills.json"),
+        r#"{"location": "user", "skills": {"tdd": {"repo": "https://github.com/mattpocock/skills"}}}"#,
     );
-    assert_eq!(
-        Manifest::load(repo.path()).unwrap().location,
-        Some(Location::Checkout)
-    );
-}
-
-#[test]
-fn moving_from_user_level_without_home_keeps_the_location() {
-    let repo = TempDir::new();
-    let mut manifest = Manifest::load(repo.path()).unwrap();
-    manifest.location = Some(Location::User);
-    manifest.save(repo.path()).unwrap();
-    // This checkout, with no HOME to find the user-level skills in.
     let err = install_skills(
         repo.path(),
         Path::new(""),
-        &*Fake::quiet(),
         false,
         &mut Vec::new(),
-        &mut "1".as_bytes(),
+        &mut "".as_bytes(),
         false,
     )
     .unwrap_err();
     assert!(err.to_string().contains("no HOME"), "{err}");
-    assert_eq!(
-        Manifest::load(repo.path()).unwrap().location,
-        Some(Location::User)
+    assert!(!repo.path().join(".orqadence/skills").exists());
+}
+
+/// A checkout install from before ADR 0006: its skills are in
+/// .orqadence/skills already and gain their links, and the lines that hid
+/// the worktrees' links from git go, since they would hide these too.
+#[test]
+fn a_checkout_install_is_linked_and_its_exclude_lines_go() {
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join(".orqadence/skills/stage-fix/SKILL.md"),
+        "edited",
     );
+    write_file(
+        &repo.path().join(".orqadence/skills.json"),
+        r#"{"location": "checkout", "skills": {"stage-fix": {"shipped": true}}}"#,
+    );
+    let exclude = repo.path().join(".git/info/exclude");
+    write_file(
+        &exclude,
+        "/.claude/skills/stage-fix\n*.tmp\n/.agents/skills/stage-fix\n",
+    );
+    install(repo.path(), ""); // the gate, unanswered: cancel
+    assert_eq!(fs::read_to_string(&exclude).unwrap(), "*.tmp\n");
+    for dir in [".agents/skills", ".claude/skills"] {
+        assert_eq!(
+            fs::read_link(repo.path().join(dir).join("stage-fix")).unwrap(),
+            Path::new("../../.orqadence/skills/stage-fix"),
+            "{dir}"
+        );
+    }
+    assert_eq!(read(repo.path(), STAGE_FIX), "edited");
 }
 
 fn record(repo: &Path) -> BTreeMap<String, String> {
@@ -533,7 +515,6 @@ fn preflight_warns_of_a_personal_copy_shadowing_an_installed_skill_and_of_superp
     let (repo, home) = (TempDir::new(), TempDir::new());
     let mut manifest = Manifest::default();
     manifest.skills.insert("tdd".into(), Installed::default());
-    manifest.location = Some(Location::Checkout);
     manifest.save(repo.path()).unwrap();
     let env = home_env(home.path());
     assert_eq!(
@@ -547,13 +528,7 @@ fn preflight_warns_of_a_personal_copy_shadowing_an_installed_skill_and_of_superp
         got.len() == 1 && got[0].contains("tdd") && got[0].contains("personal"),
         "{got:?}"
     );
-    // At user level the installed one is the personal one.
-    manifest.location = Some(Location::User);
-    manifest.save(repo.path()).unwrap();
-    assert_eq!(
-        warnings(repo.path(), &*Fake::quiet(), &env),
-        Vec::<String>::new()
-    );
+    fs::remove_dir_all(home.path().join(".claude/skills/tdd")).unwrap();
 
     let plugins = |enabled: bool| {
         let reply = serde_json::json!([
