@@ -215,6 +215,22 @@ fn init_leaves_the_repos_gitignore_byte_for_byte() {
     );
 }
 
+/// A checkout from before .orqadence-local, its skills installed: an init
+/// that cancels at the skills gate still makes the folder orqa opens on.
+#[test]
+fn init_cancelled_at_the_skills_gate_still_makes_the_local_folder() {
+    let repo = prepared_repo();
+    run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    fs::remove_dir_all(repo.path().join(".orqadence-local")).unwrap();
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "init exit {code}:\n{out}");
+    assert!(out.contains("already installed"), "no gate:\n{out}");
+    assert_eq!(
+        fs::read_to_string(repo.path().join(".orqadence-local/.gitignore")).unwrap(),
+        "*\n"
+    );
+}
+
 #[test]
 fn init_keeps_edited_skill_unless_forced() {
     let repo = prepared_repo();

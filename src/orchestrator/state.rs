@@ -1,5 +1,6 @@
 //! The state file and the lock: what the Orchestrator knows about every
-//! Ticket, saved atomically, and one run per Target repo.
+//! Ticket, saved atomically, and one run per Target repo. Both live in
+//! .orqadence-local, the checkout's uncommitted folder, made here.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

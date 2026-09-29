@@ -40,7 +40,8 @@ enum Mode {
 /// of its own is asked what to do with the shipped one, since the Fix Stage
 /// runs whichever /create-pr the repo ends up with; later inits keep that
 /// answer from the record. `input` answers the questions, in raw mode when
-/// `tty`.
+/// `tty`. .orqadence-local is made first, whatever the answers: orqa opens
+/// once it exists.
 pub(crate) fn install_skills(
     repo: &Path,
     home: &Path,
@@ -50,6 +51,7 @@ pub(crate) fn install_skills(
     input: &mut dyn Read,
     tty: bool,
 ) -> io::Result<bool> {
+    local_dir(repo)?;
     let mut record: BTreeMap<String, String> = fs::read_to_string(repo.join(RECORD))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
@@ -178,7 +180,6 @@ pub(crate) fn install_skills(
         serde_json::to_string_pretty(&record)? + "\n",
     )?;
     manifest.save(repo).map_err(io::Error::other)?;
-    local_dir(repo)?;
     Ok(true)
 }
 
