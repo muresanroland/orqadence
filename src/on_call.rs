@@ -94,7 +94,6 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The seam to the phone: one push. An error never carries the token.
 pub(crate) trait Doorbell: Send + Sync {
-    #[allow(dead_code)] // the On call state (harness-we9.2) rings
     fn ring(&self, token: &str, title: &str, message: &str) -> Result<(), String>;
 }
 

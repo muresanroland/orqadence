@@ -5635,3 +5635,305 @@ fn the_12x12_logo_and_its_ascii_fallback_match_the_brand_reference() {
         ("❯", Some(INK), Some(PANE_COLORS[2]))
     );
 }
+
+/// On call over the fake doorbell: a token set, the clock at `now`.
+fn on_call(
+    s: &mut Screen,
+    now: chrono::DateTime<chrono::Local>,
+) -> (
+    Arc<crate::on_call::FakeDoorbell>,
+    Arc<Mutex<chrono::DateTime<chrono::Local>>>,
+) {
+    let bell = Arc::new(crate::on_call::FakeDoorbell::default());
+    s.doorbell = bell.clone();
+    s.on_call.token = Some("tok".to_string());
+    (bell, set_clock(&mut s.cfg, now))
+}
+
+/// Polls the Shell until no push is in flight.
+fn settle(s: &mut Screen) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while s.pushes > 0 {
+        assert!(Instant::now() < deadline, "a push never came back");
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn messages(bell: &crate::on_call::FakeDoorbell) -> Vec<String> {
+    let rings = bell.rings.lock().unwrap();
+    rings
+        .iter()
+        .map(|(_, _, message)| message.clone())
+        .collect()
+}
+
+/// A Plan Question for `ticket`, asked at the event helper's time.
+fn plan_asked(ticket: &str) -> Event {
+    asking(
+        ticket,
+        "plan ready in implement (pane 2-1)",
+        Ask::Plan {
+            pane: "w1:p7".to_string(),
+            plan: "- SECRET step\n".to_string(),
+            judged: None,
+            feedback: None,
+        },
+    )
+}
+
+/// The event helper's time, `minutes` on.
+fn after(minutes: i64) -> chrono::DateTime<chrono::Local> {
+    event(None, "", false).time + chrono::Duration::minutes(minutes)
+}
+
+/// A Plan Question waiting 6 minutes turns On call on at the next tick and
+/// rings once, its Ticket, kind and title and never the plan; one waiting
+/// 4 minutes rings nothing.
+#[test]
+fn a_question_waiting_its_minutes_goes_on_call_and_rings_once() {
+    let mut s = screen();
+    let (bell, _) = on_call(&mut s, after(4));
+    s.push(plan_asked("harness-kqe.13"));
+    s.tick();
+    settle(&mut s);
+    assert!(!s.calling, "On call at 4 minutes");
+    assert!(messages(&bell).is_empty());
+
+    let (bell, _) = on_call(&mut s, after(6));
+    s.tick();
+    settle(&mut s);
+    assert!(s.calling, "never went On call");
+    assert_eq!(
+        *bell.rings.lock().unwrap(),
+        [(
+            "tok".to_string(),
+            "orqa · ~/orqa".to_string(),
+            "harness-kqe.13 · Plan to approve · Plan mode".to_string()
+        )]
+    );
+    assert_eq!(
+        line(s.events.last().unwrap()),
+        "on call: a Question has waited 5 minutes, pushing to your phone"
+    );
+}
+
+/// Away, or no token, never goes On call.
+#[test]
+fn away_or_no_token_never_goes_on_call() {
+    let mut s = screen();
+    let (bell, _) = on_call(&mut s, after(6));
+    s.command("/away");
+    s.push(plan_asked("harness-kqe.13"));
+    s.tick();
+    settle(&mut s);
+    assert!(!s.calling, "On call while Away");
+    assert!(messages(&bell).is_empty(), "rang while Away");
+
+    let mut s = screen();
+    let (_, _) = on_call(&mut s, after(6));
+    s.on_call.token = None;
+    s.doorbell = bell.clone();
+    s.push(plan_asked("harness-kqe.13"));
+    s.tick();
+    settle(&mut s);
+    assert!(!s.calling, "On call with no token");
+    assert!(messages(&bell).is_empty());
+}
+
+/// Two Questions waiting when On call starts ring once each, a tick later
+/// nothing more; a new one rings as it joins the queue.
+#[test]
+fn on_call_rings_each_question_once_and_a_new_one_at_once() {
+    let mut s = screen();
+    let (bell, _) = on_call(&mut s, after(6));
+    s.push(plan_asked("harness-kqe.13"));
+    s.push(asking(
+        "harness-kqe.12",
+        "stuck in fix 1",
+        Ask::Blocked {
+            pane: "w1:p8".to_string(),
+        },
+    ));
+    s.tick();
+    s.tick();
+    settle(&mut s);
+    assert_eq!(
+        messages(&bell),
+        [
+            "harness-kqe.13 · Plan to approve · Plan mode",
+            "harness-kqe.12 · Blocked session · Judgment",
+        ]
+    );
+
+    s.push(asking(
+        "harness-kqe.14",
+        "question in implement (pane 3-1)",
+        Ask::StageQuestion {
+            pane: "w1:p9".to_string(),
+            question: "which way?".to_string(),
+            options: vec!["left".to_string()],
+        },
+    ));
+    settle(&mut s);
+    assert_eq!(
+        messages(&bell)[2],
+        "harness-kqe.14 · Stage question · Self-update"
+    );
+    assert_eq!(messages(&bell).len(), 3);
+}
+
+/// Answering any Question ends On call with a RECENT line, and the clock
+/// starts again: a Question still waiting, or one asked after, rings only
+/// once it has waited its minutes since. /away ends it too.
+#[test]
+fn an_answer_or_away_ends_on_call_and_the_clock_starts_again() {
+    let mut s = screen();
+    let (bell, clock) = on_call(&mut s, after(6));
+    s.push(plan_asked("harness-kqe.13"));
+    s.push(asking(
+        "harness-kqe.12",
+        "stuck in fix 1",
+        Ask::Blocked {
+            pane: "w1:p8".to_string(),
+        },
+    ));
+    s.tick();
+    assert!(s.calling);
+    pick(&mut s, 2); // feedback of your own: no answer yet
+    assert!(s.calling, "composing ended it");
+    type_line(&mut s, "cover y");
+    assert!(!s.calling, "the answer left it on");
+    assert_eq!(line(s.events.last().unwrap()), "on call: off, you answered");
+    s.tick();
+    assert!(!s.calling, "the waiting Blocked rang again at once");
+    pick(&mut s, 3); // I answered it
+
+    *clock.lock().unwrap() = after(10);
+    s.push(Event {
+        time: after(10),
+        ..plan_asked("harness-kqe.13")
+    });
+    *clock.lock().unwrap() = after(14);
+    s.tick();
+    assert!(!s.calling, "rang before its minutes");
+    *clock.lock().unwrap() = after(16);
+    s.tick();
+    assert!(s.calling, "never rang again");
+    settle(&mut s);
+    assert_eq!(messages(&bell).len(), 3);
+
+    s.command("/away");
+    assert!(!s.calling, "/away left it on");
+    assert!(s
+        .events
+        .iter()
+        .any(|e| e.text == "on call: off, away is on"));
+}
+
+/// A pick of a Blocked Question's "I answered it" ends On call too.
+#[test]
+fn a_picked_answer_ends_on_call() {
+    let mut s = screen();
+    let _ = on_call(&mut s, after(6));
+    s.push(asking(
+        "harness-kqe.12",
+        "stuck in fix 1",
+        Ask::Blocked {
+            pane: "w1:p8".to_string(),
+        },
+    ));
+    s.tick();
+    assert!(s.calling);
+    pick(&mut s, 3);
+    assert!(!s.calling);
+}
+
+/// The confirmations and the /continue checklist the user's own command
+/// raises never ring, however long they wait.
+#[test]
+fn a_discard_confirmation_and_the_continue_checklist_never_ring() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
+    let mut s = shell(&w);
+    s.state = State {
+        epic: "old".to_string(),
+        ..Default::default()
+    };
+    s.state.save(&w.repo).unwrap();
+    let (bell, _) = on_call(&mut s, chrono::Local::now() + chrono::Duration::minutes(10));
+    s.command("/start-epic hx");
+    assert_eq!(question(&s), "discard the saved run on old?");
+    s.tick();
+    settle(&mut s);
+    assert!(!s.calling, "the confirmation rang");
+    assert!(messages(&bell).is_empty());
+
+    let mut s = screen();
+    let _ = on_call(&mut s, chrono::Local::now() + chrono::Duration::minutes(10));
+    s.doorbell = bell.clone();
+    s.command("/continue");
+    assert!(matches!(s.questions[0].about, About::Continue { .. }));
+    s.tick();
+    settle(&mut s);
+    assert!(!s.calling, "the checklist rang");
+    assert!(messages(&bell).is_empty());
+}
+
+/// A failed push is a notice and a RECENT line; On call stays on.
+#[test]
+fn a_failed_push_is_a_notice_and_on_call_stays_on() {
+    let mut s = screen();
+    let (bell, _) = on_call(&mut s, after(6));
+    bell.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    s.push(plan_asked("harness-kqe.13"));
+    s.tick();
+    settle(&mut s);
+    assert!(s.calling);
+    assert_eq!(notice(&s), "on call: push failed: http status: 500");
+    assert_eq!(
+        line(s.events.last().unwrap()),
+        "on call: push failed: http status: 500"
+    );
+}
+
+/// ON CALL shows on the status row while On call is on, and not after.
+#[test]
+fn on_call_shows_on_the_status_row_while_on() {
+    let mut s = screen();
+    let _ = on_call(&mut s, after(6));
+    assert!(find(&render(&s, 120, 40), "ON CALL").is_none());
+    s.push(asking(
+        "harness-kqe.12",
+        "stuck in fix 1",
+        Ask::Blocked {
+            pane: "w1:p8".to_string(),
+        },
+    ));
+    s.tick();
+    let buf = render(&s, 120, 40);
+    assert!(
+        find(&buf, "ON CALL").is_some(),
+        "no ON CALL:\n{}",
+        rows(&buf).join("\n")
+    );
+    pick(&mut s, 3); // I answered it
+    assert!(
+        find(&render(&s, 120, 40), "ON CALL").is_none(),
+        "ON CALL stayed"
+    );
+}
+
+/// While On call, the summary opening by itself rings the run's end.
+#[test]
+fn on_call_rings_the_runs_end_when_the_summary_opens_by_itself() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
+    let mut s = shell(&w);
+    let (bell, _) = on_call(&mut s, chrono::Local::now());
+    s.calling = true;
+    s.command("/start-epic hx");
+    await_summary(&mut s);
+    settle(&mut s);
+    assert_eq!(messages(&bell), ["hx · run done · Epic hx"]);
+    s.command("/stop-work");
+    await_end(&mut s);
+}

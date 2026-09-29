@@ -428,8 +428,8 @@ type Part = (Span<'static>, Vec<Span<'static>>);
 /// (STOPPING while Ticket threads leave), then a count per label over the
 /// listed Epics' Tickets, with its glyph or not, parked only when there is
 /// one. Idle: IDLE, then the open Epics and their Tickets, and the saved run
-/// when there is one. Either way AWAY while the user is Away, and the hidden
-/// Questions' count.
+/// when there is one. Either way AWAY while the user is Away, ON CALL while
+/// the Shell is On call, and the hidden Questions' count.
 fn status_parts(s: &Screen, glyphs: bool) -> (Vec<Span<'static>>, Vec<Part>) {
     let mut parts: Vec<Part> = Vec::new();
     let head = if s.running {
@@ -489,6 +489,9 @@ fn status_parts(s: &Screen, glyphs: bool) -> (Vec<Span<'static>>, Vec<Part>) {
     };
     if s.cfg.away.load(Ordering::SeqCst) {
         parts.push((dot(), vec![Span::styled("AWAY", bold(ORANGE))]));
+    }
+    if s.calling {
+        parts.push((dot(), vec![Span::styled("ON CALL", bold(ORANGE))]));
     }
     if s.hidden && !s.questions.is_empty() {
         let n = format!("{} waiting", plural(s.questions.len(), "question"));
