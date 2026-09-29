@@ -1,8 +1,9 @@
 [package]
 name = "orqadence"
-version = "1.4.7"
+version = "1.4.8"
 edition = "2021"
 rust-version = "1.89"
+license-file = "LICENSE.md"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }

@@ -118,8 +118,12 @@ Local, in `.orqadence-local/`, which ignores itself:
 
 ## Releasing
 
-Cargo.toml's `version` is the source of truth. After the merge, push the matching `vX.Y.Z` tag, or create the release on GitHub. Either one starts the release workflow, which builds both binaries on GitHub and attaches them to the release. To rebuild an existing tag, run the workflow from the Actions tab (**release**, then **Run workflow**) with that tag, or run `gh workflow run release.yml -f tag=vX.Y.Z`. Feature tickets bump minor, fixes bump patch.
+Cargo.toml's `version` is the source of truth. After the merge, push the matching `vX.Y.Z` tag, or create the release on GitHub. Either one starts the release workflow, which builds both binaries on GitHub and attaches them to the release, with `THIRD-PARTY-LICENSES.txt`, the license notices of the crates they link. To rebuild an existing tag, run the workflow from the Actions tab (**release**, then **Run workflow**) with that tag, or run `gh workflow run release.yml -f tag=vX.Y.Z`. Feature tickets bump minor, fixes bump patch.
 
 ## Build
 
 See the build and test commands in [AGENTS.md](AGENTS.md).
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE.md): free for personal, hobby, research and nonprofit use. Any commercial use, selling it included, needs a separate license; contact [@muresanroland](https://github.com/muresanroland).
