@@ -194,7 +194,7 @@ pub(crate) fn install_skills(
             "init: the shipped skills are already installed here.\r\n"
         )?;
         let options = [
-            "cancel, leave them as they are",
+            "cancel, leave their text as it is",
             "refresh only the skills not edited since install",
             "overwrite everything with the shipped skills",
         ];

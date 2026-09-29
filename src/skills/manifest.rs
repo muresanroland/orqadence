@@ -487,11 +487,8 @@ pub(crate) fn remove(repo: &Path, name: &str) -> Result<(), String> {
     third_party(repo, &manifest, name)?;
     // Only the links put makes are removed, not one the user put there
     // instead, and a failed save puts them back.
-    let links: Vec<PathBuf> = links(repo, name)
-        .into_iter()
-        .filter(|link| fs::read_link(link).is_ok())
-        .collect();
-    if let (false, Some(dir)) = (links.is_empty(), unowned(repo)) {
+    let links = links(repo, name);
+    if let Some(dir) = unowned(repo).filter(|_| links.iter().any(|l| fs::read_link(l).is_ok())) {
         return Err(format!(
             "{dir} is not the checkout's own folder: Orqadence will not touch {name}"
         ));
