@@ -7,16 +7,17 @@ a Question waits, and you answer it in the Shell over SSH.
 
 When a Question has waited 5 minutes unanswered, the Shell goes On call and
 rings your phone through [Moshi](https://getmoshi.app). The minutes are set on
-the On call page of `/config`. While On call is on, that Question, every
-Question after it and the end of the run are pushed to the phone at once. The
-status row shows ON CALL.
+the On call page of `/config`. When On call starts, every Question already
+waiting is pushed once. While it is on, every Question after it and the end of
+the run are pushed to the phone at once. The status row shows ON CALL.
 
 You answer in the Shell, from the phone over SSH. Answering any Question ends
 On call, whichever Question it is and wherever you typed it. The next Question
 rings only after it has itself waited the minutes.
 
 Nothing parks for On call: a Stage's question waits and rings. `/away` wins:
-under Away nothing rings and the Shell never goes On call. On call is off each
+turning Away on ends On call, and under Away nothing rings and the Shell never
+goes On call. On call is off each
 time the Shell opens, and stays off while no token is kept.
 
 ## Moshi
@@ -62,8 +63,9 @@ The token is kept in `.orqadence-local/config.json`, readable only by you.
 
 A push says which Ticket waits and on what: its id, the kind of Question and the
 Ticket's title, for example
-`harness-bsg.4 · Plan to approve · Brainstorm loop: ...`. The Question's text and its options never leave the Mac. A push
-that fails shows as a notice line in the Shell; the run goes on.
+`harness-bsg.4 · Plan to approve · Brainstorm loop: ...`. The Question's text
+and its options never leave the Mac. A push that fails shows as a notice line
+in the Shell; the run goes on.
 
 ## Pitfalls
 
