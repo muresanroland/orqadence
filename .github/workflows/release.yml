@@ -52,18 +52,23 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+      - name: third-party license notices
+        run: scripts/third-party-licenses.sh > THIRD-PARTY-LICENSES.txt
       # A release made on GitHub already exists by now: it gets the assets.
       # A plain tag push has none yet: this creates it.
-      - name: attach both assets to the release, creating it if needed
+      - name: attach the assets to the release, creating it if needed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          assets="orqa-aarch64-apple-darwin orqa-x86_64-unknown-linux-gnu"
+          set -- orqa-aarch64-apple-darwin orqa-x86_64-unknown-linux-gnu THIRD-PARTY-LICENSES.txt
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber $assets
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$@"
           else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes $assets
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes "$@"
           fi
