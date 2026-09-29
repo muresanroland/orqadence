@@ -19,22 +19,6 @@ const USAGE: &str = "usage: orqa [command]
   --version                   print the version
 ";
 
-/// Whether init has made .orqadence-local here (ADR 0006): a fresh clone has
-/// the committed .orqadence but not it. Says to run init when not.
-fn initialized(repo: &Path, out: &mut dyn Write) -> bool {
-    let made = repo.join(LOCAL).is_dir();
-    if !made {
-        let _ = write!(
-            out,
-            "\n  {} {}\n\n  Run it to set this repo up, then start Orqadence again:\n\n    {}\n\n",
-            "!".yellow().bold(),
-            "orqa init hasn't been run in this repo".bold(),
-            "orqa init".cyan().bold(),
-        );
-    }
-    made
-}
-
 /// Runs one orqa command inside the Target repo and returns the exit code.
 /// `input` answers init's questions; None is the terminal's stdin.
 pub fn run(
@@ -45,9 +29,18 @@ pub fn run(
     tools: Arc<dyn Tools>,
     env: &dyn Fn(&str) -> String,
 ) -> i32 {
-    // orqa alone opens the Shell (ADR 0004), once init has run.
+    // orqa alone opens the Shell (ADR 0004), once init has made
+    // .orqadence-local (ADR 0006): a fresh clone has the committed
+    // .orqadence but not it.
     let Some(name) = args.first() else {
-        if !initialized(repo, out) {
+        if !repo.join(LOCAL).is_dir() {
+            let _ = write!(
+                out,
+                "\n  {} {}\n\n  Run it to set this repo up, then start Orqadence again:\n\n    {}\n\n",
+                "!".yellow().bold(),
+                "orqa init hasn't been run in this repo".bold(),
+                "orqa init".cyan().bold(),
+            );
             return 1;
         }
         return match crate::shell::open(repo, tools, env) {

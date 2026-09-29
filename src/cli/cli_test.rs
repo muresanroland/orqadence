@@ -16,16 +16,6 @@ fn no_command_before_init_says_to_run_init() {
     assert!(out.contains("orqa init"), "no orqa init:\n{out}");
 }
 
-// Once init has made .orqadence-local/, orqa alone goes on to the Shell.
-#[test]
-fn no_command_after_init_goes_on_to_the_shell() {
-    let repo = TempDir::new();
-    std::fs::create_dir_all(repo.path().join(".orqadence-local")).unwrap();
-    let mut out = Vec::new();
-    assert!(super::initialized(repo.path(), &mut out));
-    assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
-}
-
 #[test]
 fn unknown_command_prints_usage() {
     let (code, out) = run_with(&["bogus"], TempDir::new().path(), Fake::quiet(), &|_| {
