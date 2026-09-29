@@ -18,7 +18,7 @@ use super::limit::{until, Limit, LAST_LINES};
 use super::result::{
     read_question, read_stage_result, stage_prompt, ResultRequirements, StageResult, ASKED, PLANNED,
 };
-use super::state::{load_state, Session, State, TicketState, STATUS_RUNNING};
+use super::state::{load_state, Session, State, TicketState, LOCAL, STATUS_RUNNING};
 use super::trust::trusts;
 use crate::skills::manifest::{self, Manifest};
 use crate::skills::stage_skill;
@@ -519,12 +519,12 @@ pub(crate) fn log_line(time: chrono::DateTime<chrono::Local>, ticket: &str, text
 
 /// A Ticket's worktree under the Target repo.
 pub(crate) fn worktree(repo: &Path, ticket: &str) -> PathBuf {
-    repo.join(".orqadence").join("worktrees").join(ticket)
+    repo.join(LOCAL).join("worktrees").join(ticket)
 }
 
 /// A Ticket's Run directory under the Target repo.
 pub(crate) fn run_dir(repo: &Path, ticket: &str) -> PathBuf {
-    repo.join(".orqadence").join("runs").join(ticket)
+    repo.join(LOCAL).join("runs").join(ticket)
 }
 
 /// How a Stage is named in an event: "implement", "review 1", "fix 2".

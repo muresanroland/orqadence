@@ -1492,8 +1492,13 @@ fn typesafe_on_without_a_key_asks_it_masked() {
         rows(&buf)
     );
     assert!(find(&buf, "ts_live").is_none(), "{:#?}", rows(&buf));
+    assert!(
+        find(&buf, "kept in .orqadence-local/typesafe-key").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
     s.key(key(KeyCode::Enter));
-    let file = repo.path().join(".orqadence/typesafe-key");
+    let file = repo.path().join(".orqadence-local/typesafe-key");
     assert_eq!(
         std::fs::read_to_string(&file).unwrap(),
         "ts_live_51c9d0e7\n"

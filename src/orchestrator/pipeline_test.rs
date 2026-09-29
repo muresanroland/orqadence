@@ -30,7 +30,7 @@ fn implement_stage_runs_in_a_ticket_tab_and_reports_to_main() {
 
     let got = w.called("bd worktree create");
     assert!(
-        got.len() == 1 && got[0].ends_with(".orqadence/worktrees/hx-12 --branch hx-12"),
+        got.len() == 1 && got[0].ends_with(".orqadence-local/worktrees/hx-12 --branch hx-12"),
         "worktree calls = {got:?}"
     );
     let got = w.called("bd update hx-12");

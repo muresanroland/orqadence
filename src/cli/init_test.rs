@@ -194,10 +194,24 @@ fn init_installs_skills_with_working_symlinks() {
             "{name}: symlink target {target:?} is not relative"
         );
     }
-    let ignore = fs::read_to_string(repo.path().join(".gitignore")).unwrap_or_default();
-    assert!(
-        ignore.contains(".orqadence/"),
-        ".gitignore lacks .orqadence/: {ignore:?}"
+}
+
+/// Init leaves the repo's own .gitignore alone: .orqadence-local ignores
+/// itself.
+#[test]
+fn init_leaves_the_repos_gitignore_byte_for_byte() {
+    let repo = prepared_repo();
+    let ignore = "target/\n# ours, no newline at the end";
+    fs::write(repo.path().join(".gitignore"), ignore).unwrap();
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "init exit {code}:\n{out}");
+    assert_eq!(
+        fs::read_to_string(repo.path().join(".gitignore")).unwrap(),
+        ignore
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path().join(".orqadence-local/.gitignore")).unwrap(),
+        "*\n"
     );
 }
 
@@ -208,7 +222,6 @@ fn init_keeps_edited_skill_unless_forced() {
     let skill = repo.path().join(".orqadence/skills/stage-fix/SKILL.md");
     let shipped = fs::read_to_string(&skill).unwrap();
     fs::write(&skill, "edited in the Target repo").unwrap();
-    let ignore_before = fs::read_to_string(repo.path().join(".gitignore")).unwrap();
 
     let (code, _) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
     assert_eq!(code, 0, "second init exit {code}");
@@ -216,11 +229,6 @@ fn init_keeps_edited_skill_unless_forced() {
         fs::read_to_string(&skill).unwrap(),
         "edited in the Target repo",
         "rerun overwrote an edited skill"
-    );
-    assert_eq!(
-        fs::read_to_string(repo.path().join(".gitignore")).unwrap(),
-        ignore_before,
-        "rerun changed .gitignore"
     );
 
     run_with(&["init", "--force"], repo.path(), ok_tools(), &herdr_env);
@@ -332,7 +340,7 @@ fn init_asks_for_typesafe_and_preflight_warns_when_off() {
     let out = String::from_utf8(out).unwrap();
     assert_eq!(code, 0, "{out}");
     assert_eq!(
-        fs::read_to_string(repo.path().join(".orqadence/typesafe-key"))
+        fs::read_to_string(repo.path().join(".orqadence-local/typesafe-key"))
             .unwrap()
             .trim(),
         "sk-typed"
@@ -476,7 +484,7 @@ fn typesafe_is_its_own_opt_in_kept_in_config_json() {
     let (repo, home) = (bare_repo(), TempDir::new());
     init_keys(repo.path(), home.path(), &["1", "\n", "\n", "sk-typed\n"]);
     assert_eq!(
-        fs::read_to_string(repo.path().join(".orqadence/typesafe-key"))
+        fs::read_to_string(repo.path().join(".orqadence-local/typesafe-key"))
             .unwrap()
             .trim(),
         "sk-typed"

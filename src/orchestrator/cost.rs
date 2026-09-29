@@ -13,6 +13,7 @@ use chrono::{NaiveDateTime, TimeDelta};
 use serde_json::Value;
 
 use super::stage::{run_dir, worktree};
+use super::state::LOCAL;
 use super::trust::claude_slug;
 
 /// The Apps whose transcripts are read; any other is not supported yet.
@@ -289,11 +290,11 @@ pub(crate) struct Logged {
     pub(crate) apps: BTreeSet<String>,
 }
 
-/// Every Ticket in .orqadence/orchestrator.log by its id, the third field of
-/// a line 'YYYY-MM-DD HH:MM:SS <id> <text>' (stage::log_line); a line that
-/// does not parse is skipped. The file is kept across runs.
+/// Every Ticket in .orqadence-local/orchestrator.log by its id, the third
+/// field of a line 'YYYY-MM-DD HH:MM:SS <id> <text>' (stage::log_line); a
+/// line that does not parse is skipped. The file is kept across runs.
 pub(crate) fn logged(repo: &Path) -> HashMap<String, Logged> {
-    let raw = fs::read_to_string(repo.join(".orqadence/orchestrator.log")).unwrap_or_default();
+    let raw = fs::read_to_string(repo.join(LOCAL).join("orchestrator.log")).unwrap_or_default();
     let mut out: HashMap<String, Logged> = HashMap::new();
     for line in raw.lines() {
         let mut fields = line.splitn(4, ' ');

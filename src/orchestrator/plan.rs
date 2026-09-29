@@ -26,6 +26,7 @@ use super::app::Row;
 use super::judgment::{Action, PlanJudged};
 use super::result::{read_stage_result, ResultRequirements, PLANNED};
 use super::stage::{result_name, Answer, Ask, Held, Orchestrator, Stage, IMPLEMENT, SETTLE_TICKS};
+use super::state::LOCAL;
 use crate::tools::RunError;
 
 /// Where the hook copies the plan the session presents.
@@ -149,7 +150,7 @@ impl Orchestrator {
             "hooks": [{ "type": "command", "command": command }],
         }] } });
         if let Some(plan_model) = &row.plan_model {
-            let log = self.cfg.repo.join(".orqadence").join("orchestrator.log");
+            let log = self.cfg.repo.join(LOCAL).join("orchestrator.log");
             let command = format!(
                 "{} __switch-hook {} {}",
                 quoted(self.cfg.exe.display()),

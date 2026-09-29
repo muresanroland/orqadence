@@ -454,7 +454,7 @@ fn asked(kind: Kind) -> Ask {
         Kind::Wake => Ask::Wake {
             pane: "2-4".to_string(),
             tail: TAIL.to_string(),
-            file: PathBuf::from(".orqadence/runs/orqa-demo.1/fix-1.md"),
+            file: PathBuf::from(".orqadence-local/runs/orqa-demo.1/fix-1.md"),
             actions: Action::ALL.to_vec(),
             judged: Some(Judged {
                 choice: Action::NudgeWriteResult,

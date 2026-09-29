@@ -57,7 +57,7 @@ pub(crate) fn at_dialog(run: &Path, plan: &str) -> (String, String) {
 /// Implement plans; approved, it finishes ("idle") or settles in `then`;
 /// feedback brings the revised plan; every other Stage succeeds.
 fn plans(w: &World, then: &'static str) {
-    let run = w.repo.join(".orqadence/runs/hx-1");
+    let run = w.repo.join(".orqadence-local/runs/hx-1");
     w.session(move |p: &Prompt| match (p.stage.as_str(), p.approved) {
         ("implement", false) => at_dialog(&run, PLAN),
         ("implement", true) if then != "idle" => (String::new(), then.to_string()),
@@ -76,7 +76,7 @@ fn writes(w: &World) {
         &w.repo.join(".orqadence/config.json"),
         r#"{"implement": {"app": "codex"}}"#,
     );
-    let run = w.repo.join(".orqadence/runs/hx-1");
+    let run = w.repo.join(".orqadence-local/runs/hx-1");
     w.session(move |p: &Prompt| {
         let plan = match (p.stage.as_str(), p.text.as_str()) {
             ("implement", _) => PLAN,
@@ -769,7 +769,7 @@ fn a_split_starts_opusplan_and_approves_by_clearing_the_context() {
                 start.ends_with(" --model opusplan --effort high"),
                 "{start}"
             );
-            let log = w.repo.join(".orqadence/orchestrator.log");
+            let log = w.repo.join(".orqadence-local/orchestrator.log");
             assert_eq!(
                 settings,
                 json!({

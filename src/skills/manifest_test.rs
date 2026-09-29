@@ -770,8 +770,8 @@ fn installed_at(location: Location) -> (TempDir, TempDir, Arc<Fake>) {
 #[test]
 fn relocating_relinks_the_worktrees_linked_to_the_checkouts_skills() {
     let (repo, home, tools) = installed_at(Location::Checkout);
-    let worktree = repo.path().join(".orqadence/worktrees/t-1");
-    let run = repo.path().join(".orqadence/runs/t-1");
+    let worktree = repo.path().join(".orqadence-local/worktrees/t-1");
+    let run = repo.path().join(".orqadence-local/runs/t-1");
     link_checkout_skills(repo.path(), &[&worktree, &run]).unwrap();
     let mut manifest = Manifest::load(repo.path()).unwrap();
     let said = manifest.relocate(repo.path(), home.path(), &*tools, Location::Repo);
@@ -792,8 +792,8 @@ fn relocating_relinks_the_worktrees_linked_to_the_checkouts_skills() {
 fn relocating_puts_the_skills_back_when_a_worktree_link_cannot_change() {
     use std::os::unix::fs::PermissionsExt;
     let (repo, home, tools) = installed_at(Location::Checkout);
-    let worktree = repo.path().join(".orqadence/worktrees/t-1");
-    let run = repo.path().join(".orqadence/runs/t-1");
+    let worktree = repo.path().join(".orqadence-local/worktrees/t-1");
+    let run = repo.path().join(".orqadence-local/runs/t-1");
     link_checkout_skills(repo.path(), &[&worktree, &run]).unwrap();
     let locked = worktree.join(".claude/skills");
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
@@ -891,8 +891,8 @@ fn relocating_puts_back_the_skills_moved_when_one_cannot_move() {
 fn checkout_skills_are_not_linked_through_a_linked_skills_folder() {
     let (repo, _home, _tools) = installed_at(Location::Checkout);
     let outside = TempDir::new();
-    let worktree = repo.path().join(".orqadence/worktrees/t-1");
-    let run = repo.path().join(".orqadence/runs/t-1");
+    let worktree = repo.path().join(".orqadence-local/worktrees/t-1");
+    let run = repo.path().join(".orqadence-local/runs/t-1");
     fs::create_dir_all(worktree.join(".claude")).unwrap();
     fs::create_dir_all(run.join(".agents")).unwrap();
     // The repo's own setup, and a folder shared with another checkout.
