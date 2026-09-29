@@ -10,7 +10,6 @@ use std::iter;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
-use crate::orchestrator::state::LOCAL;
 use crate::tempdir::TempDir;
 use crate::tools::Tools;
 
@@ -125,74 +124,37 @@ pub(crate) fn job_row(job: &str) -> &'static str {
     }
 }
 
-/// Where the skills Orqadence installs go, as orqa init asked.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum Location {
-    /// .orqadence/skills, uncommitted, linked into each Ticket's worktree.
-    Checkout,
-    /// .agents/skills, linked from .claude/skills; the user commits them.
-    Repo,
-    /// ~/.agents/skills, linked from ~/.claude/skills.
-    User,
-}
+/// Where Orqadence's skills are, the one place (ADR 0006), from the
+/// checkout's root: their folders in .orqadence/skills, committed, reached
+/// through committed relative folder links from .agents/skills and
+/// .claude/skills. The folder is linked, never its SKILL.md: codex skips a
+/// SKILL.md that is itself a link.
+pub(crate) struct Place<'a>(pub(crate) &'a Path);
 
-impl Location {
-    pub(crate) fn place(self, repo: &Path, home: &Path) -> Place {
-        let (root, files, links) = match self {
-            Location::Checkout => (repo, ".orqadence/skills", None),
-            Location::Repo => (repo, ".agents/skills", Some(".claude/skills")),
-            Location::User => (home, ".agents/skills", Some(".claude/skills")),
-        };
-        Place {
-            root: root.to_path_buf(),
-            files,
-            links,
-        }
-    }
-}
+const FILES: &str = ".orqadence/skills";
+const LINKS: [&str; 2] = [".agents/skills", ".claude/skills"];
 
-/// A Location on disk; its folders are relative to root.
-pub(crate) struct Place {
-    pub(crate) root: PathBuf,
-    /// The skills' folders.
-    pub(crate) files: &'static str,
-    /// The folder of links to them, for Claude. None for the checkout's,
-    /// linked into each worktree instead (link_checkout_skills).
-    pub(crate) links: Option<&'static str>,
-}
-
-impl Place {
+impl Place<'_> {
     pub(crate) fn skill(&self, name: &str) -> PathBuf {
-        self.root.join(self.files).join(name)
+        self.0.join(FILES).join(name)
     }
 
-    pub(crate) fn link(&self, name: &str) -> Option<PathBuf> {
-        self.links.map(|dir| self.root.join(dir).join(name))
+    pub(crate) fn links(&self, name: &str) -> [PathBuf; 2] {
+        LINKS.map(|dir| self.0.join(dir).join(name))
     }
 
-    /// What the skill's link points at, from the links' folder.
-    pub(crate) fn target(&self, name: &str) -> PathBuf {
-        Path::new("../..").join(self.files).join(name)
+    /// What each link points at: both links' folders are two deep.
+    pub(crate) fn target(name: &str) -> PathBuf {
+        Path::new("../..").join(FILES).join(name)
     }
 
-    /// Whether Orqadence may write to dir: in the checkout only when it is
-    /// the checkout's own (own); the user's home is theirs to arrange, a
-    /// linked ~/.claude included.
-    fn owns(&self, repo: &Path, dir: &str) -> bool {
-        self.root != repo || own(repo, dir)
-    }
-
-    /// The first of its folders Orqadence may not write to.
-    fn unowned(&self, repo: &Path) -> Option<&'static str> {
-        [Some(self.files), self.links]
-            .into_iter()
-            .flatten()
-            .find(|dir| !self.owns(repo, dir))
+    /// The first of its folders Orqadence may not write to (own).
+    fn unowned(&self) -> Option<&'static str> {
+        iter::once(FILES).chain(LINKS).find(|dir| !own(self.0, dir))
     }
 }
 
-/// One skill Orqadence installed, at its Location.
+/// One skill Orqadence installed, in .orqadence/skills.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Installed {
@@ -219,10 +181,6 @@ pub(crate) struct Manifest {
     /// Job to its pick: a skill name or "none". A job left out takes its
     /// default.
     pub(crate) picks: BTreeMap<String, String>,
-    /// Where init put the skills; None before it asked: the repo's
-    /// .agents/skills, where they always were.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) location: Option<Location>,
 }
 
 impl Manifest {
@@ -246,10 +204,6 @@ impl Manifest {
                 .find(|(name, _)| *name == job)
                 .map_or(NONE, |(_, suggestions)| suggestions[0].0),
         }
-    }
-
-    pub(crate) fn place(&self, repo: &Path, home: &Path) -> Place {
-        self.location.unwrap_or(Location::Repo).place(repo, home)
     }
 
     /// A Stage skill with each job's placeholder filled in with the job's
@@ -291,75 +245,6 @@ impl Manifest {
             })
             .collect();
         (lines.join("\n"), lacking)
-    }
-
-    /// Moves every skill Orqadence installed here, the Shipped ones too,
-    /// with its link, to `to`, and records `to`. A Shipped skill the repo has
-    /// committed stays, where init goes on writing it: moved, it would leave
-    /// deletions in the working tree. All or none otherwise: when a skill's
-    /// new place or its link is taken, yours say, nothing moves, and when one
-    /// fails to move, those moved go back, since a skill left behind would
-    /// leave the manifest naming what is there. Gives why nothing moved, or
-    /// each skill left where it was and why.
-    pub(crate) fn relocate(
-        &mut self,
-        repo: &Path,
-        home: &Path,
-        tools: &dyn Tools,
-        to: Location,
-    ) -> Vec<String> {
-        let (from, place) = (self.place(repo, home), to.place(repo, home));
-        if let Some(dir) = place.unowned(repo) {
-            return vec![format!(
-                "{dir} is not the checkout's own folder: the skills stay where they were"
-            )];
-        }
-        let (kept, names): (Vec<&String>, Vec<&String>) = self
-            .skills
-            .keys()
-            .filter(|name| safe_name(name) && fs::symlink_metadata(from.skill(name)).is_ok())
-            .partition(|name| self.skills[*name].shipped && committed(repo, tools, &from, name));
-        // A link already to the new place is Orqadence's own, left over.
-        if let Some(taken) = names.iter().find_map(|name| {
-            let link = place
-                .link(name)
-                .filter(|link| !fs::read_link(link).is_ok_and(|to| to == place.target(name)));
-            iter::once(place.skill(name))
-                .chain(link)
-                .find(|new| fs::symlink_metadata(new).is_ok())
-        }) {
-            return vec![format!(
-                "{} is there already: the skills stay where they were",
-                taken.display()
-            )];
-        }
-        for (i, name) in names.iter().enumerate() {
-            if let Err(err) = move_skill(repo, &from, &place, name) {
-                let mut said = vec![format!(
-                    "{name} could not move to {}: {err}: the skills stay where they were",
-                    place.skill(name).display()
-                )];
-                // The one cut short too: a part copy would block the next try.
-                for name in names[..=i].iter().rev() {
-                    if let Err(err) = unmove_skill(repo, &from, &place, name) {
-                        said.push(format!(
-                            "{name} is left at {}: {err}",
-                            place.skill(name).display()
-                        ));
-                    }
-                }
-                return said;
-            }
-        }
-        self.location = Some(to);
-        kept.iter()
-            .map(|name| {
-                format!(
-                    "{name} stays at {}: the repo has it committed",
-                    from.skill(name).display()
-                )
-            })
-            .collect()
     }
 
     /// Written to a temp file and renamed into place, so that a cut-short
@@ -438,12 +323,11 @@ pub(crate) enum Added {
 }
 
 /// Installs one skill from a source: the one named, or the only one there.
-/// The skill is copied to its folder at the manifest's Location, linked as
-/// init does, and recorded with its source and commit. A source already
+/// The skill is copied to its folder in .orqadence/skills, linked as init
+/// does, and recorded with its source and commit. A source already
 /// installed is refused, and so is a same-named skill from anywhere else.
 pub(crate) fn add(
     repo: &Path,
-    home: &Path,
     tools: &dyn Tools,
     source: &str,
     name: Option<&str>,
@@ -500,16 +384,16 @@ pub(crate) fn add(
         }
         None => {}
     }
-    // put and its undo write through both folders.
-    let place = manifest.place(repo, home);
-    if let Some(dir) = place.unowned(repo) {
+    // put and its undo write through all three folders.
+    let place = Place(repo);
+    if let Some(dir) = place.unowned() {
         return Err(format!(
             "{dir} is not the checkout's own folder: Orqadence will not install {name} there"
         ));
     }
-    let (at, link) = (place.skill(&name), place.link(&name));
+    let (at, links) = (place.skill(&name), place.links(&name));
     if let Some(there) = iter::once(&at)
-        .chain(&link)
+        .chain(&links)
         .find(|path| fs::symlink_metadata(path).is_ok())
     {
         return Err(format!(
@@ -517,7 +401,7 @@ pub(crate) fn add(
             there.display()
         ));
     }
-    let installed = put(&place, &clone.join(&path), &name)
+    let installed = put(repo, &clone.join(&path), &name)
         .map_err(|err| format!("{}: {err}", at.display()))
         .and_then(|()| {
             let skill = Installed {
@@ -533,7 +417,7 @@ pub(crate) fn add(
     if installed.is_err() {
         // Nothing left half installed, which a later add would take for the
         // repo's own.
-        if let Some(link) = &link {
+        for link in &links {
             let _ = fs::remove_file(link);
         }
         let _ = fs::remove_dir_all(&at);
@@ -543,15 +427,9 @@ pub(crate) fn add(
 
 /// Fetches an installed skill's source again, replaces its folder with the
 /// skill at the recorded path, and records the new commit.
-pub(crate) fn update(
-    repo: &Path,
-    home: &Path,
-    tools: &dyn Tools,
-    name: &str,
-) -> Result<(), String> {
+pub(crate) fn update(repo: &Path, tools: &dyn Tools, name: &str) -> Result<(), String> {
     let mut manifest = Manifest::load(repo)?;
-    let place = manifest.place(repo, home);
-    let skill = third_party(repo, &manifest, &place, name)?.clone();
+    let skill = third_party(repo, &manifest, name)?.clone();
     let (clone, commit) = fetch(repo, tools, &skill.repo, &skill.git_ref)?;
     let from = in_clone(clone.path(), &skill.path)
         .filter(|from| skill_in(from).as_deref() == Some(name))
@@ -559,7 +437,7 @@ pub(crate) fn update(
     // The new copy goes beside the old one first, and the old one is only
     // moved aside until the new one is in place, so that a copy or a rename
     // that fails leaves the installed skill whole.
-    let at = place.skill(name);
+    let at = Place(repo).skill(name);
     let fresh = at.with_file_name(format!(".{name}.new"));
     let old = at.with_file_name(format!(".{name}.old"));
     // A staging folder an earlier update left that cannot be cleared would
@@ -598,39 +476,39 @@ pub(crate) fn update(
 
 /// Updates every installed skill but the Shipped ones, and returns those
 /// that failed, each with why.
-pub(crate) fn update_all(
-    repo: &Path,
-    home: &Path,
-    tools: &dyn Tools,
-) -> Result<Vec<(String, String)>, String> {
+pub(crate) fn update_all(repo: &Path, tools: &dyn Tools) -> Result<Vec<(String, String)>, String> {
     Ok(Manifest::load(repo)?
         .skills
         .into_iter()
         .filter(|(_, skill)| !skill.shipped)
-        .filter_map(|(name, _)| {
-            update(repo, home, tools, &name)
-                .err()
-                .map(|err| (name, err))
-        })
+        .filter_map(|(name, _)| update(repo, tools, &name).err().map(|err| (name, err)))
         .collect())
 }
 
-/// Removes a skill Orqadence fetched: its folder, its link and its entry.
+/// Removes a skill Orqadence fetched: its folder, both links and its entry.
 /// A job it did, picked or by default, is set to none.
-pub(crate) fn remove(repo: &Path, home: &Path, name: &str) -> Result<(), String> {
+pub(crate) fn remove(repo: &Path, name: &str) -> Result<(), String> {
     let mut manifest = Manifest::load(repo)?;
-    let place = manifest.place(repo, home);
-    third_party(repo, &manifest, &place, name)?;
-    // Only the link put makes is removed, not one the user put there instead,
-    // and a failed save puts it back.
-    let link = place.link(name).filter(|link| fs::read_link(link).is_ok());
-    if let (Some(_), Some(dir)) = (&link, place.unowned(repo)) {
+    third_party(repo, &manifest, name)?;
+    let place = Place(repo);
+    // Only the links put makes are removed, not one the user put there
+    // instead, and a failed save puts them back.
+    let links: Vec<PathBuf> = place
+        .links(name)
+        .into_iter()
+        .filter(|link| fs::read_link(link).is_ok())
+        .collect();
+    if let (false, Some(dir)) = (links.is_empty(), place.unowned()) {
         return Err(format!(
             "{dir} is not the checkout's own folder: Orqadence will not touch {name}"
         ));
     }
-    let link = link.filter(|link| fs::read_link(link).is_ok_and(|to| to == place.target(name)));
-    if let Some(link) = &link {
+    let target = Place::target(name);
+    let links: Vec<PathBuf> = links
+        .into_iter()
+        .filter(|link| fs::read_link(link).is_ok_and(|to| to == target))
+        .collect();
+    for link in &links {
         fs::remove_file(link).map_err(|err| format!("{}: {err}", link.display()))?;
     }
     for (job, _) in JOBS {
@@ -657,20 +535,22 @@ pub(crate) fn remove(repo: &Path, home: &Path, name: &str) -> Result<(), String>
     });
     if removed.is_ok() {
         let _ = fs::remove_dir_all(&old);
-    } else if let Some(link) = link {
-        let _ = symlink(place.target(name), link);
+    } else {
+        for link in links {
+            let _ = symlink(&target, link);
+        }
     }
     removed
 }
 
 /// An installed skill Orqadence fetched from a source, which update and
-/// remove may touch. Only while its name is a folder name and its Place's
-/// folder is the checkout's own: they delete <files>/<name>, and an entry
-/// edited by hand, or a linked .agents, could name something else.
+/// remove may touch. Only while its name is a folder name and
+/// .orqadence/skills is the checkout's own: they delete
+/// .orqadence/skills/<name>, and an entry edited by hand, or a linked
+/// folder, could name something else.
 fn third_party<'a>(
     repo: &Path,
     manifest: &'a Manifest,
-    place: &Place,
     name: &str,
 ) -> Result<&'a Installed, String> {
     match manifest.skills.get(name) {
@@ -681,9 +561,8 @@ fn third_party<'a>(
         Some(_) if !safe_name(name) => Err(format!(
             "{name} in {MANIFEST} is not a folder name: Orqadence will not touch it"
         )),
-        Some(_) if !place.owns(repo, place.files) => Err(format!(
-            "{} is not the checkout's own folder: Orqadence will not touch {name}",
-            place.files
+        Some(_) if !own(repo, FILES) => Err(format!(
+            "{FILES} is not the checkout's own folder: Orqadence will not touch {name}"
         )),
         Some(skill) => Ok(skill),
     }
@@ -791,110 +670,85 @@ fn safe_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-/// Copies the skill's folder to its place and links it there.
-fn put(place: &Place, from: &Path, name: &str) -> io::Result<()> {
-    copy_dir(from, &place.skill(name), false)?;
-    link(place, name)
+/// Copies the skill's folder into .orqadence/skills and links it there.
+fn put(repo: &Path, from: &Path, name: &str) -> io::Result<()> {
+    copy_dir(from, &Place(repo).skill(name), false)?;
+    link(repo, name)
 }
 
-/// Links the skill from its place's links folder, unless something is there.
-pub(crate) fn link(place: &Place, name: &str) -> io::Result<()> {
-    match place.link(name) {
-        Some(link) if fs::symlink_metadata(&link).is_err() => {
+/// Links the skill in .orqadence/skills from .agents/skills and
+/// .claude/skills, relative, leaving whatever is at either link's path
+/// already: Orqadence's link, or the repo's own. A links folder that is not
+/// the checkout's own (own) gets none: it could be ~/.claude, where the link
+/// would dangle.
+pub(crate) fn link(repo: &Path, name: &str) -> io::Result<()> {
+    for (dir, link) in LINKS.iter().zip(Place(repo).links(name)) {
+        if own(repo, dir) && fs::symlink_metadata(&link).is_err() {
             fs::create_dir_all(link.parent().unwrap())?;
-            symlink(place.target(name), link)
-        }
-        _ => Ok(()),
-    }
-}
-
-/// Whether git tracks the skill's folder at place, in the checkout.
-fn committed(repo: &Path, tools: &dyn Tools, place: &Place, name: &str) -> bool {
-    let dir = format!("{}/{name}", place.files);
-    place.root == repo
-        && tools
-            .run(repo, &["git", "ls-files", "--", &dir])
-            .is_ok_and(|files| !files.trim().is_empty())
-}
-
-/// Moves a skill's folder from one place to another, and its link with it,
-/// and relinks the Ticket worktrees and Run directories linked to it. A
-/// user-level skill is copied, and stays with its link: another checkout may
-/// use it.
-fn move_skill(repo: &Path, from: &Place, to: &Place, name: &str) -> io::Result<()> {
-    let (old, new) = (from.skill(name), to.skill(name));
-    fs::create_dir_all(new.parent().unwrap())?;
-    if from.root != repo {
-        copy_dir(&old, &new, true)?;
-    } else {
-        // Across filesystems, as from a checkout to ~, rename cannot.
-        fs::rename(&old, &new)
-            .or_else(|_| copy_dir(&old, &new, true).and_then(|()| fs::remove_dir_all(&old)))?;
-        if let Some(link) = from
-            .link(name)
-            .filter(|link| fs::read_link(link).is_ok_and(|to| to == from.target(name)))
-        {
-            fs::remove_file(link)?;
+            symlink(Place::target(name), link)?;
         }
     }
-    link(to, name)?;
-    relink(repo, name, &old, &new)
+    Ok(())
 }
 
-/// Undoes move_skill, finished or cut short: the skill goes back, or its
-/// copy of a user-level skill goes, and the links with it.
-fn unmove_skill(repo: &Path, from: &Place, to: &Place, name: &str) -> io::Result<()> {
-    let (old, new) = (from.skill(name), to.skill(name));
-    if let Some(link) = to
-        .link(name)
-        .filter(|link| fs::read_link(link).is_ok_and(|at| at == to.target(name)))
-    {
-        fs::remove_file(link)?;
+/// Puts each skill the manifest names into .orqadence/skills from where an
+/// init from before ADR 0006 put it, and links it: from the repo's
+/// .agents/skills it moves (move_in); from user level, ~/.agents/skills, it
+/// is copied as it is, edits and links kept, and the ~ copy stays for other
+/// checkouts. The checkout's are there already.
+pub(crate) fn settle(repo: &Path, home: &Path, manifest: &Manifest) -> io::Result<()> {
+    // The location field that init wrote then, gone from Manifest.
+    let old: serde_json::Value = fs::read_to_string(repo.join(MANIFEST))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    let user = old["location"] == "user";
+    if user && home.as_os_str().is_empty() {
+        return Err(io::Error::other(
+            "no HOME, so the skills at user level cannot be copied into .orqadence/skills",
+        ));
     }
-    if fs::symlink_metadata(&new).is_ok() {
-        if from.root != repo {
-            fs::remove_dir_all(&new)?;
-        } else {
-            // A copy cut short left old whole, and one removed short has it
-            // all at new: copied back over old, either comes out whole.
-            fs::rename(&new, &old)
-                .or_else(|_| copy_dir(&new, &old, true).and_then(|()| fs::remove_dir_all(&new)))?;
-        }
-    }
-    link(from, name)?;
-    relink(repo, name, &new, &old)
-}
-
-/// Points the Ticket worktrees' and Run directories' links to the skill at
-/// old to new. Tries them all, and gives the first that failed: that one
-/// still points to old.
-fn relink(repo: &Path, name: &str, old: &Path, new: &Path) -> io::Result<()> {
-    let mut failed = Ok(());
-    for kind in ["worktrees", "runs"] {
-        for dir in fs::read_dir(repo.join(LOCAL).join(kind))
-            .into_iter()
-            .flatten()
-            .flatten()
-        {
-            for sub in SUBS {
-                let link = dir.path().join(sub).join(name);
-                if fs::read_link(&link).is_ok_and(|to| to == old) {
-                    // Made beside it and renamed over it, so that a link
-                    // that fails is left as it was, not gone.
-                    let tmp = link.with_file_name(format!(".{name}.relink"));
-                    if let Err(err) = symlink(new, &tmp).and_then(|()| {
-                        fs::rename(&tmp, &link).inspect_err(|_| {
-                            let _ = fs::remove_file(&tmp);
-                        })
-                    }) {
-                        let err = io::Error::new(err.kind(), format!("{}: {err}", link.display()));
-                        failed = failed.and(Err(err));
-                    }
-                }
+    let place = Place(repo);
+    for name in manifest.skills.keys().filter(|name| safe_name(name)) {
+        let at = place.skill(name);
+        if fs::symlink_metadata(&at).is_err() {
+            let mine = home.join(".agents/skills").join(name);
+            match user {
+                false => move_in(repo, name)?,
+                true if mine.is_dir() => copy_dir(&mine, &at, true)?,
+                true => {}
             }
         }
+        if at.exists() {
+            link(repo, name)?;
+        }
     }
-    failed
+    Ok(())
+}
+
+/// Moves a skill folder of the repo's own .agents/skills, as an older init
+/// left it there, into .orqadence/skills, and drops the link that init made
+/// to it from .claude/skills; link makes the new ones. Nothing when
+/// .orqadence/skills has it, or when .agents/skills is a link, which could
+/// lead to another checkout's.
+pub(crate) fn move_in(repo: &Path, name: &str) -> io::Result<()> {
+    let (old, at) = (
+        repo.join(".agents/skills").join(name),
+        Place(repo).skill(name),
+    );
+    if fs::symlink_metadata(&at).is_ok()
+        || !own(repo, ".agents/skills")
+        || !fs::symlink_metadata(&old).is_ok_and(|meta| meta.is_dir())
+    {
+        return Ok(());
+    }
+    fs::create_dir_all(at.parent().unwrap())?;
+    fs::rename(&old, &at)?;
+    let claude = repo.join(".claude/skills").join(name);
+    if fs::read_link(&claude).is_ok_and(|to| to == Path::new("../../.agents/skills").join(name)) {
+        fs::remove_file(claude)?;
+    }
+    Ok(())
 }
 
 /// Where a Ticket's worktree and Run directory get the checkout's skills.
@@ -992,9 +846,9 @@ pub(crate) fn plugins(repo: &Path, tools: &dyn Tools) -> Vec<(String, PathBuf)> 
         .collect()
 }
 
-/// Every skill the user has, each with where it is: the repo's and the
-/// checkout's (Orqadence's installs included), the user's, and the enabled Claude Code
-/// plugins', named plugin:skill. A skill is named by its folder, as the
+/// Every skill the user has, each with where it is: the repo's, Orqadence's
+/// in .orqadence/skills, the user's, and the enabled Claude Code plugins',
+/// named plugin:skill. A skill is named by its folder, as the
 /// agents name it. A skill linked from .claude/skills to .agents/skills is
 /// listed at both places: Claude reads the one, codex the other. No home, no
 /// user's.

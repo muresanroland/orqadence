@@ -798,7 +798,7 @@ impl Orchestrator {
         // Implement plans in claude's plan mode, elsewhere in two steps.
         let written = st.name == IMPLEMENT.name && row.app.name != "claude";
         let (repo, home) = (&self.cfg.repo, &self.cfg.home);
-        let skill = match stage_skill(repo, home, st.skill) {
+        let skill = match stage_skill(repo, st.skill) {
             Some(Ok(skill)) => skill,
             Some(Err(err)) => return Held::Woke(err),
             None => return Held::Woke("has no Stage skill (run 'orqa init')".to_string()),

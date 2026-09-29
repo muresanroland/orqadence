@@ -50,17 +50,12 @@ orqa init
 ```
 
 `init` does these things:
-- It asks where the skills go:
-  - this checkout, uncommitted: this is the default, and what a non-interactive `init` takes. The skills go in `.orqadence/skills`, and each Ticket's worktree gets links to them that git ignores.
-  - the repo, committed: the skills go in `.agents/skills`, linked from `.claude/skills`. You commit them.
-  - user level: the skills go in `~/.agents/skills`, linked from `~/.claude/skills`.
-
-  Running `init` again asks again, with the current place as the default, and moves the skills it installed.
-- It installs the Stage skills and `create-pr` there. They are yours to edit from then on, and running `init` again asks before touching them. If the repo already has them committed in `.agents/skills`, those stay.
+- It installs the Stage skills and `create-pr` in `.orqadence/skills`, each linked from `.agents/skills` and `.claude/skills` by a relative folder link. Commit the skills and the links. They are yours to edit from then on, and running `init` again asks before touching them. A Stage skill the repo already has in `.agents/skills` moves into `.orqadence/skills` as it is, with a link left behind.
+- In a checkout an older `init` set up, it moves the skills that `init` put in `.agents/skills` into `.orqadence/skills` and leaves links behind; the repo's own skills stay where they are. Skills it put at user level (`~/.agents/skills`) are copied in as they are, edits kept, and the `~` copies stay. It also takes out the lines an older Orqadence added to `.git/info/exclude` to hide the skill links.
 - With no `bd` workspace, it offers to run `bd init`.
 - It offers to write the beads `docs/agents` setup the skills read, only what is missing: `docs/agents/issue-tracker.md`, `triage-labels.md`, `domain.md`, and an Agent skills block in `CLAUDE.md`, or `AGENTS.md` when there is no `CLAUDE.md`. A non-interactive `init` writes them too.
 - It asks whether to use TypeSafe, yes by default. Yes asks for the key, which it keeps in `.orqadence-local/typesafe-key`, and installs the `typesafe-ai` skill; an empty key is no. With `TYPESAFE_API_KEY` set it is on without asking. Without it, a non-interactive `init` leaves TypeSafe on only where it is already on with a kept key, and off everywhere else. On or off is kept in `.orqadence/config.json`.
-- It installs each job's default skill, pinned by commit: `tdd`, `code-review`, `ponytail`, `caveman`, `ponytail-review` and `resolving-merge-conflicts`. At user level, a skill of the same name you already have stays as it is.
+- It installs each job's default skill, pinned by commit: `tdd`, `code-review`, `ponytail`, `caveman`, `ponytail-review` and `resolving-merge-conflicts`.
 - It offers to install herdr's integration for claude or codex when it is not installed or outdated, listing what each install writes. Without it herdr does not know a session's id, so `/continue` starts those Stages fresh instead of resuming them.
 - It runs a preflight that reports anything still missing: the `bd` workspace, `gh` auth, the git remote, the `create-pr` skill, a job's skill, an App a Stage runs on that is not on `PATH`, or herdr. It also warns about a personal skill that shadows an installed one on Claude, and about the superpowers plugin being enabled.
 

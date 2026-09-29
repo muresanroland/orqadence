@@ -1,18 +1,17 @@
 //! The thin 'orqa init': tidies a checkout an older init set up, installs
-//! the shipped skills and every job's default where the user says, offers
+//! the shipped skills and every job's default in .orqadence/skills, offers
 //! bd init, the docs/agents setup and herdr's integrations, keeps TypeSafe
 //! on or off and its key, and preflights the Target repo.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
-use std::iter;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use crate::orchestrator::app::{self, APPS};
 use crate::orchestrator::state::{self, local_dir};
-use crate::skills::manifest::{self, Installed, Location, Manifest, Place, JOBS};
+use crate::skills::manifest::{self, Installed, Manifest, Place, JOBS};
 use crate::skills::{stage_skill, SKILLS};
 use crate::tools::Tools;
 
@@ -146,26 +145,25 @@ pub(crate) fn clean_old_checkout(
     Ok(())
 }
 
-/// Asks where the skills go (Location), the current place the default, and
-/// moves the ones Orqadence installed when the answer changes, but those
-/// the repo has committed (`tools` asks git). Then writes
-/// Orqadence's skills there. When the shipped skills are already installed
-/// the gate asks first: cancel (false: nothing more touched), refresh only
-/// the files unedited since install (by the record), or overwrite
-/// everything; force is overwrite unasked, where they are. A Shipped skill
-/// the repo already has in .agents/skills, committed say, is written there,
-/// whatever the Location. A Target repo that already has a create-pr skill
-/// of its own is asked what to do with the shipped one, since the Fix Stage
-/// runs whichever /create-pr the repo ends up with; later inits keep that
-/// answer from the record. `input` answers the questions, in raw mode when
-/// `tty`. .orqadence-local is made first, whatever the answers: orqa opens
-/// once it exists; a TypeSafe key an older init kept in .orqadence moves
-/// into it, readable only by the user, or is deleted when one is already
-/// there, since that one wins.
+/// Writes Orqadence's skills to .orqadence/skills, linked from
+/// .agents/skills and .claude/skills (ADR 0006), after putting there those
+/// an older init left elsewhere (manifest::settle) and taking out the lines
+/// that hid the links from git. When the shipped skills are already
+/// installed the gate asks first: cancel (false: no skill's text touched),
+/// refresh only the files unedited since install (by the record), or
+/// overwrite everything; force is overwrite unasked. A Shipped skill the
+/// repo has in its own .agents/skills moves into .orqadence/skills first,
+/// where the gate decides it. A Target repo that already has a create-pr
+/// skill of its own is asked what to do with the shipped one, since the Fix
+/// Stage runs whichever /create-pr the repo ends up with; later inits keep
+/// that answer from the record. `input` answers the questions, in raw mode
+/// when `tty`. .orqadence-local is made first, whatever the answers: orqa
+/// opens once it exists; a TypeSafe key an older init kept in .orqadence
+/// moves into it, readable only by the user, or is deleted when one is
+/// already there, since that one wins.
 pub(crate) fn install_skills(
     repo: &Path,
     home: &Path,
-    tools: &dyn Tools,
     force: bool,
     out: &mut dyn Write,
     input: &mut dyn Read,
@@ -195,35 +193,12 @@ pub(crate) fn install_skills(
     }) {
         manifest.skills.entry(name.to_string()).or_insert(shipped());
     }
-    let current = manifest
-        .location
-        .unwrap_or(if installed(&repo.join(".agents/skills")) {
-            Location::Repo // installed before init asked, or committed
-        } else {
-            Location::Checkout
-        });
-    manifest.location = Some(current);
-    let location = if force {
-        current
-    } else {
-        ask_location(out, &mut *input, tty, current)?
-    };
-    // Moving from user level needs HOME too, to find the skills it moves.
-    if [current, location].contains(&Location::User) && home.as_os_str().is_empty() {
-        return Err(io::Error::other(
-            "no HOME, so no user level to put the skills in or move them from",
-        ));
-    }
-    if location != current {
-        for stayed in manifest.relocate(repo, home, tools, location) {
-            write!(out, "init: {stayed}\r\n")?;
-        }
-        manifest.save(repo).map_err(io::Error::other)?;
-    }
-    let place = manifest.place(repo, home);
+    manifest::settle(repo, home, &manifest)?;
+    unhide_links(repo)?;
+    let place = Place(repo);
     let mode = if force {
         Mode::Overwrite
-    } else if installed(&repo.join(".agents/skills")) || installed(&place.root.join(place.files)) {
+    } else if installed(&repo.join(".orqadence/skills")) {
         write!(
             out,
             "init: the shipped skills are already installed here.\r\n"
@@ -247,7 +222,7 @@ pub(crate) fn install_skills(
         .find(|name| record.contains_key(&record_key(name)));
     let pr = match (recorded, mode) {
         (Some(name), _) => name,
-        (None, _) if !has_skill(repo, &place, "create-pr") => "create-pr",
+        (None, _) if !has_skill(repo, "create-pr") => "create-pr",
         (None, Mode::Fresh) => ask_about_create_pr(out, input, tty)?,
         (None, _) => "", // the repo's own, kept on the first init
     };
@@ -257,15 +232,10 @@ pub(crate) fn install_skills(
         .filter(|&&(skill, _)| skill != "create-pr" || !pr.is_empty())
         .map(|&(skill, body)| (skill, if skill == "create-pr" { pr } else { skill }, body))
         .collect();
-    let committed = Location::Repo.place(repo, home);
     for &(skill, name, body) in &skills {
         let rel = record_key(name);
-        let at = if fs::symlink_metadata(committed.skill(name)).is_ok() {
-            &committed
-        } else {
-            &place
-        };
-        let dest = at.skill(name).join("SKILL.md");
+        manifest::move_in(repo, name)?;
+        let dest = place.skill(name).join("SKILL.md");
         let existing = fs::symlink_metadata(&dest).ok();
         // A link is the repo's own arrangement: never written through.
         if existing
@@ -293,7 +263,7 @@ pub(crate) fn install_skills(
             record.insert(rel, body);
             manifest.skills.insert(name.to_string(), shipped());
         }
-        if let Some(link) = at.link(name).filter(|link| {
+        for link in place.links(name).iter().filter(|link| {
             name == pr
                 && fs::symlink_metadata(link).is_ok_and(|meta| !meta.file_type().is_symlink())
         }) {
@@ -303,7 +273,7 @@ pub(crate) fn install_skills(
                 link.display()
             )?;
         }
-        manifest::link(at, name)?;
+        manifest::link(repo, name)?;
     }
     fs::create_dir_all(repo.join(".orqadence"))?;
     fs::write(
@@ -338,30 +308,40 @@ fn installed(dir: &Path) -> bool {
         .any(|&(name, _)| name != "create-pr" && dir.join(name).join("SKILL.md").exists())
 }
 
-/// Asks where the skills go, the current Location first selected: a silent
-/// stdin, Ctrl-C or q keep it.
-fn ask_location(
-    out: &mut dyn Write,
-    input: &mut dyn Read,
-    tty: bool,
-    current: Location,
-) -> io::Result<Location> {
-    write!(out, "init: where should the skills go?\r\n")?;
-    let options = [
-        "this checkout, uncommitted: .orqadence/skills, linked into each Ticket's worktree",
-        "the repo, committed: .agents/skills, linked from .claude/skills; you commit them",
-        "user level: ~/.agents/skills, linked from ~/.claude/skills",
-    ];
-    let locations = [Location::Checkout, Location::Repo, Location::User];
-    let default = locations.iter().position(|l| *l == current).unwrap();
-    Ok(locations[raw(tty, || choose(out, input, &options, default))?])
+/// Takes out the lines link_checkout_skills put in .git/info/exclude to
+/// hide each skill's links in a Ticket's worktree: the committed links in
+/// the checkout would be hidden too. Only those, for the skills in
+/// .orqadence/skills, as it wrote them; the rest stay.
+// ponytail: link_checkout_skills adds them back at a Ticket's start until
+// harness-7ji.4 removes it; commit the links before starting one.
+fn unhide_links(repo: &Path) -> io::Result<()> {
+    let exclude = repo.join(".git/info/exclude");
+    let Ok(text) = fs::read_to_string(&exclude) else {
+        return Ok(());
+    };
+    let hidden: Vec<String> = fs::read_dir(repo.join(".orqadence/skills"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .flat_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            [".claude/skills", ".agents/skills"].map(|sub| format!("/{sub}/{name}"))
+        })
+        .collect();
+    let kept: String = text
+        .split_inclusive('\n')
+        .filter(|line| !hidden.iter().any(|h| line.trim() == h))
+        .collect();
+    if kept != text {
+        fs::write(&exclude, kept)?;
+    }
+    Ok(())
 }
 
 /// The rest of init once the skills are in: bd, the docs/agents setup,
 /// TypeSafe, every job's default, and herdr's integrations.
 pub(crate) fn set_up(
     repo: &Path,
-    home: &Path,
     tools: &dyn Tools,
     env_key: &str,
     out: &mut dyn Write,
@@ -371,7 +351,7 @@ pub(crate) fn set_up(
     bd_init(repo, tools, out, input, tty)?;
     write_agent_docs(repo, out, input, tty)?;
     let typesafe = ask_typesafe(repo, env_key, out, input, tty)?;
-    install_defaults(repo, home, tools, typesafe, out)?;
+    install_defaults(repo, tools, typesafe, out)?;
     install_integrations(repo, tools, out, input, tty)
 }
 
@@ -547,19 +527,15 @@ pub(crate) const TYPESAFE_SKILL: (&str, &str) =
     ("typesafe-ai", "typesafe-ai/skills/skills/typesafe-ai");
 
 /// Installs every job's default the manifest lacks, and the typesafe-ai
-/// skill when TypeSafe is on, where init put the skills, each pinned by its
-/// commit. At user level a skill you already have there is yours and stays,
-/// linked for Claude should it lack the link. A failure is said and init
-/// goes on: the preflight names the job.
+/// skill when TypeSafe is on, in .orqadence/skills, each pinned by its
+/// commit. A failure is said and init goes on: the preflight names the job.
 pub(crate) fn install_defaults(
     repo: &Path,
-    home: &Path,
     tools: &dyn Tools,
     typesafe: bool,
     out: &mut dyn Write,
 ) -> io::Result<()> {
     let manifest = Manifest::load(repo).map_err(io::Error::other)?;
-    let place = manifest.place(repo, home);
     let defaults = JOBS.iter().map(|(job, suggestions)| {
         (
             suggestions[0],
@@ -571,18 +547,7 @@ pub(crate) fn install_defaults(
         if source.is_empty() || manifest.skills.contains_key(name) {
             continue;
         }
-        if manifest.location == Some(Location::User)
-            && iter::once(place.skill(name))
-                .chain(place.link(name))
-                .any(|path| fs::symlink_metadata(path).is_ok())
-        {
-            writeln!(out, "init: keeping your {name} at user level")?;
-            if let Err(err) = manifest::link(&place, name) {
-                writeln!(out, "init: your {name} not linked for Claude: {err}")?;
-            }
-            continue;
-        }
-        match manifest::add(repo, home, tools, source, Some(name)) {
+        match manifest::add(repo, tools, source, Some(name)) {
             Ok(_) => writeln!(out, "init: installed {name}, {what}")?,
             Err(err) => writeln!(out, "init: {name} not installed: {err}")?,
         }
@@ -949,7 +914,7 @@ pub(crate) fn warnings(
     let mut warn = Vec::new();
     // A garbled manifest is the preflight's to fail on.
     let manifest = Manifest::load(repo).unwrap_or_default();
-    if !home.as_os_str().is_empty() && manifest.location != Some(Location::User) {
+    if !home.as_os_str().is_empty() {
         for name in manifest.skills.keys() {
             if home
                 .join(".claude/skills")
@@ -962,7 +927,7 @@ pub(crate) fn warnings(
         }
     }
     for (name, shipped) in SKILLS {
-        let Some(Ok(installed)) = stage_skill(repo, &home, name) else {
+        let Some(Ok(installed)) = stage_skill(repo, name) else {
             continue;
         };
         for (job, _) in JOBS {
@@ -987,17 +952,12 @@ pub(crate) fn warnings(
     warn
 }
 
-/// Whether the skill is in the repo's .agents/skills or .claude/skills, or at
-/// the place init puts skills.
-fn has_skill(repo: &Path, place: &Place, name: &str) -> bool {
-    [
-        repo.join(".agents/skills").join(name),
-        repo.join(".claude/skills").join(name),
-        place.skill(name),
-    ]
-    .into_iter()
-    .chain(place.link(name))
-    .any(|dir| dir.join("SKILL.md").exists())
+/// Whether the skill is in the repo's .agents/skills, .claude/skills or
+/// .orqadence/skills.
+fn has_skill(repo: &Path, name: &str) -> bool {
+    [".agents/skills", ".claude/skills", ".orqadence/skills"]
+        .iter()
+        .any(|dir| repo.join(dir).join(name).join("SKILL.md").exists())
 }
 
 /// Prints each missing prerequisite and returns the exit code.

@@ -59,7 +59,7 @@ pub(crate) struct App {
     /// and is not installed on another App.
     pub(crate) built_in: &'static [&'static str],
     /// Its own skills folder, at the repo and at home; it loads
-    /// .orqadence/skills too, where the checkout's skills are linked from.
+    /// .orqadence/skills too, which both folders link Orqadence's skills to.
     pub(crate) skill_dir: &'static str,
     /// Whether it loads its enabled plugins' skills, named plugin:skill.
     pub(crate) plugins: bool,

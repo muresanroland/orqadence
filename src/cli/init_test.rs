@@ -2,23 +2,16 @@ use super::run;
 use crate::orchestrator::write_file;
 use crate::setup::setup_test::snapshot;
 use crate::setup::TYPESAFE_SKILL;
-use crate::skills::manifest::{Location, Manifest, JOBS};
+use crate::skills::manifest::{Manifest, JOBS};
+use crate::skills::SKILLS;
 use crate::tempdir::TempDir;
 use crate::tools::fake::Fake;
 use crate::tools::Tools;
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-
-const SKILL_NAMES: [&str; 5] = [
-    "stage-implement",
-    "stage-review",
-    "stage-moderate",
-    "stage-fix",
-    "stage-address",
-];
 
 /// A Target repo that passes every preflight check.
 pub(super) fn prepared_repo() -> TempDir {
@@ -98,61 +91,96 @@ fn init_with(
     (code, String::from_utf8(out).unwrap())
 }
 
-/// Where a Location puts a skill: its folder, and its link if it has one.
-fn placed(repo: &Path, home: &Path, answer: &str, name: &str) -> (PathBuf, Option<PathBuf>) {
-    match answer {
-        "2" => (
-            repo.join(".agents/skills").join(name),
-            Some(repo.join(".claude/skills").join(name)),
-        ),
-        "3" => (
-            home.join(".agents/skills").join(name),
-            Some(home.join(".claude/skills").join(name)),
-        ),
-        _ => (repo.join(".orqadence/skills").join(name), None),
+/// A skill's folder in .orqadence/skills holds it, and .agents/skills and
+/// .claude/skills link that folder, relative.
+fn assert_placed(repo: &Path, name: &str, text: &str) {
+    let at = repo.join(".orqadence/skills").join(name).join("SKILL.md");
+    let got = fs::read_to_string(&at).unwrap_or_else(|err| panic!("{name}: {err}"));
+    assert!(got.contains(text), "{name}: {got}");
+    for dir in [".agents/skills", ".claude/skills"] {
+        let link = repo.join(dir).join(name);
+        assert_eq!(
+            fs::read_link(&link).ok(),
+            Some(Path::new("../../.orqadence/skills").join(name)),
+            "{link:?}"
+        );
     }
 }
 
+/// Every Shipped skill and each job's default go in .orqadence/skills,
+/// linked from .agents/skills and .claude/skills; nothing asks where.
 #[test]
-fn each_location_writes_where_it_says_and_no_answer_takes_the_checkout() {
-    for (answer, location) in [
-        ("", Location::Checkout),
-        ("1", Location::Checkout),
-        ("2", Location::Repo),
-        ("3", Location::User),
-    ] {
-        let (repo, home) = (prepared_repo(), TempDir::new());
-        let (code, out) = init_keys(repo.path(), home.path(), &[answer]);
-        assert_eq!(code, 0, "{answer:?}: init exit {code}:\n{out}");
-        let manifest = Manifest::load(repo.path()).unwrap();
-        assert_eq!(manifest.location, Some(location), "{answer:?}");
-        // A Shipped skill and a job's default, pinned by its commit.
-        for name in ["stage-implement", "tdd"] {
-            let (dir, link) = placed(repo.path(), home.path(), answer, name);
-            let text = fs::read_to_string(dir.join("SKILL.md"))
-                .unwrap_or_else(|err| panic!("{answer:?}: {name} not in {dir:?}: {err}"));
-            assert!(
-                text.contains(&format!("name: {name}")),
-                "{answer:?}: {text}"
-            );
-            if let Some(link) = link {
-                assert_eq!(
-                    fs::read_to_string(link.join("SKILL.md")).unwrap(),
-                    text,
-                    "{answer:?}: {name} not linked"
-                );
-            }
-        }
-        assert_eq!(manifest.skills["tdd"].commit, "abc123", "{answer:?}");
-        assert!(manifest.skills["stage-implement"].shipped, "{answer:?}");
-        for elsewhere in [
-            ".agents/skills/stage-implement",
-            ".claude/skills/stage-implement",
-        ] {
-            let there = fs::symlink_metadata(repo.path().join(elsewhere)).is_ok();
-            assert_eq!(there, location == Location::Repo, "{answer:?}: {elsewhere}");
-        }
+fn a_fresh_init_puts_every_skill_in_orqadence_skills_linked_from_both() {
+    let (repo, home) = (bare_repo(), TempDir::new());
+    let (code, out) = init_keys(repo.path(), home.path(), &[]);
+    assert_eq!(code, 0, "init exit {code}:\n{out}");
+    assert!(!out.contains("where should the skills go"), "{out}");
+    for (name, _) in SKILLS {
+        assert_placed(repo.path(), name, &format!("name: {name}"));
     }
+    assert_placed(repo.path(), "tdd", "name: tdd");
+    let manifest = Manifest::load(repo.path()).unwrap();
+    assert_eq!(manifest.skills["tdd"].commit, "abc123");
+    assert!(manifest.skills["stage-implement"].shipped);
+}
+
+/// A checkout an older init set up in the repo location: the skills it
+/// installed in .agents/skills move to .orqadence/skills, edits and all,
+/// and leave links behind; the repo's own skill stays as it was.
+#[test]
+fn init_moves_the_skills_an_older_init_put_in_agents_skills() {
+    let (repo, home) = (bare_repo(), TempDir::new());
+    write_file(
+        &repo.path().join(".orqadence/skills.json"),
+        r#"{"location": "repo", "skills": {"stage-fix": {"shipped": true}, "tdd": {"repo": "https://github.com/mattpocock/skills", "path": "skills/engineering/tdd", "commit": "abc123"}}}"#,
+    );
+    let agents = repo.path().join(".agents/skills");
+    write_file(&agents.join("stage-fix/SKILL.md"), "edited stage-fix");
+    write_file(&agents.join("tdd/SKILL.md"), "---\nname: tdd\n---\nold");
+    write_file(&agents.join("own/SKILL.md"), "the repo's own");
+    fs::create_dir_all(repo.path().join(".claude/skills")).unwrap();
+    for name in ["stage-fix", "tdd"] {
+        std::os::unix::fs::symlink(
+            Path::new("../../.agents/skills").join(name),
+            repo.path().join(".claude/skills").join(name),
+        )
+        .unwrap();
+    }
+    let (code, out) = init_keys(repo.path(), home.path(), &[]);
+    assert_eq!(code, 0, "init exit {code}:\n{out}");
+    assert_placed(repo.path(), "stage-fix", "edited stage-fix");
+    assert_placed(repo.path(), "tdd", "old");
+    let own = fs::symlink_metadata(agents.join("own")).unwrap();
+    assert!(own.is_dir(), "the repo's own skill moved");
+    assert_eq!(
+        fs::read_to_string(agents.join("own/SKILL.md")).unwrap(),
+        "the repo's own"
+    );
+    assert!(fs::symlink_metadata(repo.path().join(".claude/skills/own")).is_err());
+    assert!(!repo.path().join(".orqadence/skills/own").exists());
+}
+
+/// A checkout an older init set up at user level: each skill it installed
+/// in ~/.agents/skills is copied in as it is, edits kept, and the ~ copy
+/// stays for other checkouts.
+#[test]
+fn init_copies_the_skills_an_older_init_put_at_user_level() {
+    let (repo, home) = (bare_repo(), TempDir::new());
+    write_file(
+        &repo.path().join(".orqadence/skills.json"),
+        r#"{"location": "user", "skills": {"tdd": {"repo": "https://github.com/mattpocock/skills", "path": "skills/engineering/tdd", "commit": "abc123"}}}"#,
+    );
+    let mine = home.path().join(".agents/skills/tdd/SKILL.md");
+    write_file(&mine, "---\nname: tdd\n---\nedited at user level");
+    let (code, out) = init_keys(repo.path(), home.path(), &[]);
+    assert_eq!(code, 0, "init exit {code}:\n{out}");
+    assert_placed(repo.path(), "tdd", "edited at user level");
+    assert_eq!(
+        fs::read_to_string(&mine).unwrap(),
+        "---\nname: tdd\n---\nedited at user level"
+    );
+    let saved = fs::read_to_string(repo.path().join(".orqadence/skills.json")).unwrap();
+    assert!(!saved.contains("location"), "{saved}");
 }
 
 pub(super) fn herdr_env(key: &str) -> String {
@@ -175,27 +203,6 @@ pub(super) fn run_with(
     let mut out = Vec::new();
     let code = run(&args, &mut out, Some(&mut &b""[..]), repo, tools, env);
     (code, String::from_utf8(out).unwrap())
-}
-
-#[test]
-fn init_installs_skills_with_working_symlinks() {
-    let (repo, home) = (prepared_repo(), TempDir::new());
-    let (code, out) = init_keys(repo.path(), home.path(), &["2"]); // in the repo
-    assert_eq!(code, 0, "init exit {code}:\n{out}");
-    for name in SKILL_NAMES {
-        let link = repo.path().join(".claude/skills").join(name);
-        let via_link = fs::read_to_string(link.join("SKILL.md"))
-            .unwrap_or_else(|err| panic!("{name}: symlink does not resolve: {err}"));
-        assert!(
-            via_link.contains(&format!("name: {name}")),
-            "{name}: SKILL.md has no matching name in frontmatter"
-        );
-        let target = fs::read_link(&link).unwrap();
-        assert!(
-            target.is_relative(),
-            "{name}: symlink target {target:?} is not relative"
-        );
-    }
 }
 
 /// Init leaves the repo's own .gitignore alone: .orqadence-local ignores
@@ -333,7 +340,7 @@ fn init_keeps_the_old_run_files_and_fails_unless_told_yes() {
             "{keys:?}: no reason:\n{out}"
         );
         assert!(
-            !out.contains("where should the skills go"),
+            !out.contains("already has a create-pr skill"),
             "{keys:?}: reached the skills step:\n{out}"
         );
         assert_eq!(snapshot(repo.path()), before, "{keys:?}: touched");
@@ -526,15 +533,12 @@ fn init_asks_for_typesafe_and_preflight_warns_when_off() {
         "warned with the variable set:\n{out}"
     );
 
-    // Typed on init's stdin after the answers to where and to the gate (each
-    // its own keystroke, as a terminal delivers them), yes and the key are
-    // kept in the repo.
+    // Typed on init's stdin after the answer to the gate (its own
+    // keystroke, as a terminal delivers it), yes and the key are kept in the
+    // repo.
     let args = ["init".to_string()];
     let mut out = Vec::new();
-    let mut keys = b"\r"
-        .chain(&b"2"[..])
-        .chain(&b"\r"[..])
-        .chain(&b"sk-typed\n"[..]);
+    let mut keys = b"2".chain(&b"\r"[..]).chain(&b"sk-typed\n"[..]);
     let code = run(
         &args,
         &mut out,
@@ -557,92 +561,8 @@ fn init_asks_for_typesafe_and_preflight_warns_when_off() {
     );
 }
 
-#[test]
-fn rerunning_init_with_another_answer_moves_the_installed_skills() {
-    let (repo, home) = (prepared_repo(), TempDir::new());
-    fs::remove_dir_all(repo.path().join(".agents/skills/create-pr")).unwrap(); // the shipped one, then
-    init_keys(repo.path(), home.path(), &["1"]);
-    let mut was = "1";
-    for (answer, location) in [("2", Location::Repo), ("3", Location::User)] {
-        // Asked where, the gate after it takes no answer: cancel.
-        let (code, out) = init_keys(repo.path(), home.path(), &[answer]);
-        assert_eq!(code, 0, "{answer:?}: init exit {code}:\n{out}");
-        assert_eq!(
-            Manifest::load(repo.path()).unwrap().location,
-            Some(location),
-            "{answer:?}"
-        );
-        for name in ["stage-implement", "create-pr", "tdd"] {
-            let (dir, link) = placed(repo.path(), home.path(), answer, name);
-            let via = link.unwrap_or(dir.clone());
-            assert!(
-                fs::read_to_string(via.join("SKILL.md")).is_ok_and(|text| text.contains(name)),
-                "{answer:?}: {name} not moved to {via:?}:\n{out}"
-            );
-            let (old, old_link) = placed(repo.path(), home.path(), was, name);
-            assert!(!old.exists(), "{answer:?}: {name} left at {old:?}");
-            if let Some(old_link) = old_link {
-                assert!(
-                    fs::symlink_metadata(&old_link).is_err(),
-                    "{answer:?}: {old_link:?} stayed"
-                );
-            }
-        }
-        was = answer;
-    }
-}
-
-#[test]
-fn at_user_level_a_skill_of_yours_is_not_overwritten() {
-    let (repo, home) = (prepared_repo(), TempDir::new());
-    let mine = home.path().join(".agents/skills/tdd/SKILL.md");
-    write_file(&mine, "---\nname: tdd\n---\nmine\n");
-    let (code, out) = init_keys(repo.path(), home.path(), &["3"]);
-    assert_eq!(code, 0, "init exit {code}:\n{out}");
-    assert_eq!(
-        fs::read_to_string(&mine).unwrap(),
-        "---\nname: tdd\n---\nmine\n"
-    );
-    assert!(out.contains("keeping your tdd"), "{out}");
-    // Linked for Claude, which reads ~/.claude/skills only.
-    assert_eq!(
-        fs::read_to_string(home.path().join(".claude/skills/tdd/SKILL.md")).unwrap(),
-        "---\nname: tdd\n---\nmine\n"
-    );
-    let manifest = Manifest::load(repo.path()).unwrap();
-    assert!(
-        !manifest.skills.contains_key("tdd"),
-        "{:?}",
-        manifest.skills
-    );
-    assert!(manifest.skills.contains_key("code-review"));
-
-    // Moved there later, yours stays too, and so does everything else: a
-    // skill left behind would leave the manifest naming yours.
-    let (repo, home) = (prepared_repo(), TempDir::new());
-    init_keys(repo.path(), home.path(), &["1"]);
-    let mine = home.path().join(".agents/skills/tdd/SKILL.md");
-    write_file(&mine, "---\nname: tdd\n---\nmine\n");
-    let (_, out) = init_keys(repo.path(), home.path(), &["3"]);
-    assert!(out.contains("is there already"), "{out}");
-    assert_eq!(
-        fs::read_to_string(&mine).unwrap(),
-        "---\nname: tdd\n---\nmine\n"
-    );
-    assert_eq!(
-        Manifest::load(repo.path()).unwrap().location,
-        Some(Location::Checkout)
-    );
-    for name in ["tdd", "stage-implement"] {
-        assert!(
-            repo.path().join(".orqadence/skills").join(name).exists(),
-            "{name} moved"
-        );
-    }
-}
-
 /// A Target repo that passes every preflight check and has no skill of its
-/// own: init asks where, then the docs/agents setup, then TypeSafe.
+/// own: init asks the docs/agents setup, then TypeSafe.
 fn bare_repo() -> TempDir {
     let repo = prepared_repo();
     fs::remove_dir_all(repo.path().join(".agents")).unwrap();
@@ -651,7 +571,7 @@ fn bare_repo() -> TempDir {
 
 #[test]
 fn typesafe_is_its_own_opt_in_kept_in_config_json() {
-    // (answers after where and the docs/agents setup, TYPESAFE_API_KEY, on)
+    // (answers after the docs/agents setup, TYPESAFE_API_KEY, on)
     for (keys, env_key, on) in [
         (&["\n", "sk-typed\n"][..], "", true),
         (&["y\n", "\n"][..], "", false), // an empty key is no
@@ -660,7 +580,7 @@ fn typesafe_is_its_own_opt_in_kept_in_config_json() {
         (&[][..], "", false),      // non-interactive
     ] {
         let (repo, home) = (bare_repo(), TempDir::new());
-        let keys: Vec<&str> = ["1", "\n"].iter().chain(keys).copied().collect();
+        let keys: Vec<&str> = ["\n"].iter().chain(keys).copied().collect();
         let (code, out) = init_with(repo.path(), home.path(), ok_tools(), &keys, env_key);
         let case = format!("{keys:?} {env_key:?}");
         assert_eq!(code, 0, "{case}: init exit {code}:\n{out}");
@@ -688,7 +608,7 @@ fn typesafe_is_its_own_opt_in_kept_in_config_json() {
     }
     // The typed key is kept where it always was.
     let (repo, home) = (bare_repo(), TempDir::new());
-    init_keys(repo.path(), home.path(), &["1", "\n", "\n", "sk-typed\n"]);
+    init_keys(repo.path(), home.path(), &["\n", "\n", "sk-typed\n"]);
     assert_eq!(
         fs::read_to_string(repo.path().join(".orqadence-local/typesafe-key"))
             .unwrap()
@@ -696,9 +616,9 @@ fn typesafe_is_its_own_opt_in_kept_in_config_json() {
         "sk-typed"
     );
     // Nobody answering later keeps the choice made; Ctrl-C is no.
-    let (_, out) = init_keys(repo.path(), home.path(), &["\r", "2"]);
+    let (_, out) = init_keys(repo.path(), home.path(), &["2"]);
     assert!(out.contains("init: TypeSafe on"), "{out}");
-    let (_, out) = init_keys(repo.path(), home.path(), &["\r", "2", "\x03"]);
+    let (_, out) = init_keys(repo.path(), home.path(), &["2", "\x03"]);
     assert!(out.contains("init: TypeSafe off"), "{out}");
 }
 
@@ -707,7 +627,7 @@ fn with_no_beads_yes_runs_bd_init_and_non_interactive_skips() {
     let (repo, home) = (bare_repo(), TempDir::new());
     fs::remove_dir_all(repo.path().join(".beads")).unwrap();
     let tools = ok_tools();
-    let (_, out) = init_with(repo.path(), home.path(), tools.clone(), &["1", "\n"], "");
+    let (_, out) = init_with(repo.path(), home.path(), tools.clone(), &["\n"], "");
     assert!(out.contains("Run bd init now? [Y/n]"), "{out}");
     assert!(
         tools
@@ -752,11 +672,11 @@ fn docs_agents_writes_only_what_is_missing_and_the_block_into_claude_md_else_age
     assert!(!repo.path().join("AGENTS.md").exists());
     // Ctrl-C is no: nothing written.
     let repo_c = bare_repo();
-    init_keys(repo_c.path(), TempDir::new().path(), &["1", "\x03"]);
+    init_keys(repo_c.path(), TempDir::new().path(), &["\x03"]);
     assert!(!repo_c.path().join("docs").exists());
     assert!(!repo_c.path().join("AGENTS.md").exists());
     // Everything there: asked nothing.
-    let (_, out) = init_keys(repo.path(), TempDir::new().path(), &["\r", "2"]);
+    let (_, out) = init_keys(repo.path(), TempDir::new().path(), &["2"]);
     assert!(!out.contains("docs/agents setup"), "{out}");
 
     // No CLAUDE.md: the block goes into AGENTS.md.
@@ -801,14 +721,14 @@ codex: outdated (v7) (/h/.codex/herdr-agent-state.sh)
             .filter(|c| c.starts_with("herdr integration install"))
             .collect()
     };
-    // Where, the docs/agents setup, TypeSafe no, then the integrations: yes.
+    // The docs/agents setup, TypeSafe no, then the integrations: yes.
     let (repo, home) = (bare_repo(), TempDir::new());
     let tools = herdr(true);
     let (_, out) = init_with(
         repo.path(),
         home.path(),
         tools.clone(),
-        &["1", "\n", "n\n", "\n"],
+        &["\n", "n\n", "\n"],
         "",
     );
     assert_eq!(

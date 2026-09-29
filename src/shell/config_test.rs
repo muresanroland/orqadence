@@ -148,7 +148,17 @@ fn review_to_codex_a_listed_model_and_an_effort_save_all_three() {
     );
     assert_eq!(
         note(&s),
-        "saved: Review codex gpt-6-sol/high, in .orqadence/config.json"
+        "saved: Review codex gpt-6-sol/high, uncommitted in .orqadence/config.json"
+    );
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(
+            &buf,
+            "saved: Review codex gpt-6-sol/high, uncommitted in .orqadence/config.json"
+        )
+        .is_some(),
+        "{:#?}",
+        rows(&buf)
     );
     assert!(s.settings.as_ref().unwrap().saved.is_some());
 }
@@ -316,7 +326,7 @@ fn a_change_during_a_run_logs_config_and_the_next_stage_starts_on_it() {
     await_probe(&mut s);
     assert_eq!(
         note(&s),
-        "saved: Review codex gpt-6-sol. Stages that start from now use it; running ones keep theirs."
+        "saved: Review codex gpt-6-sol, uncommitted. Stages that start from now use it; running ones keep theirs."
     );
     await_line(&mut s, "config: Review codex → codex gpt-6-sol");
     assert!(logged(&w, "config: Review codex → codex gpt-6-sol"));
@@ -813,7 +823,7 @@ fn the_toggle_splits_on_a_plan_model_and_joins_again() {
     assert_eq!(config_json(repo.path()), split);
     assert_eq!(
         note(&s),
-        "saved: Implement claude claude-fable-5-1→claude-opus-5-5/high, in .orqadence/config.json"
+        "saved: Implement claude claude-fable-5-1→claude-opus-5-5/high, uncommitted in .orqadence/config.json"
     );
     let buf = render(&s, 160, 45);
     let right: Vec<String> = (5..16).map(|y| text(&buf, y, 99, 158)).collect();
@@ -1188,14 +1198,7 @@ fn adding_a_bare_name_is_refused_before_any_clone() {
 fn removing_a_skill_a_job_uses_asks_then_sets_the_job_to_none() {
     let repo = TempDir::new();
     let tools = clones();
-    add(
-        repo.path(),
-        Path::new(""),
-        &*tools,
-        "mattpocock/skills",
-        Some("tdd"),
-    )
-    .unwrap();
+    add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
     let mut s = skills_page(tools, repo.path());
     s.key(key(KeyCode::Down)); // the location, then tdd
     s.key(key(KeyCode::Char('d')));
@@ -1217,7 +1220,7 @@ fn removing_a_skill_a_job_uses_asks_then_sets_the_job_to_none() {
     assert!(!m.skills.contains_key("tdd"));
     assert_eq!(m.pick("test-first"), NONE);
     assert!(!repo.path().join(".agents/skills/tdd").exists());
-    assert_eq!(note(&s), "removed tdd; Plan + Implement test-first is none");
+    assert_eq!(note(&s), "removed tdd; Plan + Implement test-first is none; saved uncommitted: Tickets take the change once it is merged");
 }
 
 /// A source with two skills, one installed from it already: the checklist
@@ -1226,14 +1229,7 @@ fn removing_a_skill_a_job_uses_asks_then_sets_the_job_to_none() {
 fn adding_a_pack_shows_the_checklist_and_installs_the_ticked_skill() {
     let repo = TempDir::new();
     let tools = clones();
-    add(
-        repo.path(),
-        Path::new(""),
-        &*tools,
-        "mattpocock/skills",
-        Some("tdd"),
-    )
-    .unwrap();
+    add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
     let mut s = skills_page(tools.clone(), repo.path());
     s.key(key(KeyCode::Char('a')));
     type_in(&mut s, "mattpocock/skills");
@@ -1271,7 +1267,7 @@ fn adding_a_pack_shows_the_checklist_and_installs_the_ticked_skill() {
     assert_eq!(m.skills["code-review"].commit, "abc1234def");
     assert_eq!(
         note(&s),
-        "installed code-review from mattpocock/skills @ abc1234"
+        "installed code-review from mattpocock/skills @ abc1234; saved uncommitted: Tickets take the change once it is merged"
     );
     assert!(s.settings.as_ref().unwrap().listing.is_none());
 }
@@ -1317,7 +1313,7 @@ fn picking_a_suggestion_not_installed_clones_it_and_picks_it() {
     assert!(repo.path().join(".agents/skills/tdd/SKILL.md").is_file());
     assert_eq!(
         note(&s),
-        "installed tdd from mattpocock/skills @ abc1234; Plan + Implement test-first uses it"
+        "installed tdd from mattpocock/skills @ abc1234; Plan + Implement test-first uses it; saved uncommitted: Tickets take the change once it is merged"
     );
 }
 
@@ -1372,20 +1368,14 @@ fn the_review_job_on_codex_hides_a_claude_only_skill() {
     assert!(find(&buf, "archify").is_none(), "{:#?}", rows(&buf));
 }
 
-/// The Skills page: the location read-only, then each skill, a Shipped one
-/// said so, a fetched one with its source @ commit and the jobs using it.
+/// The Skills page: where the skills live, read-only, then each skill, a
+/// Shipped one said so, a fetched one with its source @ commit and the jobs
+/// using it.
 #[test]
 fn the_skills_page_renders_the_location_and_each_skill() {
     let repo = TempDir::new();
     let tools = clones();
-    add(
-        repo.path(),
-        Path::new(""),
-        &*tools,
-        "mattpocock/skills",
-        Some("tdd"),
-    )
-    .unwrap();
+    add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
     let mut m = manifest(repo.path());
     m.skills.insert(
         "create-pr".to_string(),
@@ -1408,18 +1398,18 @@ fn the_skills_page_renders_the_location_and_each_skill() {
             "The skills Orqadence installed, from their sources; the",
             "Skill manifest is .orqadence/skills.json.",
             "",
-            "▸ location    the repo, committed  .agents/skills",
+            "▸ location    .orqadence/skills, committed",
+            "    linked from .agents/skills and .claude/skills",
             "",
             "  create-pr               shipped with Orqadence",
             "  tdd                     mattpocock/skills @ abc1234",
             "    ← Plan + Implement test-first",
-            "",
         ]
     );
     assert!(
         find(
             &buf,
-            "Run orqa init again to change where skills are installed."
+            "Committed: a skill change here takes effect for Tickets once it is merged."
         )
         .is_some(),
         "{:#?}",
@@ -1465,7 +1455,10 @@ fn typesafe_off_asks_then_saves_off() {
     s.key(key(KeyCode::Enter));
     s.key(key(KeyCode::Char('y')));
     assert_eq!(config_json(repo.path()), json!({"typesafe": false}));
-    assert_eq!(note(&s), "TypeSafe off");
+    assert_eq!(
+        note(&s),
+        "TypeSafe off, saved uncommitted in .orqadence/config.json"
+    );
     let buf = render(&s, 160, 45);
     assert!(find(&buf, "TypeSafe  off").is_some(), "{:#?}", rows(&buf));
 }
@@ -1507,7 +1500,10 @@ fn typesafe_on_without_a_key_asks_it_masked() {
     assert_eq!(mode & 0o777, 0o600);
     assert_eq!(config_json(repo.path()), json!({"typesafe": true}));
     assert_eq!(s.cfg.api_key, "ts_live_51c9d0e7");
-    assert_eq!(note(&s), "TypeSafe on");
+    assert_eq!(
+        note(&s),
+        "TypeSafe on, saved uncommitted in .orqadence/config.json"
+    );
     let buf = render(&s, 160, 45);
     assert!(find(&buf, "••••d0e7").is_some(), "{:#?}", rows(&buf));
 }
@@ -1551,7 +1547,10 @@ fn the_typesafe_page_shows_both_floors_and_saves_one_at_once() {
         config_json(repo.path()),
         json!({"plan_floor": 0.6, "wake_floor": 0.8})
     );
-    assert_eq!(note(&s), "wake floor 0.80");
+    assert_eq!(
+        note(&s),
+        "wake floor 0.80, saved uncommitted in .orqadence/config.json"
+    );
     let buf = render(&s, 160, 45);
     assert!(
         find(&buf, "▸ wake floor            0.80").is_some(),
@@ -1579,7 +1578,10 @@ fn the_typesafe_page_shows_both_floors_and_saves_one_at_once() {
         &[KeyCode::Esc, KeyCode::Up, KeyCode::Enter, KeyCode::Enter],
     );
     assert_eq!(config_json(repo.path()), json!({"plan_floor": 0.6}));
-    assert_eq!(note(&s), "wake floor 0.70, its default");
+    assert_eq!(
+        note(&s),
+        "wake floor 0.70, its default, saved uncommitted in .orqadence/config.json"
+    );
 }
 
 /// A floor in config.json that is not a number from 0 to 1 is flagged: the
@@ -1643,7 +1645,10 @@ fn the_run_page_keeps_the_tickets_a_run_takes_at_once() {
     type_in(&mut s, "5");
     s.key(key(KeyCode::Enter));
     assert_eq!(config_json(repo.path()), json!({"max_tickets": 5}));
-    assert_eq!(note(&s), "5 Tickets at once");
+    assert_eq!(
+        note(&s),
+        "5 Tickets at once, saved uncommitted in .orqadence/config.json"
+    );
     let buf = render(&s, 160, 45);
     assert!(
         find(&buf, "▸ Run       5 at once").is_some(),
@@ -1653,7 +1658,10 @@ fn the_run_page_keeps_the_tickets_a_run_takes_at_once() {
 
     keys(&mut s, &[KeyCode::Enter, KeyCode::Enter]);
     assert_eq!(config_json(repo.path()), json!({}));
-    assert_eq!(note(&s), "3 Tickets at once, its default");
+    assert_eq!(
+        note(&s),
+        "3 Tickets at once, its default, saved uncommitted in .orqadence/config.json"
+    );
 
     write_file(
         &repo.path().join(".orqadence/config.json"),
@@ -1689,21 +1697,14 @@ fn the_run_page_keeps_the_tickets_a_run_takes_at_once() {
 fn updating_says_the_new_commit_or_up_to_date() {
     let repo = TempDir::new();
     let tools = clones();
-    add(
-        repo.path(),
-        Path::new(""),
-        &*tools,
-        "mattpocock/skills",
-        Some("tdd"),
-    )
-    .unwrap();
+    add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
     let mut m = manifest(repo.path());
     m.skills.get_mut("tdd").unwrap().commit = "0000000old".to_string();
     m.save(repo.path()).unwrap();
     let mut s = skills_page(tools, repo.path());
     keys(&mut s, &[KeyCode::Down, KeyCode::Char('u')]);
     await_busy(&mut s);
-    assert_eq!(note(&s), "updated tdd 0000000 → abc1234");
+    assert_eq!(note(&s), "updated tdd 0000000 → abc1234; saved uncommitted: Tickets take the change once it is merged");
     assert_eq!(manifest(repo.path()).skills["tdd"].commit, "abc1234def");
     s.key(key(KeyCode::Char('U')));
     await_busy(&mut s);
@@ -1720,14 +1721,7 @@ fn a_suggestion_installed_from_a_fork_is_picked_as_it_is() {
         r#"{"picks": {"test-first": "none"}}"#,
     );
     let tools = clones();
-    add(
-        repo.path(),
-        Path::new(""),
-        &*tools,
-        "someone/fork",
-        Some("tdd"),
-    )
-    .unwrap();
+    add(repo.path(), &*tools, "someone/fork", Some("tdd")).unwrap();
     let calls = tools.calls().len();
     let mut s = screen_at(tools.clone(), repo.path());
     type_line(&mut s, "/config");
@@ -1746,7 +1740,10 @@ fn a_suggestion_installed_from_a_fork_is_picked_as_it_is() {
     );
     assert!(s.settings.as_ref().unwrap().busy.is_none());
     assert_eq!(manifest(repo.path()).pick("test-first"), "tdd");
-    assert_eq!(note(&s), "Plan + Implement test-first picks tdd");
+    assert_eq!(
+        note(&s),
+        "Plan + Implement test-first picks tdd, saved uncommitted in .orqadence/skills.json"
+    );
     let cloned = tools.calls()[calls..].iter().any(|c| c.contains("clone"));
     assert!(!cloned, "{:#?}", tools.calls());
 }
