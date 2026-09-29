@@ -278,6 +278,8 @@ pub(crate) struct Screen {
     ring_receiver: Receiver<Result<(), String>>,
     /// The pushes whose outcome poll() has not read yet.
     pub(crate) pushes: usize,
+    /// MOSHI_WEBHOOK_TOKEN was set at open: it wins over a token /config keeps.
+    pub(crate) moshi_env: bool,
 }
 
 impl Screen {
@@ -342,6 +344,7 @@ impl Screen {
             ring_sender,
             ring_receiver,
             pushes: 0,
+            moshi_env: false,
         }
     }
 
@@ -379,6 +382,7 @@ impl Screen {
         let mut screen = Screen::new(cfg, folder, truecolor, Vec::new(), state);
         screen.missing = missing;
         screen.on_call = on_call::load(repo, env);
+        screen.moshi_env = !env(on_call::TOKEN_VAR).trim().is_empty();
         screen.reload_epics();
         match update::exe_path() {
             Ok(exe) => {

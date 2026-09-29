@@ -12,10 +12,12 @@ use serde_json::{json, Value};
 use crate::orchestrator::state::local_dir;
 
 /// The per-person settings file (ADR 0006), On call under "on_call".
-const CONFIG: &str = ".orqadence-local/config.json";
+pub(crate) const CONFIG: &str = ".orqadence-local/config.json";
 /// Wins over the file's token, as TYPESAFE_API_KEY wins over the kept key.
-const TOKEN_VAR: &str = "MOSHI_WEBHOOK_TOKEN";
-const DEFAULT_MINUTES: u64 = 5;
+pub(crate) const TOKEN_VAR: &str = "MOSHI_WEBHOOK_TOKEN";
+pub(crate) const DEFAULT_MINUTES: u64 = 5;
+/// docs/on-call.md by its GitHub URL: Target repos do not have the file.
+pub(crate) const DOC: &str = "https://github.com/muresanroland/orqadence/blob/main/docs/on-call.md";
 
 /// The On call settings, loaded at Screen::open. No token is off: there is
 /// no separate switch.
@@ -61,7 +63,6 @@ pub(crate) fn load(repo: &Path, env: &dyn Fn(&str) -> String) -> OnCall {
 /// Keeps the settings in the per-person config.json, its other keys as they
 /// were, readable only by the user since it holds the token. A file that is
 /// not a JSON object refuses, so a save never writes over it.
-#[allow(dead_code)] // /config's On call page (harness-we9.3) saves
 pub(crate) fn save(repo: &Path, on_call: &OnCall) -> io::Result<()> {
     local_dir(repo)?;
     let path = repo.join(CONFIG);
@@ -88,8 +89,11 @@ pub(crate) fn save(repo: &Path, on_call: &OnCall) -> io::Result<()> {
     fs::rename(&tmp, &path)
 }
 
+// Moshi is the Screen's doorbell outside tests only.
+#[cfg_attr(test, allow(dead_code))]
 const URL: &str = "https://api.getmoshi.app/api/webhook";
 /// A push is one small POST; the Shell never waits long on it.
+#[cfg_attr(test, allow(dead_code))]
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The seam to the phone: one push. An error never carries the token.
@@ -99,6 +103,7 @@ pub(crate) trait Doorbell: Send + Sync {
 
 /// The real Doorbell: Moshi's webhook, over ureq. ureq's own User-Agent
 /// stays: Moshi's Cloudflare refuses some defaults (403, error 1010).
+#[cfg_attr(test, allow(dead_code))]
 pub(crate) struct Moshi;
 
 impl Doorbell for Moshi {
