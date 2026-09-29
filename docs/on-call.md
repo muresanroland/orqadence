@@ -28,7 +28,8 @@ time the Shell opens, and stays off while no token is kept.
    - `orqa init` asks "Ring your phone through Moshi when a Question waits?".
      Say yes and paste the token.
    - In the Shell, open `/config`, go to the On call page and type the token.
-   - Set `MOSHI_WEBHOOK_TOKEN` in the environment the Shell runs in.
+   - Set `MOSHI_WEBHOOK_TOKEN` in the environment the Shell runs in (wins over
+     the saved token).
 4. On the On call page of `/config`, pick "Send a test push". The phone should
    ring almost at once.
 
@@ -59,7 +60,6 @@ from anywhere else. Use [Tailscale](https://tailscale.com):
 ## The token and the push
 
 The token is kept in `.orqadence-local/config.json`, readable only by you.
-`MOSHI_WEBHOOK_TOKEN` in the environment wins over the file.
 
 A push says which Ticket waits and on what: its id, the kind of Question and the
 Ticket's title, for example
@@ -69,8 +69,6 @@ in the Shell; the run goes on.
 
 ## Pitfalls
 
-- **Remote Login is off.** Moshi cannot connect. Turn it on in System
-  Settings > General > Sharing.
 - **The clipboard holds a command, not the token.** Copying a command such as
   `orqa init` after the token replaces the token on the clipboard, and you
   paste the command as the token. Copy the token last, just before you paste
