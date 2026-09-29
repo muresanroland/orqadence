@@ -536,6 +536,40 @@ fn a_personal_copy_of_a_pick_is_asked_once_a_run() {
     assert_eq!(asked(&w), 1, "asked again in the same run");
 }
 
+/// Tickets starting together share the Question: one asks, and its answer
+/// is the others' too.
+#[test]
+fn tickets_starting_together_are_asked_once() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    w.picked("test-first", "tdd");
+    write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "yours");
+    let o = Arc::new(o);
+    let _runs = [
+        spawn_ticket(o.clone(), "hx-1"),
+        spawn_ticket(o.clone(), "hx-2"),
+    ];
+    let asker = w.await_event(SHADOWS).ticket.unwrap();
+    answer(&w, &o, &asker, SHADOWS, 1, 0);
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    w.await_line("hx-2 PR #hx-2 opened");
+    assert_eq!(asked(&w), 1, "each Ticket asked");
+}
+
+/// Implement done, nothing left loads its jobs' picks: a Ticket entering
+/// the Pipeline again is not asked about them.
+#[test]
+fn an_implemented_ticket_is_not_asked_about_implements_picks() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.picked("test-first", "tdd");
+    write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "yours");
+    write_file(&o.run_dir("hx-1").join("implement.md"), "STATUS: done\n");
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 0, "a Question was put");
+}
+
 /// codex's home folders are its own: a ~/.codex/skills/<pick> asks on a
 /// codex row, and on a claude row, which never loads it, does not.
 #[test]
@@ -555,7 +589,7 @@ fn a_codex_home_skill_asks_on_a_codex_row_alone() {
     let mut run = spawn_ticket(o.clone(), "hx-2");
     assert_eq!(
         w.await_event(SHADOWS).text,
-        "your ~/.codex/skills/tdd shadows the committed tdd: codex runs yours"
+        "your ~/.codex/skills/tdd shadows the committed tdd: codex may run yours"
     );
     answer(&w, &o, "hx-2", SHADOWS, 1, 1);
     run.wait();

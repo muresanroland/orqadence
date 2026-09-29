@@ -424,11 +424,10 @@ impl Orchestrator {
     /// name (each job's pick, create-pr for the Fix), in a home folder of
     /// the App on the row that loads it (home_skills), shadows it: claude
     /// runs the personal one, codex may. A Question each, before any Stage
-    /// on each entry: gone on with, it stands for the run (kept); parked,
-    /// /continue asks again. A pick not committed (a personal, plugin or
-    /// built-in one, or one not merged) has nothing to shadow.
-    // ponytail: Tickets starting together each ask the same Question; wait
-    // on the first's answer, as the Review limit's asked does, if that shows.
+    /// on each entry, but for Implement's jobs once it is done: gone on
+    /// with, it stands for the run (shadows); parked, /continue asks again.
+    /// A pick not committed (a personal, plugin or built-in one, or one not
+    /// merged) has nothing to shadow.
     fn ask_shadowed(&self, ticket: &str) -> Result<(), StageError> {
         let (repo, home) = (&self.cfg.repo, &self.cfg.home);
         // one that cannot be read Wakes the Stage that loads it
@@ -439,10 +438,15 @@ impl Orchestrator {
             return Ok(());
         }
         let worktree = self.worktree(ticket);
+        let implement = self.run_dir(ticket).join(result_name(&IMPLEMENT, 0));
+        let implemented = read_stage_result(&implement, ResultRequirements::default())
+            .1
+            .is_empty();
         let loaded = JOBS
             .iter()
             .map(|(job, _)| (manifest.pick(job), job_row(job)))
-            .chain([("create-pr", "fix")]);
+            .filter(|(_, key)| !(implemented && *key == IMPLEMENT.name))
+            .chain([("create-pr", FIX.name)]);
         for (name, key) in loaded {
             // a row that cannot be read is its Stage's to refuse
             let Ok(row) = app::row(repo, key) else {
@@ -454,27 +458,63 @@ impl Orchestrator {
             for dir in row.app.home_skills {
                 let yours = format!("~/{dir}/{name}");
                 if !home.join(dir).join(name).join("SKILL.md").exists()
-                    || self.kept.lock().unwrap().contains(&yours)
+                    || !self.claim_shadow(ticket, &yours)?
                 {
                     continue;
                 }
+                let runs = if row.app.name == "claude" {
+                    "runs"
+                } else {
+                    "may run"
+                };
                 let text = format!(
-                    "your {yours} shadows the committed {name}: {} runs yours",
+                    "your {yours} shadows the committed {name}: {} {runs} yours",
                     row.app.name
                 );
                 let options = vec![
                     "go on with yours".to_string(),
                     format!("park: rename yours, then /continue @{ticket}"),
                 ];
-                if self.ask_at_start(ticket, &text, options)? == 1 {
+                let picked = self.ask_at_start(ticket, &text, options);
+                let mut shadows = self.shadows.lock().unwrap();
+                match picked {
+                    Ok(0) => shadows.insert(yours.clone(), true),
+                    _ => shadows.remove(&yours), // another Ticket may ask
+                };
+                drop(shadows);
+                if picked? == 1 {
                     return Err(StageError::Parked(format!(
                         "rename your {yours}, then /continue @{ticket}"
                     )));
                 }
-                self.kept.lock().unwrap().insert(yours.clone());
                 self.report(ticket, &format!("going on with your {yours}"));
             }
         }
         Ok(())
+    }
+
+    /// Whether this Ticket is to ask about the personal skill `yours`: it
+    /// takes the Question when none is out; while another Ticket's is, it
+    /// waits for that answer, which is its own too; gone on with, nothing.
+    /// /park parks it, /stop-work stops it.
+    fn claim_shadow(&self, ticket: &str, yours: &str) -> Result<bool, StageError> {
+        loop {
+            let mut shadows = self.shadows.lock().unwrap();
+            match shadows.get(yours) {
+                Some(true) => return Ok(false),
+                Some(false) => {}
+                None => {
+                    shadows.insert(yours.to_string(), false);
+                    return Ok(true);
+                }
+            }
+            drop(shadows);
+            if self.consume(&format!("park-{ticket}")) {
+                return Err(StageError::Parked("by you at its start".to_string()));
+            }
+            if !self.sleep() {
+                return Err(StageError::Stopped);
+            }
+        }
     }
 }
