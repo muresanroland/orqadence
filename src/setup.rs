@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::orchestrator::app::{self, APPS};
 use crate::orchestrator::state::{self, local_dir};
-use crate::skills::manifest::{self, Installed, Manifest, Place, FILES, JOBS, LINKS};
+use crate::skills::manifest::{self, Installed, Manifest, FILES, JOBS, LINKS};
 use crate::skills::{stage_skill, SKILLS};
 use crate::tools::Tools;
 
@@ -186,7 +186,6 @@ pub(crate) fn install_skills(
     }
     manifest::settle(repo, home, &manifest)?;
     unhide_links(repo)?;
-    let place = Place(repo);
     let mode = if force {
         Mode::Overwrite
     } else if installed(&repo.join(FILES)) {
@@ -226,7 +225,7 @@ pub(crate) fn install_skills(
     for &(skill, name, body) in &skills {
         let rel = record_key(name);
         manifest::move_in(repo, name)?;
-        let dest = place.skill(name).join("SKILL.md");
+        let dest = manifest::skill_dir(repo, name).join("SKILL.md");
         let existing = fs::symlink_metadata(&dest).ok();
         // A link is the repo's own arrangement: never written through.
         if existing
@@ -254,7 +253,7 @@ pub(crate) fn install_skills(
             record.insert(rel, body);
             manifest.skills.insert(name.to_string(), shipped());
         }
-        for link in place.links(name).iter().filter(|link| {
+        for link in manifest::links(repo, name).iter().filter(|link| {
             name == pr
                 && fs::symlink_metadata(link).is_ok_and(|meta| !meta.file_type().is_symlink())
         }) {

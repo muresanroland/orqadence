@@ -129,29 +129,25 @@ pub(crate) fn job_row(job: &str) -> &'static str {
 /// through committed relative folder links from .agents/skills and
 /// .claude/skills. The folder is linked, never its SKILL.md: codex skips a
 /// SKILL.md that is itself a link.
-pub(crate) struct Place<'a>(pub(crate) &'a Path);
-
 pub(crate) const FILES: &str = ".orqadence/skills";
 pub(crate) const LINKS: [&str; 2] = [".agents/skills", ".claude/skills"];
 
-impl Place<'_> {
-    pub(crate) fn skill(&self, name: &str) -> PathBuf {
-        self.0.join(FILES).join(name)
-    }
+pub(crate) fn skill_dir(repo: &Path, name: &str) -> PathBuf {
+    repo.join(FILES).join(name)
+}
 
-    pub(crate) fn links(&self, name: &str) -> [PathBuf; 2] {
-        LINKS.map(|dir| self.0.join(dir).join(name))
-    }
+pub(crate) fn links(repo: &Path, name: &str) -> [PathBuf; 2] {
+    LINKS.map(|dir| repo.join(dir).join(name))
+}
 
-    /// What each link points at: both links' folders are two deep.
-    pub(crate) fn target(name: &str) -> PathBuf {
-        Path::new("../..").join(FILES).join(name)
-    }
+/// What each link points at: both links' folders are two deep.
+pub(crate) fn target(name: &str) -> PathBuf {
+    Path::new("../..").join(FILES).join(name)
+}
 
-    /// The first of its folders Orqadence may not write to (own).
-    fn unowned(&self) -> Option<&'static str> {
-        iter::once(FILES).chain(LINKS).find(|dir| !own(self.0, dir))
-    }
+/// The first of its folders Orqadence may not write to (own).
+fn unowned(repo: &Path) -> Option<&'static str> {
+    iter::once(FILES).chain(LINKS).find(|dir| !own(repo, dir))
 }
 
 /// One skill Orqadence installed, in .orqadence/skills.
@@ -385,13 +381,12 @@ pub(crate) fn add(
         None => {}
     }
     // put and its undo write through all three folders.
-    let place = Place(repo);
-    if let Some(dir) = place.unowned() {
+    if let Some(dir) = unowned(repo) {
         return Err(format!(
             "{dir} is not the checkout's own folder: Orqadence will not install {name} there"
         ));
     }
-    let (at, links) = (place.skill(&name), place.links(&name));
+    let (at, links) = (skill_dir(repo, &name), links(repo, &name));
     if let Some(there) = iter::once(&at)
         .chain(&links)
         .find(|path| fs::symlink_metadata(path).is_ok())
@@ -437,7 +432,7 @@ pub(crate) fn update(repo: &Path, tools: &dyn Tools, name: &str) -> Result<(), S
     // The new copy goes beside the old one first, and the old one is only
     // moved aside until the new one is in place, so that a copy or a rename
     // that fails leaves the installed skill whole.
-    let at = Place(repo).skill(name);
+    let at = skill_dir(repo, name);
     let fresh = at.with_file_name(format!(".{name}.new"));
     let old = at.with_file_name(format!(".{name}.old"));
     // A staging folder an earlier update left that cannot be cleared would
@@ -490,20 +485,18 @@ pub(crate) fn update_all(repo: &Path, tools: &dyn Tools) -> Result<Vec<(String, 
 pub(crate) fn remove(repo: &Path, name: &str) -> Result<(), String> {
     let mut manifest = Manifest::load(repo)?;
     third_party(repo, &manifest, name)?;
-    let place = Place(repo);
     // Only the links put makes are removed, not one the user put there
     // instead, and a failed save puts them back.
-    let links: Vec<PathBuf> = place
-        .links(name)
+    let links: Vec<PathBuf> = links(repo, name)
         .into_iter()
         .filter(|link| fs::read_link(link).is_ok())
         .collect();
-    if let (false, Some(dir)) = (links.is_empty(), place.unowned()) {
+    if let (false, Some(dir)) = (links.is_empty(), unowned(repo)) {
         return Err(format!(
             "{dir} is not the checkout's own folder: Orqadence will not touch {name}"
         ));
     }
-    let target = Place::target(name);
+    let target = target(name);
     let links: Vec<PathBuf> = links
         .into_iter()
         .filter(|link| fs::read_link(link).is_ok_and(|to| to == target))
@@ -519,7 +512,7 @@ pub(crate) fn remove(repo: &Path, name: &str) -> Result<(), String> {
     manifest.skills.remove(name);
     // The folder is moved aside until the manifest is saved without it, and
     // back should the save fail.
-    let at = place.skill(name);
+    let at = skill_dir(repo, name);
     let old = at.with_file_name(format!(".{name}.old"));
     let _ = fs::remove_dir_all(&old);
     let removed = if at.exists() {
@@ -672,7 +665,7 @@ fn safe_name(name: &str) -> bool {
 
 /// Copies the skill's folder into .orqadence/skills and links it there.
 fn put(repo: &Path, from: &Path, name: &str) -> io::Result<()> {
-    copy_dir(from, &Place(repo).skill(name), false)?;
+    copy_dir(from, &skill_dir(repo, name), false)?;
     link(repo, name)
 }
 
@@ -682,10 +675,10 @@ fn put(repo: &Path, from: &Path, name: &str) -> io::Result<()> {
 /// the checkout's own (own) gets none: it could be ~/.claude, where the link
 /// would dangle.
 pub(crate) fn link(repo: &Path, name: &str) -> io::Result<()> {
-    for (dir, link) in LINKS.iter().zip(Place(repo).links(name)) {
+    for (dir, link) in LINKS.iter().zip(links(repo, name)) {
         if own(repo, dir) && fs::symlink_metadata(&link).is_err() {
             fs::create_dir_all(link.parent().unwrap())?;
-            symlink(Place::target(name), link)?;
+            symlink(target(name), link)?;
         }
     }
     Ok(())
@@ -708,9 +701,8 @@ pub(crate) fn settle(repo: &Path, home: &Path, manifest: &Manifest) -> io::Resul
             "no HOME, so the skills at user level cannot be copied into .orqadence/skills",
         ));
     }
-    let place = Place(repo);
     for name in manifest.skills.keys().filter(|name| safe_name(name)) {
-        let at = place.skill(name);
+        let at = skill_dir(repo, name);
         if fs::symlink_metadata(&at).is_err() {
             let mine = home.join(".agents/skills").join(name);
             match user {
@@ -734,7 +726,7 @@ pub(crate) fn settle(repo: &Path, home: &Path, manifest: &Manifest) -> io::Resul
 pub(crate) fn move_in(repo: &Path, name: &str) -> io::Result<()> {
     let (old, at) = (
         repo.join(".agents/skills").join(name),
-        Place(repo).skill(name),
+        skill_dir(repo, name),
     );
     if fs::symlink_metadata(&at).is_ok()
         || !own(repo, ".agents/skills")
