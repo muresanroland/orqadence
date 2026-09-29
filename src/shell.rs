@@ -1843,13 +1843,20 @@ impl Screen {
         })
     }
 
-    /// An open Ticket of the Ticket run that waits on `ticket`, itself open:
-    /// removed, its merge would go unpolled and that one never start.
+    /// An open Ticket of the Ticket run that waits on `ticket`, itself open,
+    /// or whose Epic does: removed, its merge would go unpolled and that one
+    /// never start.
     fn waits_on(&self, ticket: &str) -> Option<String> {
         let open = |id: &str| find(&self.epics, id).filter(|t| t.status != "closed");
         open(ticket)?;
+        let epic_waits = |t: &BdIssue| {
+            let epic = self.epics.iter().find(|e| e.id == t.parent);
+            epic.is_some_and(|e| e.blockers.iter().any(|b| b == ticket))
+        };
         let mut queue = self.state.queue.iter();
-        let waits = |t: &&String| open(t).is_some_and(|t| t.blockers().any(|b| b == ticket));
+        let waits = |t: &&String| {
+            open(t).is_some_and(|t| t.blockers().any(|b| b == ticket) || epic_waits(t))
+        };
         queue.find(waits).cloned()
     }
 

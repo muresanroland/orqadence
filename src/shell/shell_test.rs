@@ -2505,8 +2505,9 @@ fn start_ticket_refuses_one_waiting_on_a_ticket_outside_the_run() {
 
 /// bd hides a blocked Epic's children from bd ready: a run on it would idle
 /// until what blocks the Epic closes. Refused, for a Ticket of it too; a
-/// closed blocker, or one in the live run, refuses nothing. A Ticket that
-/// waits on an open Epic itself is refused too.
+/// closed blocker, or one in the live run, refuses nothing, and that one
+/// stays in the run. A Ticket that waits on an open Epic itself is refused
+/// too.
 #[test]
 fn start_epic_and_start_ticket_refuse_an_epic_waiting_on_an_open_one() {
     let loose = BdTicket {
@@ -2561,6 +2562,8 @@ fn start_epic_and_start_ticket_refuse_an_epic_waiting_on_an_open_one() {
     s.command("/start-ticket lx");
     s.command("/start-ticket hx-1");
     assert_eq!(s.state.queue, ["lx", "hx-1"]);
+    s.command("/remove-ticket lx");
+    assert_eq!(notice(&s), "refused: hx-1 waits on lx, remove hx-1 first");
     w.lock().merged = true;
     await_line(&mut s, "Ticket run done, every Ticket closed");
     await_end(&mut s);
