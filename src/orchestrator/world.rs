@@ -18,7 +18,9 @@ use super::herdr::PaneInfo;
 use super::stage::{Config, Event, Orchestrator};
 use super::state::load_state;
 use super::trust_test::trust_home;
+use super::write_file;
 use crate::setup::install_skills;
+use crate::skills::manifest::{copy_dir, Installed, Manifest, FILES};
 use crate::tempdir::TempDir;
 use crate::tools::{RunError, Tools};
 
@@ -200,6 +202,9 @@ pub(crate) struct Inner {
     /// Pane -> the Stage prompt its session took, which it implements once
     /// its plan is approved.
     prompts: BTreeMap<String, Prompt>,
+    /// Skills in the checkout's .orqadence/skills a worktree lacks: added
+    /// in /config and not yet merged to the base.
+    unmerged: Vec<String>,
 }
 
 /// The plan dialog's options as research/plan-mode saw them.
@@ -322,7 +327,7 @@ impl World {
             .collect()
     }
 
-    fn handle(&self, argv: &[&str]) -> Result<String, String> {
+    fn handle(&self, dir: &Path, argv: &[&str]) -> Result<String, String> {
         let mut w = self.lock();
         let cmd = argv.join(" ");
         if let Some(prefix) = w
@@ -467,7 +472,14 @@ impl World {
             w.live += 1;
             w.peak = w.peak.max(w.live);
             return fs::create_dir_all(argv[3])
-                .map(|_| String::new())
+                .and_then(|()| self.check_out(&w, Path::new(argv[3])))
+                .map(|()| String::new())
+                .map_err(|e| e.to_string());
+        }
+        if cmd.starts_with("git pull") {
+            return self
+                .check_out(&w, dir)
+                .map(|()| String::new())
                 .map_err(|e| e.to_string());
         }
         if cmd.starts_with("bd worktree remove") {
@@ -640,6 +652,57 @@ impl World {
         );
     }
 
+    /// Brings `dir`'s .orqadence/skills up to the base, as a checkout of it:
+    /// each of the checkout's skills it lacks, but those not yet merged.
+    /// What it has already stays.
+    fn check_out(&self, w: &Inner, dir: &Path) -> std::io::Result<()> {
+        let from = self.repo.join(FILES);
+        for entry in fs::read_dir(&from)? {
+            let name = entry?.file_name();
+            let to = dir.join(FILES).join(&name);
+            if !w.unmerged.iter().any(|u| name == *u.as_str()) && !to.exists() {
+                copy_dir(&from.join(&name), &to, true)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A skill Orqadence fetched, `job`'s pick: in the checkout's
+    /// .orqadence/skills and its Skill manifest, merged on the base.
+    pub(crate) fn picked(&self, job: &str, name: &str) {
+        let mut manifest = Manifest::load(&self.repo).unwrap();
+        let skill = Installed {
+            repo: format!("https://github.com/o/{name}"),
+            ..Default::default()
+        };
+        manifest.skills.insert(name.to_string(), skill);
+        manifest.picks.insert(job.to_string(), name.to_string());
+        manifest.save(&self.repo).unwrap();
+        let skill = self.repo.join(FILES).join(name).join("SKILL.md");
+        write_file(&skill, &format!("---\nname: {name}\n---\n"));
+    }
+
+    /// `job`'s pick added in /config and not yet merged: in the checkout, as
+    /// picked, and missing from a Ticket's worktree, a checkout of the base,
+    /// until merged.
+    pub(crate) fn unmerged(&self, job: &str, name: &str) {
+        self.picked(job, name);
+        self.lock().unmerged.push(name.to_string());
+    }
+
+    /// Merges every skill added in /config: a pull brings it in.
+    pub(crate) fn merge(&self) {
+        self.lock().unmerged.clear();
+    }
+
+    /// The prompt the Stage writing `file` was sent.
+    pub(crate) fn prompt(&self, file: &str) -> String {
+        self.called("herdr agent prompt")
+            .into_iter()
+            .find(|call| call.contains(file))
+            .unwrap()
+    }
+
     /// Makes the next command starting with prefix fail.
     pub(crate) fn fail_once(&self, prefix: &str, err: &str) {
         self.lock()
@@ -725,7 +788,7 @@ impl Tools for World {
         let hook = self.hook.lock().unwrap().clone();
         let answer = hook
             .and_then(|hook| hook(dir, argv))
-            .unwrap_or_else(|| self.handle(argv));
+            .unwrap_or_else(|| self.handle(dir, argv));
         answer.map_err(|stderr| RunError {
             command,
             status: "exit status 1".to_string(),

@@ -469,10 +469,12 @@ fn a_blocked_session_is_parked_by_you_or_carries_on() {
 #[test]
 fn an_unreadable_stage_skill_wakes_naming_it() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    let skill = w.repo.join(".orqadence/skills/stage-implement/SKILL.md");
-    std::fs::remove_file(&skill).unwrap();
-    std::fs::create_dir_all(&skill).unwrap(); // a directory cannot be read
+    let skill = ".orqadence/skills/stage-implement/SKILL.md";
+    std::fs::remove_file(w.repo.join(skill)).unwrap();
+    std::fs::create_dir_all(w.repo.join(skill)).unwrap(); // a directory cannot be read
     w.session(succeed);
+    // the worktree's copy, which the Stage reads
+    let skill = o.worktree("hx-1").join(skill);
     let o = Arc::new(o);
     let mut run = spawn_ticket(o.clone(), "hx-1");
 

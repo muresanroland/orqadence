@@ -1658,6 +1658,44 @@ fn the_reviews_limit_question_offers_the_fallback_and_its_answer_stands() {
     await_end(&mut s);
 }
 
+/// A pick not merged on the base asks when its Ticket starts: its two
+/// options above the input line, the one picked going to the Ticket, which
+/// has no pane. Run without it starts Implement with the job's line out.
+#[test]
+fn a_ticket_start_question_is_answered_from_the_shell() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
+    w.unmerged("test-first", "tdd");
+    let mut s = shell(&w);
+    s.command("/start-ticket hx-1");
+    await_line(
+        &mut s,
+        "hx-1 asking you: tdd, picked for test-first, is not on this Ticket's base branch",
+    );
+    assert!(!s.modal(), "a Ticket-start Question docked");
+    assert_eq!(
+        s.options(),
+        [
+            "park: commit and merge tdd, then /continue @hx-1",
+            "run without it: the test-first line is left out"
+        ]
+    );
+
+    pick(&mut s, 2);
+    assert!(s.questions.is_empty(), "the answered Question stayed");
+    await_line(
+        &mut s,
+        "hx-1 you answered: run without it: the test-first line is left out",
+    );
+    await_line(
+        &mut s,
+        "hx-1 running without tdd: the test-first line is left out",
+    );
+    await_line(&mut s, "hx-1 implement started");
+    await_line(&mut s, "hx-1 PR #hx-1 opened");
+    s.command("/stop-work");
+    await_end(&mut s);
+}
+
 /// MERGE TO UNBLOCK: a red box between RECENT (or the Question in its place)
 /// and the input, a line per open PR a waiting Ticket depends on with every
 /// Ticket waiting on it; no box when nothing waits.

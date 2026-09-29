@@ -8,6 +8,7 @@ use super::stage::{Answer, Ask, ADDRESS, AWAY};
 use super::state::STATUS_PARKED;
 use super::world::{new_world, spawn_ticket, succeed, BdTicket};
 use super::write_file;
+use crate::tools::Tools;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -271,6 +272,10 @@ fn away_parks_a_question_with_a_bd_comment_and_the_pane_open() {
 fn away_leaves_an_address_question_waiting_for_you() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
     o.cfg.away.store(true, Ordering::SeqCst);
+    // the worktree its Pipeline made and kept
+    let worktree = o.worktree("hx-1").display().to_string();
+    w.run(&w.repo, &["bd", "worktree", "create", &worktree])
+        .unwrap();
     w.session(|p| match p.text.as_str() {
         "ours" => (String::new(), "working".to_string()),
         _ => (ASKS.to_string(), "idle".to_string()),

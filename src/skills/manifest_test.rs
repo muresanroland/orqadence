@@ -1,6 +1,6 @@
 use super::manifest::{
-    add, link, link_checkout_skills, list, parse_source, placeholder, remove, update, update_all,
-    Added, Installed, Manifest, Source, JOBS, NONE,
+    add, link, list, parse_source, placeholder, remove, update, update_all, Added, Installed,
+    Manifest, Source, JOBS, NONE,
 };
 use crate::orchestrator::write_file;
 use crate::tempdir::TempDir;
@@ -664,39 +664,6 @@ fn a_skill_is_not_linked_through_a_linked_links_folder() {
         fs::read_to_string(repo.path().join(".agents/skills/tdd/SKILL.md")).unwrap(),
         TDD
     );
-}
-
-#[test]
-fn checkout_skills_are_not_linked_through_a_linked_skills_folder() {
-    let repo = TempDir::new();
-    add(
-        repo.path(),
-        &*git(&remote("abc123", TWO_SKILLS)),
-        "mattpocock/skills",
-        Some("tdd"),
-    )
-    .unwrap();
-    let outside = TempDir::new();
-    let worktree = repo.path().join(".orqadence-local/worktrees/t-1");
-    let run = repo.path().join(".orqadence-local/runs/t-1");
-    fs::create_dir_all(worktree.join(".claude")).unwrap();
-    fs::create_dir_all(run.join(".agents")).unwrap();
-    // The repo's own setup, and a folder shared with another checkout.
-    std::os::unix::fs::symlink("../.agents/skills", worktree.join(".claude/skills")).unwrap();
-    std::os::unix::fs::symlink(outside.path(), run.join(".agents/skills")).unwrap();
-    link_checkout_skills(repo.path(), &[&worktree, &run]).unwrap();
-    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
-    for skill in [
-        worktree.join(".claude/skills/tdd/SKILL.md"),
-        worktree.join(".agents/skills/tdd/SKILL.md"),
-        run.join(".claude/skills/tdd/SKILL.md"),
-    ] {
-        assert_eq!(
-            fs::read_to_string(&skill).ok().as_deref(),
-            Some(TDD),
-            "{skill:?}"
-        );
-    }
 }
 
 /// Each job's Delegate skill is its own {{job}} line in its Stage skill, and

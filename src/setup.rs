@@ -310,12 +310,10 @@ fn installed(dir: &Path) -> bool {
         .any(|&(name, _)| name != "create-pr" && dir.join(name).join("SKILL.md").exists())
 }
 
-/// Takes out the lines link_checkout_skills put in .git/info/exclude to
-/// hide each skill's links in a Ticket's worktree: the committed links in
-/// the checkout would be hidden too. Only those, for the skills in
+/// Takes out the lines an older orqa put in .git/info/exclude to hide each
+/// skill's links in a Ticket's worktree: the committed links in the
+/// checkout would be hidden too. Only those, for the skills in
 /// .orqadence/skills, as it wrote them; the rest stay.
-// ponytail: link_checkout_skills adds them back at a Ticket's start until
-// harness-7ji.4 removes it; commit the links before starting one.
 fn unhide_links(repo: &Path) -> io::Result<()> {
     let hidden: Vec<String> = fs::read_dir(repo.join(FILES))
         .into_iter()
@@ -795,31 +793,6 @@ fn done(out: &mut dyn Write, options: &[&str], sel: usize) -> io::Result<usize> 
     write!(out, "\x1b[K\r\ninit: {}\r\n", options[sel])?;
     out.flush()?;
     Ok(sel)
-}
-
-/// Appends each line the file lacks, making the file and its folder if need be.
-pub(crate) fn add_lines(path: &Path, lines: &[String]) -> io::Result<()> {
-    let mut existing = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(err) => return Err(err),
-    };
-    let missing: Vec<&String> = lines
-        .iter()
-        .filter(|want| !existing.lines().any(|line| line.trim() == want.as_str()))
-        .collect();
-    if missing.is_empty() {
-        return Ok(());
-    }
-    if !existing.is_empty() && !existing.ends_with('\n') {
-        existing.push('\n');
-    }
-    for line in missing {
-        existing.push_str(line);
-        existing.push('\n');
-    }
-    fs::create_dir_all(path.parent().unwrap())?;
-    fs::write(path, existing)
 }
 
 /// Takes out of the file at path each line that is one of lines, trimmed,

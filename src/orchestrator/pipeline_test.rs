@@ -1,7 +1,9 @@
 use super::herdr::PaneInfo;
-use super::state::STATUS_PR_OPEN;
+use super::stage::{Answer, Ask, Orchestrator};
+use super::state::{STATUS_PARKED, STATUS_PR_OPEN};
 use super::world::{new_world, spawn_ticket, succeed, BdTicket, Prompt, World};
 use super::write_file;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 pub(crate) fn stages_run(w: &World) -> Vec<String> {
@@ -218,57 +220,285 @@ fn open_pr_prunes_build_scratch_and_keeps_evidence() {
     }
 }
 
+/// A Ticket runs the Stage skill committed on its base, as its worktree
+/// checks it out, not the checkout's.
 #[test]
-fn a_prepared_worktree_links_the_checkouts_skills_and_hides_the_links() {
+fn implement_runs_the_stage_skill_of_its_worktree() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    // The Review runs in the Run directory, pruned once the PR is open: look
-    // while it runs.
-    let review = o.run_dir("hx-1").join(".agents/skills/stage-review");
-    let seen = Arc::new(Mutex::new(false));
-    let saw = seen.clone();
-    w.session(move |p| {
-        *saw.lock().unwrap() |= review.join("SKILL.md").exists();
-        succeed(p)
+    // the base's stage-implement, once the worktree checks it out
+    w.hook(|dir, argv| {
+        if argv.starts_with(&["git", "pull"]) {
+            let skill = dir.join(".orqadence/skills/stage-implement/SKILL.md");
+            write_file(&skill, "The base's Implement: do the Ticket.\n");
+        }
+        None
     });
-
     o.run_ticket("hx-1");
 
-    assert!(*seen.lock().unwrap(), "the Run directory got no links");
+    let implement = w.prompt("implement.md");
+    assert!(
+        implement.contains("The base's Implement: do the Ticket."),
+        "{implement}"
+    );
+    assert!(!implement.contains("# Implement Stage"), "{implement}");
+}
 
-    // The fake world's init put the skills in the checkout.
-    let skill = w.repo.join(".orqadence/skills/stage-implement");
-    for sub in [".claude/skills", ".agents/skills"] {
-        let link = o.worktree("hx-1").join(sub).join("stage-implement");
-        assert_eq!(
-            std::fs::read_link(&link).ok(),
-            Some(skill.clone()),
-            "{link:?}"
+/// The absolute links an Orqadence from before ADR 0006 made in a worktree
+/// to the checkout's skills go; the worktree's own relative ones stay.
+#[test]
+fn a_worktree_loses_the_links_to_the_checkouts_skills() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    let checkout = w.repo.join(".orqadence/skills/stage-implement");
+    w.hook(move |dir, argv| {
+        if argv.starts_with(&["git", "pull"]) {
+            std::fs::create_dir_all(dir.join(".claude/skills")).unwrap();
+            std::fs::create_dir_all(dir.join(".agents/skills")).unwrap();
+            let old = dir.join(".claude/skills/stage-implement");
+            let _ = std::fs::remove_file(&old);
+            std::os::unix::fs::symlink(&checkout, old).unwrap();
+            let own = dir.join(".agents/skills/own");
+            std::os::unix::fs::symlink("../../.orqadence/skills/own", own).unwrap();
+        }
+        None
+    });
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    let tree = o.worktree("hx-1");
+    let old = tree.join(".claude/skills/stage-implement");
+    assert!(
+        std::fs::read_link(&old).map_or(true, |to| !to.is_absolute()),
+        "{old:?} still links the checkout"
+    );
+    assert!(std::fs::symlink_metadata(tree.join(".agents/skills/own")).is_ok());
+}
+
+/// An old link that cannot be removed parks the Ticket before any Stage:
+/// left, the Stage would run the checkout's skill.
+#[test]
+fn an_old_link_not_removed_parks_the_ticket() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |dir: &std::path::Path, mode| {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap()
+    };
+    // The links folder not writable, then not readable.
+    for locked in [0o555, 0o333] {
+        let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+        let checkout = w.repo.join(".orqadence/skills/stage-implement");
+        w.hook(move |dir, argv| {
+            if argv.starts_with(&["git", "pull"]) {
+                let links = dir.join(".claude/skills");
+                std::fs::create_dir_all(&links).unwrap();
+                std::os::unix::fs::symlink(&checkout, links.join("stage-implement")).unwrap();
+                mode(&links, locked);
+            }
+            None
+        });
+        o.run_ticket("hx-1");
+        mode(&o.worktree("hx-1").join(".claude/skills"), 0o755);
+
+        let ts = o.ticket("hx-1");
+        assert_eq!(ts.status, STATUS_PARKED, "{locked:o}");
+        assert!(
+            ts.reason.starts_with("old link"),
+            "{locked:o}: {}",
+            ts.reason
         );
-    }
-    let exclude = std::fs::read_to_string(w.repo.join(".git/info/exclude")).unwrap_or_default();
-    for line in [
-        "/.claude/skills/stage-implement",
-        "/.agents/skills/stage-implement",
-    ] {
-        assert!(exclude.lines().any(|l| l == line), "{line}:\n{exclude}");
+        assert!(
+            w.called("herdr agent start").is_empty(),
+            "{locked:o}: a Stage started"
+        );
     }
 }
 
-#[test]
-fn a_resumed_tickets_worktree_is_linked_too() {
-    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    // Made before init put the skills in the checkout, say.
-    std::fs::create_dir_all(o.worktree("hx-1")).unwrap();
-    w.session(succeed);
+/// What the Ticket-start Question says of tdd, test-first's pick.
+const UNMERGED: &str = "tdd, picked for test-first, is not on this Ticket's base branch: \
+                        added in /config and not yet merged";
 
+/// Implement's Not installed input, "" when it has none.
+fn not_installed(w: &World) -> String {
+    let implement = w.prompt("implement.md");
+    let line = implement
+        .lines()
+        .find(|l| l.starts_with("- Not installed: "));
+    line.unwrap_or_default().to_string()
+}
+
+/// How many Events put a Question.
+fn asked(w: &World) -> usize {
+    w.events().iter().filter(|e| e.ask.is_some()).count()
+}
+
+/// Answers the Ticket-start Question about tdd with option `n`, from 0.
+fn answer_tdd(w: &World, o: &Orchestrator, nth: usize, n: usize) {
+    let asked = w.await_nth("picked for test-first", nth);
+    let Some(Ask::TicketStart { options }) = asked.ask else {
+        panic!("no Ticket-start Question: {:?}", asked.ask);
+    };
+    o.answer("hx-1", "", Answer::Prompt(options[n].clone()));
+}
+
+/// A pick the checkout's Skill manifest records but the base lacks was
+/// added in /config and not yet merged: a Question before any Stage. Run
+/// without it leaves the job's line out, said under Not installed.
+#[test]
+fn a_pick_not_merged_on_the_base_is_a_question_when_the_ticket_starts() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.unmerged("test-first", "tdd");
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+
+    assert_eq!(w.await_event("picked for test-first").text, UNMERGED);
+    assert!(w.called("herdr agent start").is_empty(), "a Stage started");
+    answer_tdd(&w, &o, 1, 1);
+    run.wait();
+
+    w.await_line("hx-1 running without tdd: the test-first line is left out");
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert!(
+        not_installed(&w).contains("tdd (test-first)"),
+        "{}",
+        not_installed(&w)
+    );
+}
+
+/// Run without it leaves the line out even when a personal skill has the
+/// pick's name: the pick is the manifest's, which the base lacks.
+#[test]
+fn run_without_a_pick_not_merged_leaves_out_a_personal_skill_of_its_name() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.unmerged("test-first", "tdd");
+    for dir in [".claude/skills", ".agents/skills"] {
+        write_file(
+            &w.home.join(dir).join("tdd/SKILL.md"),
+            "---\nname: tdd\n---\n",
+        );
+    }
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    answer_tdd(&w, &o, 1, 1);
+    run.wait();
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert!(!w.prompt("implement.md").contains("Use the tdd skill"));
+    assert!(not_installed(&w).contains("tdd (test-first)"));
+}
+
+/// Park parks the Ticket with the reason, and /continue asks again until
+/// the skill is merged: then the branch, still the base's, is brought up
+/// to it, and the job's line names it.
+#[test]
+fn parked_for_a_pick_not_merged_a_ticket_asks_again_until_it_is() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.unmerged("test-first", "tdd");
+    let o = Arc::new(o);
+    let reason = "tdd not merged: commit and merge it, then /continue @hx-1";
+    let mut runs = Vec::new(); // kept to the end: dropping one stops the run
+    for nth in 1..=2 {
+        runs.push(spawn_ticket(o.clone(), "hx-1")); // /continue @hx-1, the second time
+        answer_tdd(&w, &o, nth, 0);
+        runs.last_mut().unwrap().wait();
+        let ts = o.ticket("hx-1");
+        assert_eq!(
+            (ts.status.as_str(), ts.reason.as_str()),
+            (STATUS_PARKED, reason)
+        );
+    }
+    w.await_line(&format!("hx-1 parked: {reason}"));
+    assert!(w.called("herdr agent start").is_empty(), "a Stage started");
+
+    w.merge();
+    runs.push(spawn_ticket(o.clone(), "hx-1"));
+    runs.last_mut().unwrap().wait();
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 2, "asked again once merged");
+    assert!(w.prompt("implement.md").contains("Use the tdd skill"));
+}
+
+/// Away, the Ticket-start Question parks the Ticket with a bd comment, as a
+/// Stage's own question does: nothing is asked and no Stage starts, until
+/// /continue asks it.
+#[test]
+fn away_a_pick_not_merged_parks_the_ticket_without_asking() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.unmerged("test-first", "tdd");
+    o.cfg.away.store(true, Ordering::SeqCst);
     o.run_ticket("hx-1");
 
-    let link = o.worktree("hx-1").join(".claude/skills/stage-implement");
-    assert_eq!(
-        std::fs::read_link(&link).ok(),
-        Some(w.repo.join(".orqadence/skills/stage-implement")),
-        "{link:?}"
+    w.await_line("hx-1 parked: asked you while away");
+    assert_eq!(o.ticket("hx-1").status, STATUS_PARKED);
+    let comments = w.called("bd comments add hx-1 ");
+    assert!(
+        comments.len() == 1
+            && comments[0].contains("/continue @hx-1")
+            && comments[0].contains(UNMERGED)
+            && comments[0].contains("- run without it: the test-first line is left out"),
+        "bd comments = {comments:?}"
     );
+    assert_eq!(asked(&w), 0, "Away still asked");
+    assert!(w.called("herdr agent start").is_empty(), "a Stage started");
+
+    o.cfg.away.store(false, Ordering::SeqCst);
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    answer_tdd(&w, &o, 1, 1);
+    run.wait();
+    w.await_line("hx-1 PR #hx-1 opened");
+}
+
+/// A pick merged on the base is in the worktree: nothing is asked, and its
+/// line names it.
+#[test]
+fn a_pick_merged_on_the_base_asks_nothing() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.picked("test-first", "tdd");
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 0, "a Question was put");
+    assert!(w.prompt("implement.md").contains("Use the tdd skill"));
+    assert!(!not_installed(&w).contains("tdd"), "{}", not_installed(&w));
+}
+
+/// Once a Stage has run, the branch holds the Ticket's work and is no
+/// longer the base's: a continued Ticket is not asked, and a pick missing
+/// there is not installed, as any.
+#[test]
+fn a_ticket_past_its_start_is_not_asked() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.unmerged("test-first", "tdd");
+    o.update("hx-1", |ts| ts.stage = "implement".to_string());
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 0, "a Question was put");
+    assert!(not_installed(&w).contains("tdd (test-first)"));
+}
+
+/// Parked for a pick not merged, a Ticket whose pull then fails parks with
+/// the pull's error: it neither asks again nor starts a Stage on a stale base.
+#[test]
+fn a_failed_pull_on_continue_parks_the_ticket() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.unmerged("test-first", "tdd");
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    answer_tdd(&w, &o, 1, 0);
+    run.wait();
+
+    w.merge();
+    w.fail_once("git pull", "network down");
+    o.run_ticket("hx-1");
+
+    let ts = o.ticket("hx-1");
+    assert_eq!(ts.status, STATUS_PARKED);
+    assert!(
+        ts.reason.starts_with("branch not brought up") && ts.reason.ends_with("network down"),
+        "{}",
+        ts.reason
+    );
+    assert_eq!(asked(&w), 1, "asked again on a stale base");
+    assert!(w.called("herdr agent start").is_empty(), "a Stage started");
 }
 
 /// A Review or a Debate that leaves the worktree dirty, or commits, is put

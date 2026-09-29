@@ -129,6 +129,10 @@ pub(crate) enum Ask {
         question: String,
         options: Vec<String>,
     },
+    /// A Question at the Ticket's start, before any Stage (ask_at_start):
+    /// its text is the line's, and the option picked is answered word for
+    /// word, for no pane ("").
+    TicketStart { options: Vec<String> },
 }
 
 /// The user's answer to a Question, for the session (pane) it was about.
@@ -164,7 +168,8 @@ pub(crate) struct Event {
     /// with an ask it is a Question with no line of its own.
     pub(crate) panel: bool,
     /// The line asks the user something: a Wake, a blocked session, a plan,
-    /// a plan failure or a Stage's own question.
+    /// a plan failure, the Review's limit, a Stage's own question or one at
+    /// a Ticket's start.
     pub(crate) ask: Option<Ask>,
 }
 
@@ -797,19 +802,34 @@ impl Orchestrator {
         };
         // Implement plans in claude's plan mode, elsewhere in two steps.
         let written = st.name == IMPLEMENT.name && row.app.name != "claude";
-        let (repo, home) = (&self.cfg.repo, &self.cfg.home);
-        let skill = match stage_skill(repo, st.skill) {
+        // The skills committed on the Ticket's base, as its worktree has
+        // them (ADR 0006); the picks, as the rows, are the checkout's.
+        let (worktree, home) = (self.worktree(ticket), &self.cfg.home);
+        let skill = match stage_skill(&worktree, st.skill) {
             Some(Ok(skill)) => skill,
             Some(Err(err)) => return Held::Woke(err),
-            None => return Held::Woke("has no Stage skill (run 'orqa init')".to_string()),
+            None => {
+                return Held::Woke(
+                    "has no Stage skill on its base branch: commit and merge .orqadence/skills (orqa init writes them)"
+                        .to_string(),
+                )
+            }
         };
-        let manifest = match Manifest::load(repo) {
+        let manifest = match Manifest::load(&self.cfg.repo) {
             Ok(manifest) => manifest,
             Err(err) => return Held::Woke(err),
         };
-        let have: Vec<String> = manifest::list(repo, home, &*self.cfg.tools)
+        // Known limit, short of ADR 0006: the Review's pane starts in the
+        // Run directory, under .orqadence-local/ inside the checkout, so
+        // claude and codex find its Delegate skill by walking up to the
+        // checkout's .claude/skills or .agents/skills: the checkout's copy,
+        // not the base's. Its Stage skill body is the worktree's all the same.
+        // A pick not merged is not had, though a personal skill has its name:
+        // run without it, its line is left out (ask_unmerged_picks).
+        let have: Vec<String> = manifest::list(&worktree, home, &*self.cfg.tools)
             .into_iter()
             .filter(|(name, path)| path.parent().is_some_and(|dir| runs.loads(name, dir)))
+            .filter(|(name, _)| !manifest.unmerged(&worktree, name))
             .map(|(name, _)| name)
             .collect();
         let (skill, lacking) = manifest.fill_jobs(&skill, &have, runs.built_in, runs.mention);
@@ -1210,19 +1230,12 @@ impl Orchestrator {
             }
             let (question, options) = asked.unwrap();
             if self.cfg.away.load(Ordering::SeqCst) && st.name != ADDRESS.name {
-                let comment = format!(
+                let lead = format!(
                     "{label} asked a question while you were away and needs a manual resume: \
                      /continue @{ticket} in the Orqadence Shell puts it to you, its session \
-                     still waiting in its pane.\n\n{question}\n{}",
-                    options
-                        .iter()
-                        .map(|o| format!("- {o}\n"))
-                        .collect::<String>()
+                     still waiting in its pane."
                 );
-                let argv = ["bd", "comments", "add", ticket, comment.trim_end()];
-                if let Err(err) = self.cfg.tools.run(&self.cfg.repo, &argv) {
-                    self.log(ticket, &format!("no bd comment: {err}"));
-                }
+                self.comment_away(ticket, &lead, &question, &options);
                 return Some(Held::Away);
             }
             if !raised {
@@ -1268,6 +1281,63 @@ impl Orchestrator {
             }
             if !self.sleep() {
                 return Some(Held::Stopped);
+            }
+        }
+    }
+
+    /// A bd comment on the Ticket for a Question that came while the user
+    /// was Away: `lead`, then the question and its options.
+    fn comment_away(&self, ticket: &str, lead: &str, question: &str, options: &[String]) {
+        let options: String = options.iter().map(|o| format!("- {o}\n")).collect();
+        let comment = format!("{lead}\n\n{question}\n{options}");
+        let argv = ["bd", "comments", "add", ticket, comment.trim_end()];
+        if let Err(err) = self.cfg.tools.run(&self.cfg.repo, &argv) {
+            self.log(ticket, &format!("no bd comment: {err}"));
+        }
+    }
+
+    /// A Question at the Ticket's start, before any Stage: no pane and no
+    /// session, so its answer is for pane "". Away, the Ticket parks with a
+    /// bd comment, as for a Stage's own question, and /continue @ticket
+    /// asks again; turning Away on while it waits does the same. The place
+    /// in `options` of the one picked; /park parks.
+    pub(super) fn ask_at_start(
+        &self,
+        ticket: &str,
+        text: &str,
+        options: Vec<String>,
+    ) -> Result<usize, StageError> {
+        let mut raised = false;
+        loop {
+            if self.cfg.away.load(Ordering::SeqCst) {
+                let lead = format!(
+                    "{ticket} asked a question at its start while you were away and needs a \
+                     manual resume: /continue @{ticket} in the Orqadence Shell asks it again."
+                );
+                self.comment_away(ticket, &lead, text, &options);
+                return Err(StageError::Parked(AWAY.to_string()));
+            }
+            if !raised {
+                self.take_answer(ticket, None); // an answer sent before it is not for it
+                let ask = Ask::TicketStart {
+                    options: options.clone(),
+                };
+                self.ask_only(ticket, text, ask);
+                raised = true;
+            }
+            match self.take_answer(ticket, Some("")) {
+                Some(Answer::Prompt(picked)) => match options.iter().position(|o| *o == picked) {
+                    Some(i) => return Ok(i),
+                    None => self.dropped(ticket, &Answer::Prompt(picked)),
+                },
+                Some(other) => self.dropped(ticket, &other),
+                None => {}
+            }
+            if self.consume(&format!("park-{ticket}")) {
+                return Err(StageError::Parked("by you at its start".to_string()));
+            }
+            if !self.sleep() {
+                return Err(StageError::Stopped);
             }
         }
     }

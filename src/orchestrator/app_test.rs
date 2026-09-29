@@ -207,7 +207,7 @@ fn the_experimental_apps_start_panes_and_sides_with_their_args() {
             let start = &w.called(&format!("herdr agent start h-hx-1-{stage}"))[0];
             assert!(start.contains(&format!(" --kind {name} ")), "{start}");
         }
-        let inputs = prompt(&w, "verdict-1.md");
+        let inputs = w.prompt("verdict-1.md");
         let want = format!("- Side A command: {}\n", put(side));
         assert!(inputs.contains(&want), "{want:?} not in:{inputs}");
     }
@@ -346,14 +346,6 @@ fn pick(w: &World, picks: &[(&str, &str)]) {
     manifest.save(&w.repo).unwrap();
 }
 
-/// The prompt the Stage writing `file` was sent.
-fn prompt(w: &World, file: &str) -> String {
-    w.called("herdr agent prompt")
-        .into_iter()
-        .find(|call| call.contains(file))
-        .unwrap()
-}
-
 /// Each job's line names its pick in the mention form of the App it runs
 /// on: in words on claude, plugin-qualified for a plugin's skill, $name on
 /// codex. A none pick drops the line, and so does a pick not installed,
@@ -361,7 +353,7 @@ fn prompt(w: &World, file: &str) -> String {
 #[test]
 fn a_jobs_line_names_its_pick_in_the_apps_mention_form_or_is_dropped() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    write_file(&w.repo.join(".claude/skills/tdd/SKILL.md"), "tdd");
+    write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "tdd");
     let plugin = TempDir::new();
     write_file(&plugin.path().join("skills/ponytail/SKILL.md"), "lazy");
     let plugins = serde_json::json!([
@@ -382,7 +374,7 @@ fn a_jobs_line_names_its_pick_in_the_apps_mention_form_or_is_dropped() {
     );
     o.run_ticket("hx-1");
 
-    let implement = prompt(&w, "implement.md");
+    let implement = w.prompt("implement.md");
     for want in [
         "   Use the tdd skill for it.\n",
         "   Use the ponytail:ponytail skill for all your work",
@@ -399,7 +391,7 @@ fn a_jobs_line_names_its_pick_in_the_apps_mention_form_or_is_dropped() {
     ] {
         assert!(!implement.contains(gone), "{gone:?} in:\n{implement}");
     }
-    let review = prompt(&w, "review-1.md");
+    let review = w.prompt("review-1.md");
     assert!(
         review.contains("   Use the $review-agent skill for this review"),
         "{review}"
@@ -419,11 +411,11 @@ fn a_pick_only_another_app_loads_is_not_installed() {
     ] {
         let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
         write_file(
-            &w.repo.join(dir).join("requesting-code-review/SKILL.md"),
+            &w.home.join(dir).join("requesting-code-review/SKILL.md"),
             "review",
         );
         let plugins = serde_json::json!([
-            {"id": "sp@market", "enabled": true, "installPath": w.repo.join("plugin")},
+            {"id": "sp@market", "enabled": true, "installPath": w.home.join("plugin")},
         ])
         .to_string();
         w.hook(move |_, argv| {
@@ -432,7 +424,7 @@ fn a_pick_only_another_app_loads_is_not_installed() {
         pick(&w, &[("review", picked)]);
         o.run_ticket("hx-1");
 
-        let review = prompt(&w, "review-1.md");
+        let review = w.prompt("review-1.md");
         let line = review.contains("Use the $requesting-code-review skill");
         let noted = review.contains(&format!("- Not installed: {picked} (review)"));
         assert_eq!((line, noted), (installed, !installed), "{dir}:\n{review}");
@@ -447,7 +439,7 @@ fn a_built_in_pick_is_not_installed_on_another_app() {
     pick(&w, &[("review", "review-agent")]);
     o.run_ticket("hx-1");
 
-    let review = prompt(&w, "review-1.md");
+    let review = w.prompt("review-1.md");
     assert!(!review.contains("review-agent skill"), "{review}");
     assert!(
         review.contains("- Not installed: review-agent (review)"),
@@ -460,17 +452,17 @@ fn a_built_in_pick_is_not_installed_on_another_app() {
 fn the_audit_at_none_is_skipped_and_noted() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
     write_file(
-        &w.repo.join(".claude/skills/ponytail-review/SKILL.md"),
+        &w.home.join(".claude/skills/ponytail-review/SKILL.md"),
         "cut",
     );
     o.run_ticket("hx-1");
     let audit = "Use the ponytail-review skill on the diff";
-    assert!(prompt(&w, "verdict-1.md").contains(audit));
+    assert!(w.prompt("verdict-1.md").contains(audit));
 
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
     pick(&w, &[("audit", NONE)]);
     o.run_ticket("hx-1");
-    let debate = prompt(&w, "verdict-1.md");
+    let debate = w.prompt("verdict-1.md");
     assert!(!debate.contains("Use the "), "{debate}");
     assert!(
         debate.contains("no over-engineering audit (none picked)"),
@@ -481,7 +473,7 @@ fn the_audit_at_none_is_skipped_and_noted() {
         "noted as not installed:\n{debate}"
     );
     // The Review's own default, none: its step 3 stands alone.
-    let review = prompt(&w, "review-1.md");
+    let review = w.prompt("review-1.md");
     assert!(!review.contains("Use the "), "{review}");
     assert!(
         review.contains("3. Look for real problems only"),

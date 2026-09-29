@@ -12,7 +12,7 @@ use super::stage::{
     IMPLEMENT, REVIEW,
 };
 use super::state::{STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
-use crate::skills::manifest::link_checkout_skills;
+use crate::skills::manifest::{unlink_checkout_skills, Manifest, JOBS};
 
 pub(crate) const MAX_ROUNDS: usize = 3;
 
@@ -46,6 +46,7 @@ impl Orchestrator {
             ts.reason.clear();
         });
         self.prepare_worktree(ticket)?;
+        self.ask_unmerged_picks(ticket)?;
 
         self.run_stage(ticket, &IMPLEMENT, 0, &[], ResultRequirements::default())?;
         self.report(ticket, "implemented");
@@ -323,9 +324,9 @@ impl Orchestrator {
 
     /// Creates the Ticket's worktree and branch once, brings the new branch
     /// up to the remote's default branch so a dependent Ticket builds on what
-    /// was just merged (ADR 0002), and marks the Ticket in progress. Then,
-    /// each time, links the skills init put in the checkout into it and the
-    /// Run directory, so a resumed Ticket gets those put there since.
+    /// was just merged (ADR 0002), and marks the Ticket in progress. It
+    /// gets no skill links: its Stages run the skills committed on its base
+    /// (ADR 0006), so each time those an older Orqadence linked in go.
     fn prepare_worktree(&self, ticket: &str) -> Result<(), StageError> {
         let worktree = self.worktree(ticket);
         let tools = &self.cfg.tools;
@@ -354,8 +355,65 @@ impl Orchestrator {
             }
             self.report(ticket, &format!("branch {ticket} created"));
         }
-        if let Err(err) = link_checkout_skills(repo, &[&worktree, &self.run_dir(ticket)]) {
-            self.log(ticket, &format!("skills not linked: {err}"));
+        unlink_checkout_skills(repo, &worktree).map_err(|err| {
+            StageError::Parked(format!(
+                "old link to the checkout's skills not removed: {err}"
+            ))
+        })
+    }
+
+    /// A job's pick the checkout's Skill manifest records as installed but
+    /// the Ticket's worktree, a checkout of its base, lacks was added in
+    /// /config and not yet merged: a Question before any Stage, one per
+    /// pick. Run without it, its line is left out, as a pick not installed
+    /// is, even with a personal skill of its name (attempt's have). Personal,
+    /// plugin and built-in picks are not the manifest's.
+    /// Asked at the start alone: once a Stage has run, the branch holds the
+    /// Ticket's work and no longer takes the base as it moves.
+    fn ask_unmerged_picks(&self, ticket: &str) -> Result<(), StageError> {
+        if !self.ticket(ticket).stage.is_empty() {
+            return Ok(());
+        }
+        // one that cannot be read Wakes the Stage that loads it
+        let Ok(manifest) = Manifest::load(&self.cfg.repo) else {
+            return Ok(());
+        };
+        let worktree = self.worktree(ticket);
+        let missing = |pick: &str| manifest.unmerged(&worktree, pick);
+        if !JOBS.iter().any(|(job, _)| missing(manifest.pick(job))) {
+            return Ok(());
+        }
+        // Merged since a park, say: the branch, still the base's, is
+        // brought up to it. Not brought up, the worktree says nothing about
+        // the base: park rather than ask or build on a stale one.
+        let pull = ["git", "pull", "--ff-only", "origin", "HEAD"];
+        if let Err(err) = self.cfg.tools.run(&worktree, &pull) {
+            return Err(StageError::Parked(format!(
+                "branch not brought up to origin's default branch: {err}"
+            )));
+        }
+        for (job, _) in JOBS {
+            let pick = manifest.pick(job);
+            if !missing(pick) {
+                continue;
+            }
+            let text = format!(
+                "{pick}, picked for {job}, is not on this Ticket's base branch: \
+                 added in /config and not yet merged"
+            );
+            let options = vec![
+                format!("park: commit and merge {pick}, then /continue @{ticket}"),
+                format!("run without it: the {job} line is left out"),
+            ];
+            if self.ask_at_start(ticket, &text, options)? == 0 {
+                return Err(StageError::Parked(format!(
+                    "{pick} not merged: commit and merge it, then /continue @{ticket}"
+                )));
+            }
+            self.report(
+                ticket,
+                &format!("running without {pick}: the {job} line is left out"),
+            );
         }
         Ok(())
     }

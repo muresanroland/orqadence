@@ -27,9 +27,10 @@ pub(crate) const SKILLS: &[(&str, &str)] = &[
     ),
 ];
 
-/// A Stage skill's installed copy, the one its Stage runs: Orqadence's in
-/// .orqadence/skills, else one of the repo's own in .agents/skills. Only an
-/// absent copy falls through: one that cannot be read is said.
+/// A Stage skill's installed copy under `repo`, a Ticket's worktree (the
+/// one its Stage runs) or the checkout: Orqadence's in .orqadence/skills,
+/// else one of the repo's own in .agents/skills. Only an absent copy falls
+/// through: one that cannot be read is said.
 pub(crate) fn stage_skill(repo: &Path, name: &str) -> Option<Result<String, String>> {
     [manifest::FILES, ".agents/skills"].iter().find_map(|dir| {
         let path = repo.join(dir).join(name).join("SKILL.md");
