@@ -16,22 +16,19 @@ A skill owned and shipped by Orqadence that holds the instructions for one Stage
 _Avoid_: Prompt, template
 
 **Brainstorm skill**:
-A skill owned and shipped by Orqadence that holds the instructions for one kind of Brainstorm session, such as charting a Map or researching a Background Map ticket. Orqadence's own, modelled on mattpocock's wayfinder and the skills it calls; a Target repo changes a Brainstorm by editing the installed copy, not by swapping in another skill.
+A skill owned and shipped by Orqadence that holds the instructions for one kind of Brainstorm session, such as charting a Map or answering a Research Waypoint. Orqadence's own, modelled on mattpocock's wayfinder and the skills it calls; a Target repo changes a Brainstorm by editing the installed copy, not by swapping in another skill.
 _Avoid_: Wayfinder, brainstorming skill
 
 **Delegate skill**:
-A third-party skill a Stage skill runs for one job of its Stage (test-first implementing, self review, the over-engineering audit, merge conflicts...), chosen per job by the user. A Stage can have several. The Stage skill still owns the Stage result; with no Delegate skill for a job it follows its own instructions.
+A third-party skill a Stage skill or Brainstorm skill runs for one job (test-first implementing, self review, the over-engineering audit, merge conflicts, how it writes...), chosen per job by the user. A Stage can have several. The skill that runs it still owns its result; with no Delegate skill for a job it follows its own instructions. The Brainstorm's own jobs, grilling, domain modeling, research and prototyping, never take one.
 _Avoid_: Override, replacement, work skill
 
 **Shipped skill**:
-Any skill Orqadence installs for a Target repo, at the Skill location: the Stage skills, the Brainstorm skills, plus create-pr, which the Fix Stage runs. A repo that already has a create-pr of its own is asked whether to keep it, replace it, or take the shipped one beside it as orqadence-create-pr.
+Any skill Orqadence installs for a Target repo, committed with the repo's Orqadence settings: the Stage skills, the Brainstorm skills, plus create-pr, which the Fix Stage runs. A repo that already has a create-pr of its own is asked whether to keep it, replace it, or take the shipped one beside it as orqadence-create-pr.
 
 **Skill manifest**:
-One checkout's record of the skills Orqadence installed for it: the Shipped skills, plus third-party skills named by their source, where they were put, and which of them is each Stage's Delegate skill. It belongs to the checkout, not the repo, even when the skill files themselves are committed.
+The Target repo's record of the skills Orqadence installs for it: the Shipped skills, plus third-party skills named by their pinned source, and which of them is each Stage's Delegate skill. It belongs to the repo and is committed beside the skill files themselves, so every checkout runs the same text, and a new version of any skill reaches the repo only as a change someone reviews.
 _Avoid_: Config, lockfile
-
-**Skill location**:
-Where init puts the skills Orqadence installs, as the user answers: this checkout, uncommitted (`.orqadence/skills`, linked into each Ticket's worktree); the repo, committed (`.agents/skills`); or user level (`~/.agents/skills`). A Shipped skill the repo already has in `.agents/skills` stays there.
 
 **Epic**:
 The beads epic handed to Orqadence. Its child Tickets are the whole scope of one run.
@@ -41,11 +38,27 @@ A beads issue, and the unit that moves through the Pipeline. Most are children o
 _Avoid_: Task, issue, story
 
 **Ticket run**:
-A run over Tickets the user names instead of an Epic: its scope is a queue they add to and take from while it runs, and it ends once every Ticket in it is merged (or none is left). Like an Epic run it takes at most max_tickets at once, polls for merges and resumes; only one run, of either kind, is live in a Target repo.
+A run over Tickets the user names instead of an Epic: its scope is a queue they add to and take from while it runs, and it ends once every Ticket in it is merged (or none is left), after its Release when it carries the Release label. Like an Epic run it takes at most max_tickets at once, polls for merges and resumes; only one run, of either kind, is live in a Target repo.
 _Avoid_: Batch, single-Ticket run
 
+**Ticket label**:
+A bd label `orqa:<name>` that the Target repo has configured, changing how its Ticket runs: the skills and guidance the Stages that write its code get, the App, model or effort of any Stage, the template its pull request is written from, and possibly an Extra review. A Ticket carries at most one Area label and any number of Modifier labels; labels that clash are put to the user before the Ticket goes on.
+_Avoid_: Tag, kind
+
+**Area label**:
+The Ticket label naming the one type of work a Ticket does, such as fe, be, db, security, architecture or infra. Work that spans areas is an Epic with a Ticket per area, the Epic's description saying what each side expects of the other.
+_Avoid_: Type (bd's issue type), domain
+
+**Modifier label**:
+A Ticket label that only changes which App, model or effort runs a Stage, such as codex-review, and combines with an Area label.
+_Avoid_: Flag, option
+
+**Release label**:
+The label `orqa:release`, on an Epic or on any Ticket of a Ticket run, asking that the run end in a Release, when the Target repo has releases turned on. An Epic's run raises the minor version, a Ticket run the patch version. Unlike a Ticket label it is read on the Epic, not its Tickets, and changes how the run ends, not how a Ticket runs.
+_Avoid_: Version bump label, release tag
+
 **Brainstorm**:
-Planning work with the user before it is built: one session turns the user's idea into Tickets, or into a Map when the work is big. A Map's Map tickets then get a session each, the ones that need the user one after another, the Background Map tickets alongside, until the Map ticket that writes the Epic closes.
+Planning work with the user before it is built: one session turns the user's idea into Tickets, or into a Map when the work is big. A Map's Waypoints then get a session each, the ones that need the user one after another, the Research Waypoints alongside, until the Waypoint that writes the Epic closes.
 _Avoid_: Wayfinding, grilling, planning run
 
 **Idea**:
@@ -53,23 +66,27 @@ The beads issue a Brainstorm opens for the user's idea the moment charting start
 _Avoid_: Start ticket, brainstorm ticket
 
 **Map**:
-The beads epic a Brainstorm charts: where the work is headed, the decisions made so far, and the Map tickets still open. Its last Map ticket writes the Epic that builds what it decided.
+The beads epic a Brainstorm charts: where the work is headed, the decisions made so far, and the Waypoints still open. Its last Waypoint writes the Epic that builds what it decided.
 _Avoid_: Brainstorm epic, wayfinder epic, coding epic (that is the Epic)
 
-**Map ticket**:
+**Waypoint**:
 One question on a Map, closed by the decision recorded on it rather than by a pull request. It never enters the Pipeline.
-_Avoid_: Ticket, decision ticket
+_Avoid_: Map ticket, Ticket, decision ticket
 
-**Background Map ticket**:
-A Map ticket that needs no user to resolve, such as research, so it can run while the user works another Map ticket or is Away.
-_Avoid_: AFK ticket (AFK is avoided for Away), unattended ticket
+**Research Waypoint**:
+A Waypoint answered by research alone, needing no user, so Orqadence runs it in its own session while the user works another Waypoint or is Away; the next session with the user reads what it found. Only research runs without the user; anything needing a credential or a human action is Manual work.
+_Avoid_: Background Waypoint, Background Map ticket, AFK ticket (AFK is avoided for Away), unattended ticket
 
 **Pipeline**:
-The fixed sequence of Stages every Ticket passes through: Implement, Review, Debate, Fix, then a pull request.
+The fixed sequence of Stages every Ticket passes through: Implement, Review, Debate, Fix, then a pull request, plus an Extra review when its Area label carries one.
 _Avoid_: Workflow, flow
 
+**Extra review**:
+A second review an Area label adds to its Tickets, with its own skill, App, model and effort: the Review's instructions with the label's own review skill, such as a security review or infra's offline checks. As the label says, it runs after the Review in every Round, in the first Round only, or once after the last Round before the pull request, and its Findings join the Debate or go straight to the Fix. Like the Review it never changes the code, and a Round opened unreviewed skips it too.
+_Avoid_: Extra Stage, label Stage, security Stage
+
 **Round**:
-One pass of Review, Debate and Fix over a Ticket. Rounds repeat until a Verdict has no fix items or the cap is reached, after which the pull request opens with any leftover Findings listed.
+One pass of Review, Debate and Fix over a Ticket, with any Extra review beside the Review. Rounds repeat until a Verdict has no fix items or the cap is reached, after which the pull request opens with any leftover Findings listed.
 _Avoid_: Iteration, loop, cycle
 
 **Stage**:
@@ -84,24 +101,44 @@ _Avoid_: Agent, kind, CLI, provider
 The recorded outcome of a Stage, carrying its completion status and, as appropriate, Findings, a Verdict, an opened pull request, a Plan to approve, or a question the Stage needs the user to answer before it can go on. The Orchestrator uses it together with the session's state to decide whether the Stage can advance.
 
 **Run directory**:
-The Ticket's directory under `.orqadence/runs/`, holding its Stages' evidence: the result files, diffs and Debate transcripts, all flat text. It doubles as the Review's sandbox, so the checkout's skills are linked there and build scratch lands there too, both pruned when the pull request opens.
+The Ticket's directory under `.orqadence-local/runs/`, holding its Stages' evidence: the result files, diffs and Debate transcripts, all flat text. It doubles as the Review's sandbox, so build scratch lands there too, pruned when the pull request opens.
 _Avoid_: Logs, workdir, artifacts
 
 **Finding**:
-One claimed problem with a Ticket's changes, raised by the Review or by the over-engineering audit, and the unit the Debate argues over.
+One claimed problem with a Ticket's changes, raised by the Review, an Extra review or the over-engineering audit, and the unit the Debate argues over.
 _Avoid_: Comment, issue, point
+
+**PR comment**:
+What a reviewer, human or bot, leaves on a Ticket's pull request once it is open: a review thread, or a finding in a review's body or a bot's summary. The Address PR comments Stage acts on them. Unlike a Finding, it comes from outside Orqadence.
+_Avoid_: Finding (that is Orqadence's own Review), feedback
+
+**Rebase**:
+The Stage that brings a Ticket's open pull request back onto the default branch when it conflicts, keeping both sides' intent or asking the user. It runs outside the Pipeline, by itself when the Target repo turns it on, and otherwise on the user's command.
+_Avoid_: Address, conflict fix, merge
+
+**Address PR comments**:
+The Stage that acts on a Ticket's open pull request once its checks and bots are done: it fixes the PR comments and failing checks the user approved, answers the others as won't fix, and pushes to the same pull request. It runs outside the Pipeline, after the user approves or a countdown or Away approves for them.
+_Avoid_: Address (alone), Fix (that is the Pipeline's), review response
+
+**Release**:
+The Stage that ends a run carrying the Release label, once every Ticket is merged: it raises the version wherever the Target repo keeps it, adds a changelog entry when the repo keeps a changelog, and opens the version pull request. When that is merged, a Question asks whether to tag the new version; yes pushes the tag, and either answer ends the run. A repo that keeps its version only in tags gets no pull request, only the Question. It runs outside the Pipeline and belongs to the run, not to a Ticket.
+_Avoid_: Version bump, bump, publish
 
 **Moderator**:
 The neutral session that runs the Debate between side A and side B. It never argues a position of its own, and settles Findings the sides still dispute by an outside score.
 _Avoid_: Judge, Debby
 
 **Verdict**:
-The Debate's result: every Finding marked fix or skip, with a severity and the reason. Only fix items reach the Fix Stage.
+The Debate's result: every Finding marked fix or skip, with a severity and the reason. Only fix items reach the Fix Stage, with any Extra review Findings that skip the Debate.
 _Avoid_: Synthesis, summary, report
 
 **Epic summary**:
-The Shell's read-only page over one run, an Epic's or a Ticket run's: each Ticket's pull request, Rounds and Findings fixed, skipped and left on the pull request, then the Parked Tickets with their reasons, with the run's cost and time. It opens by itself once every Ticket has its pull request or is Parked, and /summary opens it again, built fresh from bd, the state file and the Run directories.
+The Shell's read-only page over one run, an Epic's or a Ticket run's: each Ticket's pull request, Rounds and Findings fixed, skipped and left on the pull request, then the Parked Tickets with their reasons and the Manual work not yet done, with the run's cost and time. It opens by itself once every Ticket has its pull request or is Parked, or, for a run carrying the Release label, only once its Release ends, then naming the new version; /summary opens it again, built fresh from bd, the state file and the Run directories.
 _Avoid_: Report, recap
+
+**Brainstorm summary**:
+The Shell's page at the end of a Brainstorm, once the Waypoint that writes the Epics closes: each Epic in build order with its Tickets and their labels, then the Manual work not yet done. It offers to start the first Epic, but only once the docs pull request is merged and no other run is going; /summary @<map> opens it again.
+_Avoid_: Map summary, Brainstorm report
 
 **Wake**:
 The Orchestrator's request for judgment about a Stage that cannot advance by rule, answered by a Judgment or, failing that, by the user through a Question.
@@ -119,16 +156,24 @@ _Avoid_: LLM call, Main session
 What an Implement session writes before it may edit: the changes and tests it intends for its Ticket, the decisions it made with the answer taken, and an open question only when it has one. A Judgment approves it when it covers every acceptance criterion, stays in scope and asks nothing; otherwise the user reads it and answers, and the session revises it. An open question always goes to the user.
 
 **Question**:
-What the Shell puts to the user when the Orchestrator cannot act alone: a Wake the Judgment was unsure about, a blocked session, a plan to approve, a Stage's own question, the Review's App at its usage limit, or a confirmation. It holds only its Ticket (the Review's limit, every Ticket reaching the Review on that App until it is answered), is answered from a fixed set of options or a line of the user's own text, and is never saved: on resume it is derived again from the live session or the Stage result.
+What the Shell puts to the user when the Orchestrator cannot act alone: a Wake the Judgment was unsure about, a blocked session, a plan to approve, a Stage's own question, Manual work its session waits on, the Review's App at its usage limit, or a confirmation. It holds only its Ticket (the Review's limit, every Ticket reaching the Review on that App until it is answered), is answered from a fixed set of options or a line of the user's own text, and is never saved: on resume it is derived again from the live session or the Stage result.
 _Avoid_: Prompt, dialog, alert, form, popup
 
 **Parked**:
-A Ticket taken out of the Pipeline to wait for the user, after a Wake that a Judgment or the user settled as park, or after its Stage asked a question while the user was Away. Other Tickets keep running.
+A Ticket taken out of the Pipeline to wait for the user, after a Wake that a Judgment or the user settled as park, or after its Stage asked a question while the user was Away. Other Tickets keep running. A Research Waypoint whose session needs the user while they are Away is parked the same way, and the other research goes on.
 _Avoid_: Stuck, paused, failed
 
+**Manual work**:
+Something a code-editing Stage or a Brainstorm session needs done that it cannot do itself, above all anything that needs a credential, filed for the user as written steps plus, as the task needs, a wizard to run or a prompt for a separate session outside Orqadence. When the session cannot go on without it, its Ticket or Waypoint waits on a Question until the user marks it done; otherwise the work goes on, the pull request lists it, and it stays open until the user marks it done. Unlike a Question, it asks for an action, not an answer.
+_Avoid_: Manual step, human task, hand-off
+
 **Away**:
-What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket. Nothing else changes: Judgments still answer what they can.
+What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket. Nothing is pushed to the phone, and the Shell never goes On call. Nothing else changes: Judgments still answer what they can.
 _Avoid_: AFK, offline, unattended mode
+
+**On call**:
+What the Shell turns on by itself when a Question has waited five minutes unanswered and the user is not Away: they are away from the desk but their phone reaches them. That Question, every Question after it and the end of the run are pushed to the phone at once, and the user answers in the Shell. Answering any Question ends it, from wherever it was typed. Unlike Away, nothing parks for it.
+_Avoid_: Away by phone, remote mode, paged
 
 **Limited**:
 A Ticket held because the App its Stage runs on hit its provider's usage limit. The limit holds every Stage on that App, whichever Ticket it belongs to: a short one resumes at the reset; a long one (a reset more than a day away) ends the run with every session saved, and /continue resumes each where it stopped. A limit on the Review is put to the user once, through a Question whose answer stands for every Ticket until the reset; a limit on one Debate side settles the Findings without that side. Unlike Parked, nothing in the Ticket's own work went wrong.
@@ -136,6 +181,10 @@ _Avoid_: Rate-limited, cooling down, throttled
 
 **Ticket tab**:
 The herdr tab belonging to one running Ticket, holding one pane per Stage.
+
+**Docs pass**:
+graphify's LLM pass over a Target repo's docs and images, which adds what they say to the code graph Orqadence keeps current on its own. It runs only when a new major or minor version tag reaches the default branch and the user says yes to the Question, in an App's session they can watch.
+_Avoid_: Rebuild, graph build, reindex
 
 **Tools**:
 The one seam every external command (herdr, bd, gh, git) goes through; a test double stands behind it so tests never start a process.

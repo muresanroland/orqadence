@@ -5,7 +5,7 @@ A Brainstorm charts a Map in bd and works its Map tickets one session each, mode
 ## Considered Options
 
 - **Wayfinder by default, swappable in /config**, with renamable labels, a label table in the tracker doc, and overrides restated in every prompt and the Map's Notes. Rejected: every override is fragile, and it all serves a swap nobody can make.
-- **Own skills with per-job Delegate skills** (a third-party grilling or research skill chosen per job). Delegate skills already exist for Stages, and Ticket labels pick them per job (harness-bsg.7). The Brainstorm skills own their jobs to start with. Whether a Brainstorm job takes a Delegate skill through the same mechanism is left to the Brainstorm skills' design (harness-bsg.17), not ruled out.
+- **Own skills with per-job Delegate skills** (a third-party grilling or research skill chosen per job). Delegate skills already exist for Stages, and Ticket labels pick them per job (harness-bsg.7). The Brainstorm skills own their jobs to start with. harness-bsg.17 kept it that way: grilling, domain modeling, research and prototyping take no Delegate skill, since the third-party ones break the Brainstorm's rules (mattpocock's grilling asks in rounds, its research spawns a background agent). The Brainstorm skills take only the existing prose and working-mode jobs.
 
 ## Consequences
 
