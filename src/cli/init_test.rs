@@ -866,10 +866,7 @@ fn a_repo_whose_config_json_is_untracked_asks_every_question() {
     let (repo, home) = (prepared_repo(), TempDir::new());
     write_file(&repo.path().join(".orqadence/config.json"), "{}");
     let tools = Fake::new(|dir, argv| match argv {
-        ["git", "ls-files", ..] => Err(
-            "error: pathspec '.orqadence/config.json' did not match any file(s) known to git"
-                .to_string(),
-        ),
+        ["git", "ls-files", ..] => Ok(String::new()),
         _ => ok(dir, argv),
     });
     let (_, out) = init_with(repo.path(), home.path(), tools.clone(), &[], "");
