@@ -281,24 +281,34 @@ fn an_old_link_not_removed_parks_the_ticket() {
     let mode = |dir: &std::path::Path, mode| {
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap()
     };
-    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    let checkout = w.repo.join(".orqadence/skills/stage-implement");
-    w.hook(move |dir, argv| {
-        if argv.starts_with(&["git", "pull"]) {
-            let links = dir.join(".claude/skills");
-            std::fs::create_dir_all(&links).unwrap();
-            std::os::unix::fs::symlink(&checkout, links.join("stage-implement")).unwrap();
-            mode(&links, 0o555);
-        }
-        None
-    });
-    o.run_ticket("hx-1");
-    mode(&o.worktree("hx-1").join(".claude/skills"), 0o755);
+    // The links folder not writable, then not readable.
+    for locked in [0o555, 0o333] {
+        let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+        let checkout = w.repo.join(".orqadence/skills/stage-implement");
+        w.hook(move |dir, argv| {
+            if argv.starts_with(&["git", "pull"]) {
+                let links = dir.join(".claude/skills");
+                std::fs::create_dir_all(&links).unwrap();
+                std::os::unix::fs::symlink(&checkout, links.join("stage-implement")).unwrap();
+                mode(&links, locked);
+            }
+            None
+        });
+        o.run_ticket("hx-1");
+        mode(&o.worktree("hx-1").join(".claude/skills"), 0o755);
 
-    let ts = o.ticket("hx-1");
-    assert_eq!(ts.status, STATUS_PARKED);
-    assert!(ts.reason.starts_with("old link"), "{}", ts.reason);
-    assert!(w.called("herdr agent start").is_empty(), "a Stage started");
+        let ts = o.ticket("hx-1");
+        assert_eq!(ts.status, STATUS_PARKED, "{locked:o}");
+        assert!(
+            ts.reason.starts_with("old link"),
+            "{locked:o}: {}",
+            ts.reason
+        );
+        assert!(
+            w.called("herdr agent start").is_empty(),
+            "{locked:o}: a Stage started"
+        );
+    }
 }
 
 /// What the Ticket-start Question says of tdd, test-first's pick.
