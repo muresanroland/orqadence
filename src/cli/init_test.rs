@@ -769,3 +769,115 @@ codex: outdated (v7) (/h/.codex/herdr-agent-state.sh)
         "{out}"
     );
 }
+
+const COMMITTED: &str =
+    "init: this repo's Orqadence settings are committed; asking only this machine's questions";
+
+/// ok_tools in a checkout whose git tracks .orqadence/config.json, with
+/// codex's herdr integration outdated.
+fn committed_tools() -> Arc<Fake> {
+    Fake::new(|dir, argv| match argv.join(" ").as_str() {
+        "git ls-files .orqadence/config.json" => Ok(".orqadence/config.json\n".to_string()),
+        "herdr integration status" => {
+            Ok("codex: outdated (v7) (/h/.codex/herdr-agent-state.sh)\n".to_string())
+        }
+        _ => ok(dir, argv),
+    })
+}
+
+/// A fresh clone of a repo whose settings are committed: the team's
+/// questions are not asked again and no job's default is installed; this
+/// machine's steps still run.
+#[test]
+fn a_committed_checkout_asks_only_this_machines_questions() {
+    let (repo, home) = (prepared_repo(), TempDir::new());
+    let config = r#"{"typesafe": false}"#;
+    write_file(&repo.path().join(".orqadence/config.json"), config);
+    let tools = committed_tools();
+    let (_, out) = init_with(repo.path(), home.path(), tools.clone(), &[], "");
+    assert_eq!(out.matches(COMMITTED).count(), 1, "{out}");
+    assert!(!out.contains("already has a create-pr skill"), "{out}");
+    assert!(!out.contains("Use TypeSafe"), "{out}");
+    assert!(
+        !tools.calls().iter().any(|call| call.contains("clone")),
+        "a default installed: {:?}",
+        tools.calls()
+    );
+    assert!(out.contains("Install herdr's integration"), "{out}");
+    assert!(repo.path().join(".orqadence-local").is_dir());
+    assert_eq!(read(repo.path(), ".agents/skills/create-pr/SKILL.md"), "pr");
+    assert_eq!(read(repo.path(), ".orqadence/config.json"), config);
+}
+
+/// TypeSafe committed on: the key is asked, and kept, unless
+/// TYPESAFE_API_KEY is set or a key is kept already.
+#[test]
+fn a_committed_checkout_with_typesafe_on_asks_for_the_key_unless_set() {
+    // (TYPESAFE_API_KEY, a key kept, asked)
+    for (env_key, kept_key, asked) in [
+        ("", false, true),
+        ("sk-env", false, false),
+        ("", true, false),
+    ] {
+        let (repo, home) = (prepared_repo(), TempDir::new());
+        write_file(
+            &repo.path().join(".orqadence/config.json"),
+            r#"{"typesafe": true}"#,
+        );
+        if kept_key {
+            write_file(
+                &repo.path().join(".orqadence-local/typesafe-key"),
+                "sk-kept\n",
+            );
+        }
+        // The docs/agents setup, then the key.
+        let keys = ["\n", "sk-typed\n"];
+        let (_, out) = init_with(repo.path(), home.path(), committed_tools(), &keys, env_key);
+        assert_eq!(
+            out.contains("TypeSafe API key"),
+            asked,
+            "{env_key:?}:\n{out}"
+        );
+        assert!(!out.contains("Use TypeSafe"), "{env_key:?}:\n{out}");
+        let kept = fs::read_to_string(repo.path().join(".orqadence-local/typesafe-key"));
+        assert_eq!(kept.is_ok_and(|key| key.trim() == "sk-typed"), asked);
+    }
+}
+
+/// Cancel at the Shipped skills gate leaves the skills as they are and, on
+/// a committed checkout, goes on to bd init's offer and herdr's integrations.
+#[test]
+fn cancel_at_the_gate_on_a_committed_checkout_goes_on_to_this_machines_steps() {
+    let (repo, home) = (bare_repo(), TempDir::new());
+    init_keys(repo.path(), home.path(), &[]);
+    let skill = repo.path().join(".orqadence/skills/stage-fix/SKILL.md");
+    fs::write(&skill, "edited").unwrap();
+    fs::remove_dir_all(repo.path().join(".beads")).unwrap();
+    let (_, out) = init_with(repo.path(), home.path(), committed_tools(), &["1"], "");
+    assert!(out.contains("init: cancel"), "not cancelled:\n{out}");
+    assert!(out.contains("Run bd init now?"), "{out}");
+    assert!(out.contains("Install herdr's integration"), "{out}");
+    assert_eq!(fs::read_to_string(&skill).unwrap(), "edited");
+}
+
+/// A config.json git does not track: every question, as before.
+#[test]
+fn a_repo_whose_config_json_is_untracked_asks_every_question() {
+    let (repo, home) = (prepared_repo(), TempDir::new());
+    write_file(&repo.path().join(".orqadence/config.json"), "{}");
+    let tools = ok_tools();
+    let (_, out) = init_with(repo.path(), home.path(), tools.clone(), &[], "");
+    assert!(!out.contains(COMMITTED), "{out}");
+    for question in [
+        "already has a create-pr skill",
+        "docs/agents setup",
+        "Use TypeSafe",
+    ] {
+        assert!(out.contains(question), "{question:?} not asked:\n{out}");
+    }
+    assert!(
+        tools.calls().iter().any(|call| call.contains("clone")),
+        "no default installed: {:?}",
+        tools.calls()
+    );
+}

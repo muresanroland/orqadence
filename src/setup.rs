@@ -136,6 +136,16 @@ pub(crate) fn clean_old_checkout(
     Ok(())
 }
 
+/// Whether git tracks .orqadence/config.json: the repo's settings are
+/// committed, so init asks only this machine's and this person's questions
+/// (ADR 0006). The later team questions check the same flag. Tracked, git
+/// prints the path.
+pub(crate) fn committed(repo: &Path, tools: &dyn Tools) -> bool {
+    tools
+        .run(repo, &["git", "ls-files", ".orqadence/config.json"])
+        .is_ok_and(|listed| !listed.trim().is_empty())
+}
+
 /// Writes Orqadence's skills to .orqadence/skills, linked from
 /// .agents/skills and .claude/skills (ADR 0006), after putting there those
 /// an older init left elsewhere (manifest::settle) and taking out the lines
@@ -147,7 +157,8 @@ pub(crate) fn clean_old_checkout(
 /// where the gate decides it. A Target repo that already has a create-pr
 /// skill of its own is asked what to do with the shipped one, since the Fix
 /// Stage runs whichever /create-pr the repo ends up with; later inits keep
-/// that answer from the record. `input` answers the questions, in raw mode
+/// that answer from the record, and a `committed` checkout is not asked:
+/// its committed skills hold the answer. `input` answers the questions, in raw mode
 /// when `tty`. .orqadence-local is made first, whatever the answers: orqa
 /// opens once it exists; a TypeSafe key an older init kept in .orqadence
 /// moves into it, readable only by the user, or is deleted when one is
@@ -156,6 +167,7 @@ pub(crate) fn install_skills(
     repo: &Path,
     home: &Path,
     force: bool,
+    committed: bool,
     out: &mut dyn Write,
     input: &mut dyn Read,
     tty: bool,
@@ -213,7 +225,7 @@ pub(crate) fn install_skills(
     let pr = match (recorded, mode) {
         (Some(name), _) => name,
         (None, _) if !has_skill(repo, "create-pr") => "create-pr",
-        (None, Mode::Fresh) => ask_about_create_pr(out, input, tty)?,
+        (None, Mode::Fresh) if !committed => ask_about_create_pr(out, input, tty)?,
         (None, _) => "", // the repo's own, kept on the first init
     };
     // (shipped name, installed name, body); the repo's own create-pr is left out.
@@ -319,19 +331,26 @@ fn unhide_links(repo: &Path) -> io::Result<()> {
 }
 
 /// The rest of init once the skills are in: bd, the docs/agents setup,
-/// TypeSafe, every job's default, and herdr's integrations.
+/// TypeSafe, every job's default, and herdr's integrations. A `committed`
+/// checkout keeps the committed TypeSafe switch and picks, and is asked
+/// only for the key, when TypeSafe is on and no key is set or kept.
 pub(crate) fn set_up(
     repo: &Path,
     tools: &dyn Tools,
     env_key: &str,
+    committed: bool,
     out: &mut dyn Write,
     input: &mut dyn Read,
     tty: bool,
 ) -> io::Result<()> {
     bd_init(repo, tools, out, input, tty)?;
     write_agent_docs(repo, out, input, tty)?;
-    let typesafe = ask_typesafe(repo, env_key, out, input, tty)?;
-    install_defaults(repo, tools, typesafe, out)?;
+    if !committed {
+        let typesafe = ask_typesafe(repo, env_key, out, input, tty)?;
+        install_defaults(repo, tools, typesafe, out)?;
+    } else if app::typesafe(repo) && env_key.trim().is_empty() && !repo.join(KEY_FILE).exists() {
+        ask_typesafe_key(repo, out, input, tty)?;
+    }
     install_integrations(repo, tools, out, input, tty)
 }
 

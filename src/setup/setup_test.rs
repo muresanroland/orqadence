@@ -29,6 +29,7 @@ fn install(repo: &Path, answer: &str) -> String {
         repo,
         home.path(),
         false,
+        false,
         &mut out,
         &mut answer.as_bytes(),
         false,
@@ -118,6 +119,7 @@ fn install_skills_force_skips_the_questions_and_keeps_the_repos_own_create_pr() 
         repo.path(),
         home.path(),
         true,
+        false,
         &mut out,
         &mut "2\n".as_bytes(),
         false,
@@ -170,6 +172,7 @@ fn skills_at_user_level_without_home_stop_init() {
     let err = install_skills(
         repo.path(),
         Path::new(""),
+        false,
         false,
         &mut Vec::new(),
         &mut "".as_bytes(),
