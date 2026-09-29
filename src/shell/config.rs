@@ -1567,9 +1567,12 @@ impl Screen {
     /// nothing puts the default back; anything else is refused, the text
     /// kept to mend.
     fn keep_minutes(&mut self, text: String) {
-        let minutes = match text.parse::<u64>() {
-            _ if text.is_empty() => DEFAULT_MINUTES,
-            Ok(n) if n >= 1 => n,
+        let (minutes, said) = match text.parse::<u64>() {
+            _ if text.is_empty() => (
+                DEFAULT_MINUTES,
+                format!("On call after {DEFAULT_MINUTES} minutes, its default"),
+            ),
+            Ok(n) if n >= 1 => (n, format!("On call after {}", plural(n as usize, "minute"))),
             _ => {
                 let st = self.settings.as_mut().unwrap();
                 let refused = format!(
@@ -1579,10 +1582,6 @@ impl Screen {
                 st.typing = Some((Typing::Minutes, text));
                 return;
             }
-        };
-        let said = match text.is_empty() {
-            true => format!("On call after {minutes} minutes, its default"),
-            false => format!("On call after {}", plural(minutes as usize, "minute")),
         };
         self.keep_on_call(|kept| kept.minutes = minutes, said);
     }
