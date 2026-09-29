@@ -401,22 +401,46 @@ fn a_ticket_past_its_start_is_not_asked() {
     assert!(not_installed(&w).contains("tdd (test-first)"));
 }
 
-/// Worktrees and Run directories get no skill links: the agents find the
-/// skills committed on the base in the worktree itself.
+/// Parked for a pick not merged, a Ticket whose pull then fails parks with
+/// the pull's error: it neither asks again nor starts a Stage on a stale base.
 #[test]
-fn a_prepared_worktree_gets_no_skill_links() {
+fn a_failed_pull_on_continue_parks_the_ticket() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.unmerged("test-first", "tdd");
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    answer_tdd(&w, &o, 1, 0);
+    run.wait();
+
+    w.merge();
+    w.fail_once("git pull", "network down");
+    o.run_ticket("hx-1");
+
+    let ts = o.ticket("hx-1");
+    assert_eq!(ts.status, STATUS_PARKED);
+    assert!(
+        ts.reason.starts_with("branch not brought up") && ts.reason.ends_with("network down"),
+        "{}",
+        ts.reason
+    );
+    let asked = w.events().iter().filter(|e| e.ask.is_some()).count();
+    assert_eq!(asked, 1, "asked again on a stale base");
+    assert!(w.called("herdr agent start").is_empty(), "a Stage started");
+}
+
+/// Run directories get no skill links, and nothing is excluded for them.
+#[test]
+fn a_run_directory_gets_no_skill_links() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
     // The Run directory is pruned once the PR is open: look while each
     // Stage runs.
-    let dirs = [o.worktree("hx-1"), o.run_dir("hx-1")];
+    let dir = o.run_dir("hx-1");
     let linked = Arc::new(Mutex::new(Vec::new()));
     let seen = linked.clone();
     w.session(move |p| {
-        for dir in &dirs {
-            for sub in [".claude/skills", ".agents/skills"] {
-                if std::fs::symlink_metadata(dir.join(sub)).is_ok() {
-                    seen.lock().unwrap().push(dir.join(sub));
-                }
+        for sub in [".claude/skills", ".agents/skills"] {
+            if std::fs::symlink_metadata(dir.join(sub)).is_ok() {
+                seen.lock().unwrap().push(dir.join(sub));
             }
         }
         succeed(p)

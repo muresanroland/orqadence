@@ -382,10 +382,13 @@ impl Orchestrator {
             return Ok(());
         }
         // Merged since a park, say: the branch, still the base's, is
-        // brought up to it.
+        // brought up to it. Not brought up, the worktree says nothing about
+        // the base: park rather than ask or build on a stale one.
         let pull = ["git", "pull", "--ff-only", "origin", "HEAD"];
         if let Err(err) = self.cfg.tools.run(&worktree, &pull) {
-            self.log(ticket, &format!("not brought up to the base: {err}"));
+            return Err(StageError::Parked(format!(
+                "branch not brought up to origin's default branch: {err}"
+            )));
         }
         for (job, _) in JOBS {
             let pick = manifest.pick(job);
