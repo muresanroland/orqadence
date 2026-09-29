@@ -141,14 +141,8 @@ pub(crate) fn clean_old_checkout(
 /// (ADR 0006). The later team questions check the same flag. Tracked, git
 /// prints the path.
 pub(crate) fn committed(repo: &Path, tools: &dyn Tools) -> bool {
-    let argv = [
-        "git",
-        "ls-files",
-        "--error-unmatch",
-        ".orqadence/config.json",
-    ];
     tools
-        .run(repo, &argv)
+        .run(repo, &["git", "ls-files", ".orqadence/config.json"])
         .is_ok_and(|listed| !listed.trim().is_empty())
 }
 

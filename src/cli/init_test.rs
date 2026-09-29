@@ -777,9 +777,7 @@ const COMMITTED: &str =
 /// codex's herdr integration outdated.
 fn committed_tools() -> Arc<Fake> {
     Fake::new(|dir, argv| match argv.join(" ").as_str() {
-        "git ls-files --error-unmatch .orqadence/config.json" => {
-            Ok(".orqadence/config.json\n".to_string())
-        }
+        "git ls-files .orqadence/config.json" => Ok(".orqadence/config.json\n".to_string()),
         "herdr integration status" => {
             Ok("codex: outdated (v7) (/h/.codex/herdr-agent-state.sh)\n".to_string())
         }
