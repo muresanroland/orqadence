@@ -41,7 +41,8 @@ enum Mode {
 /// runs whichever /create-pr the repo ends up with; later inits keep that
 /// answer from the record. `input` answers the questions, in raw mode when
 /// `tty`. .orqadence-local is made first, whatever the answers: orqa opens
-/// once it exists.
+/// once it exists; a TypeSafe key an older init kept in .orqadence moves
+/// into it, unless one is already there.
 pub(crate) fn install_skills(
     repo: &Path,
     home: &Path,
@@ -52,6 +53,10 @@ pub(crate) fn install_skills(
     tty: bool,
 ) -> io::Result<bool> {
     local_dir(repo)?;
+    let old_key = repo.join(".orqadence/typesafe-key");
+    if old_key.exists() && !repo.join(KEY_FILE).exists() {
+        fs::rename(old_key, repo.join(KEY_FILE))?;
+    }
     let mut record: BTreeMap<String, String> = fs::read_to_string(repo.join(RECORD))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())

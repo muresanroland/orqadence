@@ -209,19 +209,17 @@ fn init_leaves_the_repos_gitignore_byte_for_byte() {
         fs::read_to_string(repo.path().join(".gitignore")).unwrap(),
         ignore
     );
-    assert_eq!(
-        fs::read_to_string(repo.path().join(".orqadence-local/.gitignore")).unwrap(),
-        "*\n"
-    );
 }
 
 /// A checkout from before .orqadence-local, its skills installed: an init
-/// that cancels at the skills gate still makes the folder orqa opens on.
+/// that cancels at the skills gate still makes the folder orqa opens on,
+/// and moves the TypeSafe key kept in .orqadence into it.
 #[test]
 fn init_cancelled_at_the_skills_gate_still_makes_the_local_folder() {
     let repo = prepared_repo();
     run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
     fs::remove_dir_all(repo.path().join(".orqadence-local")).unwrap();
+    fs::write(repo.path().join(".orqadence/typesafe-key"), "sk-old").unwrap();
     let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
     assert_eq!(code, 0, "init exit {code}:\n{out}");
     assert!(out.contains("already installed"), "no gate:\n{out}");
@@ -229,6 +227,11 @@ fn init_cancelled_at_the_skills_gate_still_makes_the_local_folder() {
         fs::read_to_string(repo.path().join(".orqadence-local/.gitignore")).unwrap(),
         "*\n"
     );
+    assert_eq!(
+        fs::read_to_string(repo.path().join(".orqadence-local/typesafe-key")).unwrap(),
+        "sk-old"
+    );
+    assert!(!repo.path().join(".orqadence/typesafe-key").exists());
 }
 
 #[test]

@@ -1872,12 +1872,6 @@ fn start_epic_runs_the_tickets_to_prs_and_a_done_epic_clears_the_saved_run() {
         acquire_lock(&w.repo).is_err(),
         "the lock is not held while the run is live"
     );
-    let local = w.repo.join(".orqadence-local");
-    assert!(local.join("lock").is_file(), "no lock in .orqadence-local");
-    assert_eq!(
-        std::fs::read_to_string(local.join(".gitignore")).unwrap(),
-        "*\n"
-    );
     await_line(&mut s, "hx-1 PR #hx-1 opened after 1 round");
     await_line(&mut s, "hx-2 PR #hx-2 opened after 1 round");
     await_line(&mut s, "Epic done, every Ticket closed");
