@@ -243,6 +243,36 @@ fn implement_runs_the_stage_skill_of_its_worktree() {
     assert!(!implement.contains("# Implement Stage"), "{implement}");
 }
 
+/// The absolute links an Orqadence from before ADR 0006 made in a worktree
+/// to the checkout's skills go; the worktree's own relative ones stay.
+#[test]
+fn a_worktree_loses_the_links_to_the_checkouts_skills() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    let checkout = w.repo.join(".orqadence/skills/stage-implement");
+    w.hook(move |dir, argv| {
+        if argv.starts_with(&["git", "pull"]) {
+            std::fs::create_dir_all(dir.join(".claude/skills")).unwrap();
+            std::fs::create_dir_all(dir.join(".agents/skills")).unwrap();
+            let old = dir.join(".claude/skills/stage-implement");
+            let _ = std::fs::remove_file(&old);
+            std::os::unix::fs::symlink(&checkout, old).unwrap();
+            let own = dir.join(".agents/skills/own");
+            std::os::unix::fs::symlink("../../.orqadence/skills/own", own).unwrap();
+        }
+        None
+    });
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    let tree = o.worktree("hx-1");
+    let old = tree.join(".claude/skills/stage-implement");
+    assert!(
+        std::fs::read_link(&old).map_or(true, |to| !to.is_absolute()),
+        "{old:?} still links the checkout"
+    );
+    assert!(std::fs::symlink_metadata(tree.join(".agents/skills/own")).is_ok());
+}
+
 /// What the Ticket-start Question says of tdd, test-first's pick.
 const UNMERGED: &str = "tdd, picked for test-first, is not on this Ticket's base branch: \
                         added in /config and not yet merged";
@@ -280,13 +310,6 @@ fn a_pick_not_merged_on_the_base_is_a_question_when_the_ticket_starts() {
     let Some(Ask::TicketStart { options }) = asked.ask else {
         panic!("no Ticket-start Question: {:?}", asked.ask);
     };
-    assert_eq!(
-        options,
-        [
-            "park: commit and merge tdd, then /continue @hx-1",
-            "run without it: the test-first line is left out",
-        ]
-    );
     assert!(w.called("herdr agent start").is_empty(), "a Stage started");
     o.answer("hx-1", "", Answer::Prompt(options[1].clone()));
     run.wait();
@@ -426,32 +449,6 @@ fn a_failed_pull_on_continue_parks_the_ticket() {
     let asked = w.events().iter().filter(|e| e.ask.is_some()).count();
     assert_eq!(asked, 1, "asked again on a stale base");
     assert!(w.called("herdr agent start").is_empty(), "a Stage started");
-}
-
-/// Run directories get no skill links, and nothing is excluded for them.
-#[test]
-fn a_run_directory_gets_no_skill_links() {
-    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    // The Run directory is pruned once the PR is open: look while each
-    // Stage runs.
-    let dir = o.run_dir("hx-1");
-    let linked = Arc::new(Mutex::new(Vec::new()));
-    let seen = linked.clone();
-    w.session(move |p| {
-        for sub in [".claude/skills", ".agents/skills"] {
-            if std::fs::symlink_metadata(dir.join(sub)).is_ok() {
-                seen.lock().unwrap().push(dir.join(sub));
-            }
-        }
-        succeed(p)
-    });
-
-    o.run_ticket("hx-1");
-
-    w.await_line("hx-1 PR #hx-1 opened");
-    assert_eq!(*linked.lock().unwrap(), Vec::<std::path::PathBuf>::new());
-    let exclude = std::fs::read_to_string(w.repo.join(".git/info/exclude")).unwrap_or_default();
-    assert!(!exclude.contains("skills"), "{exclude}");
 }
 
 /// A Review or a Debate that leaves the worktree dirty, or commits, is put

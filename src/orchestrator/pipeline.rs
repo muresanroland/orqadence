@@ -12,7 +12,7 @@ use super::stage::{
     IMPLEMENT, REVIEW,
 };
 use super::state::{STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
-use crate::skills::manifest::{skill_dir, Manifest, JOBS};
+use crate::skills::manifest::{skill_dir, unlink_checkout_skills, Manifest, JOBS};
 
 pub(crate) const MAX_ROUNDS: usize = 3;
 
@@ -326,7 +326,7 @@ impl Orchestrator {
     /// up to the remote's default branch so a dependent Ticket builds on what
     /// was just merged (ADR 0002), and marks the Ticket in progress. It
     /// gets no skill links: its Stages run the skills committed on its base
-    /// (ADR 0006).
+    /// (ADR 0006), so each time those an older Orqadence linked in go.
     fn prepare_worktree(&self, ticket: &str) -> Result<(), StageError> {
         let worktree = self.worktree(ticket);
         let tools = &self.cfg.tools;
@@ -355,6 +355,7 @@ impl Orchestrator {
             }
             self.report(ticket, &format!("branch {ticket} created"));
         }
+        unlink_checkout_skills(repo, &worktree);
         Ok(())
     }
 
