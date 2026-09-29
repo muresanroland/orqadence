@@ -510,9 +510,7 @@ impl Screen {
         while let Ok(rung) = self.ring_receiver.try_recv() {
             self.pushes -= 1;
             if let Err(err) = rung {
-                let text = format!("on call: push failed: {err}");
-                self.say(&text);
-                self.notice(&text, NOTICE_WINDOW);
+                self.refuse(&format!("on call: push failed: {err}"));
             }
         }
         self.probed();
