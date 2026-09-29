@@ -10,12 +10,13 @@ use ratatui::Frame;
 
 use super::modal::{divider, dock, joined, wrap_spans};
 use super::{bold, cut, fg, SPINNER};
+use crate::on_call;
 use crate::orchestrator::app::{Check, APPS};
 use crate::setup;
 use crate::shell::brand::{BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT};
 use crate::shell::config::{
     distinct, family_label, floor_name, job_name, job_said, short, short_commit, Field, Listing,
-    Pick, Settings, Typing, APPS_PAGE, FLOORS, ROWS, RUN_PAGE, SECTIONS, SKILLS_PAGE,
+    Pick, Settings, Typing, APPS_PAGE, FLOORS, ON_CALL_PAGE, ROWS, RUN_PAGE, SECTIONS, SKILLS_PAGE,
     TYPESAFE_PAGE,
 };
 use crate::shell::Screen;
@@ -62,6 +63,7 @@ pub(super) fn config(f: &mut Frame, s: &Screen) {
         _ if st.section == SKILLS_PAGE => skills_page(st, width),
         _ if st.section == TYPESAFE_PAGE => typesafe_page(s, st, width),
         _ if st.section == RUN_PAGE => run_page(st, width),
+        _ if st.section == ON_CALL_PAGE => on_call_page(s, st, width),
         _ => page(st, width),
     };
     // the cursor's line in view
@@ -247,15 +249,7 @@ fn typesafe_page(s: &Screen, st: &Settings, width: usize) -> (Vec<Line<'static>>
             Span::styled("  every Wake and Plan is a Question", fg(MUTED)),
         ],
     };
-    // the tail of a long key only, to tell keys apart
-    let shown = match key.chars().count() {
-        0 => Span::styled("none", fg(MUTED)),
-        n if n < 12 => Span::styled("••••", fg(TEXT)),
-        n => {
-            let tail: String = key.chars().skip(n - 4).collect();
-            Span::styled(format!("••••{tail}"), fg(TEXT))
-        }
-    };
+    let shown = masked(key, "none");
     let mut at = 0;
     let selected = |i: usize| st.open && st.setting == i;
     item(
@@ -287,6 +281,51 @@ fn typesafe_page(s: &Screen, st: &Settings, width: usize) -> (Vec<Line<'static>>
         item(&mut lines, &mut at, selected(2 + i), label, value, width);
     }
     check_lines(&mut lines, st.checks(Some(TYPESAFE_PAGE)), width);
+    (lines, at)
+}
+
+/// A secret as a page shows it: the tail of a long one only, to tell them
+/// apart; `none` when empty.
+fn masked(secret: &str, none: &'static str) -> Span<'static> {
+    match secret.chars().count() {
+        0 => Span::styled(none, fg(MUTED)),
+        n if n < 12 => Span::styled("••••", fg(TEXT)),
+        n => {
+            let tail: String = secret.chars().skip(n - 4).collect();
+            Span::styled(format!("••••{tail}"), fg(TEXT))
+        }
+    }
+}
+
+/// The On call page: the Moshi token, masked, the minutes, the test push,
+/// and docs/on-call.md's URL at its foot.
+fn on_call_page(s: &Screen, st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
+    let token = s.on_call.token.as_deref().unwrap_or_default();
+    let about = "Rings your phone through Moshi when a Question waits and nobody answers.";
+    let mut lines = head(
+        "On call",
+        on_off(!token.is_empty()).to_string(),
+        about,
+        width,
+    );
+    lines.push(Line::default());
+    let rows = [
+        ("token", vec![masked(token, "not set")]),
+        (
+            "minutes",
+            vec![Span::styled(s.on_call.minutes.to_string(), fg(TEXT))],
+        ),
+        ("send a test push", Vec::new()),
+    ];
+    let mut at = 0;
+    for (i, (label, value)) in rows.into_iter().enumerate() {
+        let selected = st.open && st.setting == i;
+        item(&mut lines, &mut at, selected, pad(label, 22), value, width);
+    }
+    lines.push(Line::default());
+    // on a line of its own, whole where the pane is wide enough to click it
+    let doc = vec![(on_call::DOC.to_string(), fg(CYAN))];
+    lines.extend(wrap_spans(doc, width, "", "", fg(MUTED)));
     (lines, at)
 }
 
@@ -448,6 +487,12 @@ fn pipeline(s: &Screen, st: &Settings, height: u16, width: usize) -> Vec<Line<'s
         run_summary(st),
         st.checks(Some(RUN_PAGE)).iter().any(|c| !c.holds),
         st.section == RUN_PAGE,
+    ));
+    lines.push(row(
+        "On call",
+        on_off(s.on_call.token.is_some()).to_string(),
+        false,
+        st.section == ON_CALL_PAGE,
     ));
     lines
 }
@@ -687,6 +732,16 @@ fn foot_lines(s: &Screen, st: &Settings, width: usize) -> Vec<Line<'static>> {
                 text.clone(),
                 "A whole number of at least 1, or nothing for the default, saved at once, uncommitted, to .orqadence/config.json; the live run's next pass reads it.".to_string(),
             ),
+            Typing::Token => (
+                "Moshi token › ".to_string(),
+                "•".repeat(text.chars().count()),
+                format!("Shown as dots; kept in {}, readable only by you; nothing clears it.", on_call::CONFIG),
+            ),
+            Typing::Minutes => (
+                "minutes › ".to_string(),
+                text.clone(),
+                format!("A whole number of at least 1, or nothing for the default {}, saved at once; the next tick reads it.", on_call::DEFAULT_MINUTES),
+            ),
         };
         let (help, color) = st.note.clone().unwrap_or((help, MUTED));
         return vec![
@@ -711,6 +766,9 @@ fn foot_lines(s: &Screen, st: &Settings, width: usize) -> Vec<Line<'static>> {
             (st.typesafe_note(st.setting), MUTED)
         }
         (None, None) if st.open && st.section == RUN_PAGE => (st.run_note(), MUTED),
+        (None, None) if st.open && st.section == ON_CALL_PAGE => {
+            (st.on_call_note(st.setting), MUTED)
+        }
         (None, None) if st.open => {
             let (row, field) = st.items()[st.setting];
             (st.note_of(row, field), MUTED)

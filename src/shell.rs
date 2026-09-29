@@ -267,8 +267,9 @@ pub(crate) struct Screen {
     pub(crate) on_call: OnCall,
     /// Where On call pushes go: Moshi, or in tests a FakeDoorbell, so no
     /// test rings the phone; a test keeps its own fake by putting it here.
-    #[allow(dead_code)] // the On call state (harness-we9.2) rings it
     pub(crate) doorbell: Arc<dyn Doorbell>,
+    /// MOSHI_WEBHOOK_TOKEN was set at open: it wins over a token /config keeps.
+    pub(crate) moshi_env: bool,
 }
 
 impl Screen {
@@ -327,6 +328,7 @@ impl Screen {
             doorbell: Arc::new(on_call::Moshi),
             #[cfg(test)]
             doorbell: Arc::new(on_call::FakeDoorbell::default()),
+            moshi_env: false,
         }
     }
 
@@ -364,6 +366,7 @@ impl Screen {
         let mut screen = Screen::new(cfg, folder, truecolor, Vec::new(), state);
         screen.missing = missing;
         screen.on_call = on_call::load(repo, env);
+        screen.moshi_env = !env(on_call::TOKEN_VAR).trim().is_empty();
         screen.reload_epics();
         match update::exe_path() {
             Ok(exe) => {

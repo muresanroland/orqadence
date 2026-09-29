@@ -237,7 +237,7 @@ fn init_drops_the_old_gitignore_line_and_asks_nothing_without_old_run_files() {
         out.contains("init: removed .orqadence/ from .gitignore: its settings are committed now"),
         "not said:\n{out}"
     );
-    assert!(!out.contains("[y/N]"), "asked:\n{out}");
+    assert!(!out.contains("Delete them?"), "asked:\n{out}");
 }
 
 /// The run files an init from before .orqadence-local left in .orqadence.
@@ -721,14 +721,14 @@ codex: outdated (v7) (/h/.codex/herdr-agent-state.sh)
             .filter(|c| c.starts_with("herdr integration install"))
             .collect()
     };
-    // The docs/agents setup, TypeSafe no, then the integrations: yes.
+    // The docs/agents setup, TypeSafe no, On call no, then the integrations: yes.
     let (repo, home) = (bare_repo(), TempDir::new());
     let tools = herdr(true);
     let (_, out) = init_with(
         repo.path(),
         home.path(),
         tools.clone(),
-        &["\n", "n\n", "\n"],
+        &["\n", "n\n", "\n", "\n"],
         "",
     );
     assert_eq!(
@@ -880,4 +880,74 @@ fn a_repo_whose_config_json_is_untracked_asks_every_question() {
         "no default installed: {:?}",
         tools.calls()
     );
+}
+
+const ON_CALL: &str = "Ring your phone through Moshi when a Question waits?";
+
+/// The On call object init kept in .orqadence-local/config.json, if any.
+fn on_call(repo: &Path) -> Option<serde_json::Value> {
+    let text = fs::read_to_string(repo.join(".orqadence-local/config.json")).ok()?;
+    Some(serde_json::from_str::<serde_json::Value>(&text).unwrap()["on_call"].clone())
+}
+
+/// On call is asked after TypeSafe, default no: y and a token keep it,
+/// readable only by you; enter alone, or nobody answering, keeps none.
+#[test]
+fn init_asks_on_call_and_keeps_the_moshi_token_readable_only_by_you() {
+    // The docs/agents setup, TypeSafe no, On call yes, the token.
+    let (repo, home) = (bare_repo(), TempDir::new());
+    let keys = ["\n", "n\n", "y\n", "moshi-tok\n"];
+    let (code, out) = init_keys(repo.path(), home.path(), &keys);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains(&format!("{ON_CALL} (see https://github.com/muresanroland/orqadence/blob/main/docs/on-call.md) [y/N]")), "{out}");
+    assert!(!out.contains("moshi-tok"), "the token echoed:\n{out}");
+    assert!(
+        out.contains("Moshi token kept in .orqadence-local/config.json"),
+        "{out}"
+    );
+    assert_eq!(on_call(repo.path()).unwrap()["token"], "moshi-tok");
+    let path = repo.path().join(".orqadence-local/config.json");
+    assert_eq!(
+        fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    // Enter alone is no; nobody answering changes nothing.
+    for keys in [&["\n", "n\n", "\n"][..], &[][..]] {
+        let (repo, home) = (bare_repo(), TempDir::new());
+        let (code, out) = init_keys(repo.path(), home.path(), keys);
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains(ON_CALL), "{keys:?}: not asked:\n{out}");
+        assert_eq!(on_call(repo.path()), None, "{keys:?}:\n{out}");
+    }
+}
+
+/// A token kept is not asked again: init says On call is on.
+#[test]
+fn a_kept_moshi_token_is_not_asked_again() {
+    let (repo, home) = (bare_repo(), TempDir::new());
+    write_file(
+        &repo.path().join(".orqadence-local/config.json"),
+        r#"{"on_call": {"token": "kept", "minutes": 5}}"#,
+    );
+    let (_, out) = init_keys(repo.path(), home.path(), &["\n", "n\n"]);
+    assert!(!out.contains(ON_CALL), "{out}");
+    assert!(out.contains("init: On call on"), "{out}");
+    assert_eq!(on_call(repo.path()).unwrap()["token"], "kept");
+}
+
+/// On call is per person: a checkout whose settings are committed asks it.
+#[test]
+fn a_committed_checkout_asks_on_call() {
+    let (repo, home) = (prepared_repo(), TempDir::new());
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"typesafe": false}"#,
+    );
+    // The docs/agents setup, On call yes, the token.
+    let keys = ["\n", "y\n", "moshi-tok\n"];
+    let (_, out) = init_with(repo.path(), home.path(), committed_tools(), &keys, "");
+    assert!(out.contains(COMMITTED), "{out}");
+    assert!(out.contains(ON_CALL), "{out}");
+    assert_eq!(on_call(repo.path()).unwrap()["token"], "moshi-tok");
 }

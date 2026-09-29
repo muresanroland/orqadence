@@ -82,7 +82,8 @@ pub fn run(
                 Ok(false) if !committed => return 0,
                 Ok(_) => {
                     let key = env("TYPESAFE_API_KEY");
-                    setup::set_up(repo, &*tools, &key, committed, out, input, tty)
+                    let token = env(crate::on_call::TOKEN_VAR);
+                    setup::set_up(repo, &*tools, &key, &token, committed, out, input, tty)
                 }
                 Err(err) => Err(err),
             };
