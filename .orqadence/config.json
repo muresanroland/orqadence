@@ -1,0 +1,27 @@
+{
+  "address": {
+    "effort": "high",
+    "model": "opus"
+  },
+  "fix": {
+    "effort": "high",
+    "model": "opus"
+  },
+  "moderator": {
+    "effort": "high",
+    "model": "opus"
+  },
+  "review": {
+    "effort": "high",
+    "model": "gpt-6-sol"
+  },
+  "side_a": {
+    "effort": "high",
+    "model": "opus"
+  },
+  "side_b": {
+    "effort": "high",
+    "model": "gpt-6-sol"
+  },
+  "typesafe": true
+}

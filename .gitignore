@@ -7,7 +7,6 @@
 *.gate.lock*
 
 # Orqadence build output and run directory
-.orqadence/
 .claude/worktrees/
 /target/
 graphify-out/
