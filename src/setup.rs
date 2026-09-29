@@ -1,7 +1,7 @@
 //! The thin 'orqa init': tidies a checkout an older init set up, installs
 //! the shipped skills and every job's default in .orqadence/skills, offers
 //! bd init, the docs/agents setup and herdr's integrations, keeps TypeSafe
-//! on or off and its key, and preflights the Target repo.
+//! on or off and its key, asks On call's Moshi token, and preflights the Target repo.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -9,6 +9,7 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
+use crate::on_call;
 use crate::orchestrator::app::{self, APPS};
 use crate::orchestrator::state::{self, local_dir};
 use crate::skills::manifest::{self, Installed, Manifest, FILES, JOBS, LINKS};
@@ -329,27 +330,76 @@ fn unhide_links(repo: &Path) -> io::Result<()> {
 }
 
 /// The rest of init once the skills are in: bd, the docs/agents setup,
-/// TypeSafe, every job's default, and herdr's integrations. A `committed`
-/// checkout keeps the committed TypeSafe switch and picks, and is asked
-/// only for the key, when TypeSafe is on and no key is set or kept.
+/// TypeSafe, every job's default, On call, and herdr's integrations. A
+/// `committed` checkout keeps the committed TypeSafe switch and picks, and
+/// is asked only for the key, when TypeSafe is on and no key is set or
+/// kept; On call is per person, asked on every checkout.
 pub(crate) fn set_up(
     repo: &Path,
     tools: &dyn Tools,
-    env_key: &str,
+    env: &dyn Fn(&str) -> String,
     committed: bool,
     out: &mut dyn Write,
     input: &mut dyn Read,
     tty: bool,
 ) -> io::Result<()> {
+    let env_key = env("TYPESAFE_API_KEY");
     bd_init(repo, tools, out, input, tty)?;
     write_agent_docs(repo, out, input, tty)?;
     if !committed {
-        let typesafe = ask_typesafe(repo, env_key, out, input, tty)?;
+        let typesafe = ask_typesafe(repo, &env_key, out, input, tty)?;
         install_defaults(repo, tools, typesafe, out)?;
     } else if app::typesafe(repo) && env_key.trim().is_empty() && !repo.join(KEY_FILE).exists() {
         ask_typesafe_key(repo, out, input, tty)?;
     }
+    ask_on_call(repo, &env(on_call::TOKEN_VAR), out, input, tty)?;
     install_integrations(repo, tools, out, input, tty)
+}
+
+/// On call's opt-in, default no: yes asks for the Moshi token with echo off
+/// and keeps it in the per-person config.json. No, Ctrl-C, Ctrl-D, an empty
+/// token or nobody answering keeps none. A token kept, or MOSHI_WEBHOOK_TOKEN
+/// (`env_token`) set, is not asked again.
+fn ask_on_call(
+    repo: &Path,
+    env_token: &str,
+    out: &mut dyn Write,
+    input: &mut dyn Read,
+    tty: bool,
+) -> io::Result<()> {
+    let mut kept = on_call::load(repo, &|_| String::new());
+    if kept.token.is_some() || !env_token.trim().is_empty() {
+        return write!(out, "init: On call on\r\n");
+    }
+    let question = format!(
+        "Ring your phone through Moshi when a Question waits? (see {})",
+        on_call::DOC
+    );
+    if yes(out, input, tty, &question, false)? != Some(true) {
+        return Ok(());
+    }
+    write!(
+        out,
+        "init: Moshi token, from the Moshi app's Settings > Notifications (enter to skip): "
+    )?;
+    out.flush()?;
+    let token = match raw(tty, || read_line(out, input, false))? {
+        Line::Text(token) => token,
+        Line::Cancel | Line::End => String::new(),
+    };
+    write!(out, "\r\n")?;
+    if token.is_empty() {
+        return Ok(());
+    }
+    kept.token = Some(token);
+    if let Err(err) = on_call::save(repo, &kept) {
+        return write!(out, "init: On call off, the token not kept: {err}\r\n");
+    }
+    write!(
+        out,
+        "init: On call on: Moshi token kept in {}, readable only by you\r\n",
+        on_call::CONFIG
+    )
 }
 
 /// Offers herdr's integration, which reports each session's id, for every

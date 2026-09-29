@@ -1769,3 +1769,158 @@ fn a_garbled_manifest_opens_config_and_refuses_a_pick() {
     assert!(note(&s).ends_with("Nothing changed."), "{}", note(&s));
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "{");
 }
+
+/// /config open on the On call page.
+fn on_call_page(s: &mut Screen) {
+    type_line(s, "/config");
+    keys(s, &[KeyCode::Down; 9]);
+    s.key(key(KeyCode::Enter));
+}
+
+/// The per-person config.json's On call object.
+fn on_call_json(repo: &Path) -> Value {
+    let path = repo.join(".orqadence-local/config.json");
+    serde_json::from_str::<Value>(&std::fs::read_to_string(path).unwrap()).unwrap()["on_call"]
+        .clone()
+}
+
+/// The On call page: the token, masked or not set, the minutes and the test
+/// push, with docs/on-call.md by its GitHub URL at its foot, whole on a
+/// wide terminal.
+#[test]
+fn the_on_call_page_renders_its_three_rows_and_the_doc_url() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    on_call_page(&mut s);
+    let buf = render(&s, 200, 45);
+    for text in [
+        "On call   off",
+        "▸ token                 not set",
+        "  minutes               5",
+        "  send a test push",
+        "https://github.com/muresanroland/orqadence/blob/main/docs/on-call.md",
+    ] {
+        assert!(find(&buf, text).is_some(), "{text:?}: {:#?}", rows(&buf));
+    }
+}
+
+/// A typed token is shown as dots, saved at once, and the Screen's settings
+/// read it; an empty entry clears it: On call off.
+#[test]
+fn a_typed_moshi_token_saves_masked_and_an_empty_one_clears_it() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    on_call_page(&mut s);
+    s.key(key(KeyCode::Enter));
+    type_in(&mut s, "moshi_tok_51c9d0e7");
+    let buf = render(&s, 160, 45);
+    assert!(find(&buf, "moshi_tok").is_none(), "{:#?}", rows(&buf));
+    assert!(
+        find(&buf, "Moshi token › ••••").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    s.key(key(KeyCode::Enter));
+    assert_eq!(on_call_json(repo.path())["token"], "moshi_tok_51c9d0e7");
+    assert_eq!(s.on_call.token.as_deref(), Some("moshi_tok_51c9d0e7"));
+    assert_eq!(
+        note(&s),
+        "On call token set, saved in .orqadence-local/config.json"
+    );
+    let buf = render(&s, 160, 45);
+    assert!(find(&buf, "••••d0e7").is_some(), "{:#?}", rows(&buf));
+    assert!(find(&buf, "On call   on").is_some(), "{:#?}", rows(&buf));
+
+    keys(&mut s, &[KeyCode::Enter, KeyCode::Enter]);
+    assert_eq!(on_call_json(repo.path())["token"], Value::Null);
+    assert_eq!(s.on_call.token, None);
+    assert_eq!(
+        note(&s),
+        "On call token cleared: On call off, saved in .orqadence-local/config.json"
+    );
+
+    // MOSHI_WEBHOOK_TOKEN set wins: the Screen keeps it, and the foot says so.
+    s.moshi_env = true;
+    s.on_call.token = Some("env-tok".to_string());
+    keys(&mut s, &[KeyCode::Enter]);
+    type_in(&mut s, "file-tok");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(on_call_json(repo.path())["token"], "file-tok");
+    assert_eq!(s.on_call.token.as_deref(), Some("env-tok"));
+    assert_eq!(
+        note(&s),
+        "On call token set; MOSHI_WEBHOOK_TOKEN in the environment still wins, saved in .orqadence-local/config.json"
+    );
+}
+
+/// The minutes: 0 is refused, the text kept to mend; 10 saves; nothing puts
+/// the default 5 back.
+#[test]
+fn on_call_minutes_refuse_0_save_10_and_empty_puts_back_5() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    on_call_page(&mut s);
+    keys(&mut s, &[KeyCode::Down, KeyCode::Enter]);
+    type_in(&mut s, "0");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        note(&s),
+        "Refused: 0 is not a whole number of at least 1. Nothing changed."
+    );
+    let typing = &s.settings.as_ref().unwrap().typing;
+    assert!(matches!(typing, Some((_, text)) if text == "0"));
+    assert!(!repo.path().join(".orqadence-local/config.json").exists());
+
+    s.key(key(KeyCode::Backspace));
+    type_in(&mut s, "10");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(on_call_json(repo.path())["minutes"], 10);
+    assert_eq!(s.on_call.minutes, 10);
+    assert_eq!(
+        note(&s),
+        "On call after 10 minutes, saved in .orqadence-local/config.json"
+    );
+
+    keys(&mut s, &[KeyCode::Enter, KeyCode::Enter]);
+    assert_eq!(on_call_json(repo.path())["minutes"], 5);
+    assert_eq!(s.on_call.minutes, 5);
+    assert_eq!(
+        note(&s),
+        "On call after 5 minutes, its default, saved in .orqadence-local/config.json"
+    );
+}
+
+/// Send a test push rings the doorbell once off the draw loop and says
+/// sent, or the error; with no token it is refused and rings nothing.
+#[test]
+fn a_test_push_rings_once_and_says_sent_or_the_error() {
+    use crate::on_call::FakeDoorbell;
+    use std::sync::atomic::Ordering;
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    let bell = Arc::new(FakeDoorbell::default());
+    s.doorbell = bell.clone();
+    on_call_page(&mut s);
+    keys(&mut s, &[KeyCode::Down, KeyCode::Down, KeyCode::Enter]);
+    assert_eq!(
+        note(&s),
+        "Refused: no Moshi token set: Enter on token types one."
+    );
+    assert!(bell.rings.lock().unwrap().is_empty());
+
+    s.on_call.token = Some("tok".to_string());
+    s.key(key(KeyCode::Enter));
+    await_busy(&mut s);
+    let title = format!("orqa · {}", s.folder);
+    assert_eq!(
+        *bell.rings.lock().unwrap(),
+        [("tok".into(), title, "test push from Orqadence".into())]
+    );
+    assert_eq!(note(&s), "test push sent");
+
+    bell.fail.store(true, Ordering::SeqCst);
+    s.key(key(KeyCode::Enter));
+    await_busy(&mut s);
+    assert_eq!(bell.rings.lock().unwrap().len(), 2);
+    assert_eq!(note(&s), "test push failed: http status: 500");
+}

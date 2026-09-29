@@ -6,7 +6,8 @@
 //! first, off the screen thread; it saves only if the App answers. Also each
 //! job's Delegate skill, the skills Orqadence installed (harness-0sx.7),
 //! cloned off the screen thread too, TypeSafe on or off with its key and
-//! the Judgments' floors, and the Tickets a run takes at once.
+//! the Judgments' floors, the Tickets a run takes at once, and On call's
+//! Moshi token, minutes and test push.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -18,6 +19,7 @@ use serde_json::{json, Value};
 
 use super::brand::{CYAN, GREEN, MUTED, ORANGE, RED};
 use super::{Screen, NOTICE_WINDOW};
+use crate::on_call::{self, OnCall, DEFAULT_MINUTES};
 use crate::orchestrator::app::{
     self, app, App, Check, Floor, Model, Row, APPS, DEFAULT_MAX_TICKETS, IF_LIMITED, MAX_TICKETS,
 };
@@ -130,11 +132,12 @@ pub(crate) const SECTIONS: [(&str, &str, &str); 5] = [
 ];
 
 /// The Apps page's place on the left, after the Pipeline's sections, and
-/// the Skills, TypeSafe and Run pages' after it.
+/// the Skills, TypeSafe, Run and On call pages' after it.
 pub(crate) const APPS_PAGE: usize = SECTIONS.len();
 pub(crate) const SKILLS_PAGE: usize = APPS_PAGE + 1;
 pub(crate) const TYPESAFE_PAGE: usize = APPS_PAGE + 2;
 pub(crate) const RUN_PAGE: usize = APPS_PAGE + 3;
+pub(crate) const ON_CALL_PAGE: usize = APPS_PAGE + 4;
 
 /// The floors the TypeSafe page shows under the key, in its order.
 pub(crate) const FLOORS: [&Floor; 2] = [&WAKE_FLOOR, &PLAN_FLOOR];
@@ -290,6 +293,10 @@ pub(crate) enum Typing {
     Floor(&'static Floor),
     /// max_tickets, on the Run page.
     MaxTickets,
+    /// The Moshi token, shown as dots, on the On call page.
+    Token,
+    /// On call's minutes.
+    Minutes,
 }
 
 /// The skills of a source that holds several: each name, whether it is
@@ -322,6 +329,8 @@ enum Done {
     ForJob(usize, Result<Added, String>),
     /// One skill updated, or every one (None): those that failed, with why.
     Updated(Option<String>, Result<Vec<(String, String)>, String>),
+    /// A test push: sent, or why not.
+    Pushed(Result<(), String>),
 }
 
 /// /config, open.
@@ -870,6 +879,15 @@ impl Settings {
         }
     }
 
+    /// The foot's note on the On call page's row i.
+    pub(crate) fn on_call_note(&self, i: usize) -> String {
+        match i {
+            0 => format!("Kept in {}, readable only by you; {} in the environment wins over it. Enter types a new one; nothing clears it: On call off.", on_call::CONFIG, on_call::TOKEN_VAR),
+            1 => format!("How long a Question waits before On call starts. Enter types a whole number of at least 1, or nothing for the default {DEFAULT_MINUTES}, saved at once."),
+            _ => "Enter rings your phone through Moshi with a test push.".to_string(),
+        }
+    }
+
     /// The foot's note on the Run page.
     pub(crate) fn run_note(&self) -> String {
         "Tickets in the Pipeline at once, in an Epic run or a Ticket run. Enter types a whole number of at least 1, or nothing for the default, saved at once, uncommitted: the live run's next pass reads it.".to_string()
@@ -1096,6 +1114,8 @@ impl Screen {
                     match (typing, text.trim()) {
                         (Typing::Floor(floor), text) => self.keep_floor(floor, text.to_string()),
                         (Typing::MaxTickets, text) => self.keep_max_tickets(text.to_string()),
+                        (Typing::Token, token) => self.keep_token(token.to_string()),
+                        (Typing::Minutes, text) => self.keep_minutes(text.to_string()),
                         (_, "") => {
                             st.note = Some(("Nothing typed: nothing changed.".to_string(), MUTED))
                         }
@@ -1152,7 +1172,7 @@ impl Screen {
         if !st.open {
             match code {
                 KeyCode::Up => st.section = st.section.saturating_sub(1),
-                KeyCode::Down => st.section = (st.section + 1).min(RUN_PAGE),
+                KeyCode::Down => st.section = (st.section + 1).min(ON_CALL_PAGE),
                 KeyCode::Right | KeyCode::Enter => {
                     st.open = true;
                     st.setting = 0;
@@ -1192,6 +1212,22 @@ impl Screen {
             match code {
                 KeyCode::Left | KeyCode::Esc => st.open = false,
                 KeyCode::Enter => st.typing = Some((Typing::MaxTickets, String::new())),
+                _ => {}
+            }
+            return;
+        }
+        if st.section == ON_CALL_PAGE {
+            match code {
+                KeyCode::Up => st.setting = st.setting.saturating_sub(1),
+                KeyCode::Down => st.setting = (st.setting + 1).min(2),
+                KeyCode::Left | KeyCode::Esc => st.open = false,
+                KeyCode::Enter if st.setting == 0 => {
+                    st.typing = Some((Typing::Token, String::new()))
+                }
+                KeyCode::Enter if st.setting == 1 => {
+                    st.typing = Some((Typing::Minutes, String::new()))
+                }
+                KeyCode::Enter => self.test_push(),
                 _ => {}
             }
             return;
@@ -1492,6 +1528,78 @@ impl Screen {
         }
     }
 
+    /// On call's settings as the file keeps them, changed and saved at once;
+    /// the Screen's copy takes them for the next tick, but for a token
+    /// MOSHI_WEBHOOK_TOKEN overrides.
+    fn keep_on_call(&mut self, change: impl FnOnce(&mut OnCall), text: String) {
+        let repo = &self.cfg.repo;
+        // The file's own, so the environment's token is never written to it.
+        let mut kept = on_call::load(repo, &|_| String::new());
+        change(&mut kept);
+        if let Err(err) = on_call::save(repo, &kept) {
+            return self.refused(&format!("{}: {err}", on_call::CONFIG));
+        }
+        if !self.moshi_env {
+            self.on_call.token = kept.token;
+        }
+        self.on_call.minutes = kept.minutes;
+        self.done(text, &format!(", saved in {}", on_call::CONFIG));
+    }
+
+    /// The Moshi token typed: kept, or cleared by an empty entry.
+    fn keep_token(&mut self, token: String) {
+        let text = match token.is_empty() {
+            true => "On call token cleared: On call off",
+            false => "On call token set",
+        };
+        let text = match self.moshi_env {
+            true => format!(
+                "{text}; {} in the environment still wins",
+                on_call::TOKEN_VAR
+            ),
+            false => text.to_string(),
+        };
+        let token = (!token.is_empty()).then_some(token);
+        self.keep_on_call(|kept| kept.token = token, text);
+    }
+
+    /// On call's minutes typed: a whole number of at least 1 saves at once,
+    /// nothing puts the default back; anything else is refused, the text
+    /// kept to mend.
+    fn keep_minutes(&mut self, text: String) {
+        let (minutes, said) = match text.parse::<u64>() {
+            _ if text.is_empty() => (
+                DEFAULT_MINUTES,
+                format!("On call after {DEFAULT_MINUTES} minutes, its default"),
+            ),
+            Ok(n) if n >= 1 => (n, format!("On call after {}", plural(n as usize, "minute"))),
+            _ => {
+                let st = self.settings.as_mut().unwrap();
+                let refused = format!(
+                    "Refused: {text} is not a whole number of at least 1. Nothing changed."
+                );
+                st.note = Some((refused, RED));
+                st.typing = Some((Typing::Minutes, text));
+                return;
+            }
+        };
+        self.keep_on_call(|kept| kept.minutes = minutes, said);
+    }
+
+    /// Send a test push: the doorbell rung off the draw loop; refused with
+    /// no token.
+    fn test_push(&mut self) {
+        let Some(token) = self.on_call.token.clone() else {
+            let text = "Refused: no Moshi token set: Enter on token types one.";
+            self.settings.as_mut().unwrap().note = Some((text.to_string(), RED));
+            return;
+        };
+        let (doorbell, title) = (self.doorbell.clone(), format!("orqa · {}", self.folder));
+        self.off_thread("sending a test push…".to_string(), move |_, _| {
+            Done::Pushed(doorbell.ring(&token, &title, "test push from Orqadence"))
+        });
+    }
+
     /// Runs work on its own thread, then lists the skills you have there
     /// too; said in the foot until finished() takes its answer.
     fn off_thread(
@@ -1754,6 +1862,8 @@ impl Screen {
                     true => self.refused(&said.join("; ")),
                 }
             }
+            Done::Pushed(Ok(())) => st.note = Some(("test push sent".to_string(), GREEN)),
+            Done::Pushed(Err(err)) => st.note = Some((format!("test push failed: {err}"), RED)),
             Done::Updated(_, Err(err)) => self.refused(&err),
             Done::Updated(one, Ok(failed)) => {
                 let changed: Vec<String> = st
