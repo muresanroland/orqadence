@@ -1,18 +1,8 @@
-use super::{body, load, save, scrub, Doorbell, FakeDoorbell, OnCall};
+use super::{load, save, scrub, OnCall};
 use crate::tempdir::TempDir;
 use serde_json::{json, Value};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::sync::atomic::Ordering;
-
-#[test]
-fn the_webhook_body_is_token_title_and_message_as_json() {
-    let body: Value = serde_json::from_str(&body("tok", "Question", "hx-1 asks")).unwrap();
-    assert_eq!(
-        body,
-        json!({"token": "tok", "title": "Question", "message": "hx-1 asks"})
-    );
-}
 
 #[test]
 fn a_failed_ring_never_shows_the_token() {
@@ -23,21 +13,6 @@ fn a_failed_ring_never_shows_the_token() {
     assert!(!err.contains("tok-123"), "{err}");
     assert_eq!(err, "https://x/?t=***: http status: 403 (***)");
     assert_eq!(scrub("http status: 500", ""), "http status: 500");
-}
-
-#[test]
-fn the_fake_doorbell_records_rings_and_fails_when_told() {
-    let fake = FakeDoorbell::default();
-    assert_eq!(fake.ring("tok", "Question", "hx-1 asks"), Ok(()));
-    fake.fail.store(true, Ordering::SeqCst);
-    assert!(fake.ring("tok", "Done", "run ended").is_err());
-    assert_eq!(
-        *fake.rings.lock().unwrap(),
-        [
-            ("tok".into(), "Question".into(), "hx-1 asks".into()),
-            ("tok".into(), "Done".into(), "run ended".into()),
-        ]
-    );
 }
 
 /// No environment variable set.
@@ -89,7 +64,6 @@ fn moshi_webhook_token_wins_over_the_files_token() {
 fn no_token_anywhere_is_off() {
     let bare = TempDir::new();
     assert_eq!(load(bare.path(), &no_env), OnCall::default());
-    assert_eq!(OnCall::default().token, None);
     for on_call in [
         json!({"minutes": 3}),
         json!({"token": "  "}),

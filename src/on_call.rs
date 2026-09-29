@@ -113,7 +113,7 @@ impl Doorbell for Moshi {
         agent
             .post(URL)
             .header("Content-Type", "application/json")
-            .send(body(token, title, message))
+            .send(json!({"token": token, "title": title, "message": message}).to_string())
             .map(|_| ())
             .map_err(|err| scrub(&err.to_string(), token))
     }
@@ -138,11 +138,6 @@ impl Doorbell for FakeDoorbell {
             Ok(())
         }
     }
-}
-
-/// The webhook's JSON body.
-fn body(token: &str, title: &str, message: &str) -> String {
-    json!({"token": token, "title": title, "message": message}).to_string()
 }
 
 /// A failure's text with the token redacted, as tools.rs's command_line
