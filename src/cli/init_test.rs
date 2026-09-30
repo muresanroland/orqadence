@@ -1156,6 +1156,8 @@ fn unchecking_db_writes_six_entries_and_installs_no_db_skill() {
         "{:?}",
         tools.calls()
     );
+    assert!(!repo.path().join(TEMPLATE_DIR).join("db.md").exists());
+    assert!(repo.path().join(TEMPLATE_DIR).join("fe.md").exists());
 }
 
 /// A second init keeps an entry the user edited, and fetches nothing again.
@@ -1244,4 +1246,207 @@ fn the_labels_checklist_turns_auto_wrap_off_and_back_on() {
     );
     assert!(off < row && row < on, "{list:?}");
     assert!(list.contains("✓ fe, be, db"), "{list:?}");
+}
+
+/// The default template and the label templates init writes.
+const DEFAULT_TEMPLATE: &str = ".github/pull_request_template.md";
+const TEMPLATE_DIR: &str = ".github/PULL_REQUEST_TEMPLATE";
+
+/// The six Area labels and each one's section heading.
+const AREA_SECTIONS: [(&str, &str); 6] = [
+    ("fe", "## Screenshots"),
+    ("be", "## Contract"),
+    ("db", "## Schema"),
+    ("security", "## Threat note"),
+    ("architecture", "## Structure"),
+    ("infra", "## Infra"),
+];
+
+/// An empty repo gets the generic default, create-pr's five sections with
+/// a comment each, and one file per checked Area label: the default plus
+/// the label's section. codex-review gets none. Each Area entry's
+/// pr_template names its file.
+#[test]
+fn init_writes_the_default_template_and_one_per_checked_area_label() {
+    let repo = bare_repo();
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "{out}");
+    let default = read(repo.path(), DEFAULT_TEMPLATE);
+    for heading in ["## What", "## Why", "## Impact", "## Testing", "## Ticket"] {
+        let after = &default[default
+            .find(heading)
+            .unwrap_or_else(|| panic!("{heading}:\n{default}"))..];
+        assert!(
+            after
+                .lines()
+                .nth(1)
+                .is_some_and(|line| line.starts_with("<!-- ") && line.ends_with(" -->")),
+            "{heading}:\n{default}"
+        );
+    }
+    assert_eq!(default.matches("<!--").count(), 5, "{default}");
+    let labels = labels_in(repo.path());
+    for (name, heading) in AREA_SECTIONS {
+        let path = format!("{TEMPLATE_DIR}/{name}.md");
+        let text = read(repo.path(), &path);
+        assert!(text.starts_with(&default), "{path}:\n{text}");
+        let section = &text[default.len()..];
+        assert!(section.trim_start().starts_with(heading), "{path}:\n{text}");
+        assert_eq!(section.matches("<!--").count(), 1, "{path}:\n{text}");
+        assert_eq!(labels[name].pr_template, format!("{name}.md"), "{name}");
+        assert!(out.contains(&format!("init: wrote {path}")), "{out}");
+    }
+    assert!(!repo
+        .path()
+        .join(TEMPLATE_DIR)
+        .join("codex-review.md")
+        .exists());
+    assert_eq!(labels["codex-review"].pr_template, "");
+    assert!(out.contains("PR TEMPLATES"), "{out}");
+}
+
+/// init over a repo with a default template of its own, answered `answer`
+/// to the PR TEMPLATES question: the docs/agents setup, TypeSafe no, the
+/// labels all checked, then the answer.
+fn init_own_default(repo: &Path, answer: &str) -> String {
+    let home = TempDir::new();
+    let keys = ["\n", "n\n", "\r", answer];
+    let (code, out) = init_with(repo, home.path(), ok_tools(), &keys, "");
+    assert_eq!(code, 0, "{out}");
+    out
+}
+
+/// A repo's own default template, answered yes, frames the label
+/// templates and stays where it is.
+#[test]
+fn a_repos_own_default_template_answered_yes_frames_the_label_templates() {
+    let repo = bare_repo();
+    write_file(&repo.path().join(DEFAULT_TEMPLATE), "ours\n");
+    let out = init_own_default(repo.path(), "y\n");
+    assert!(
+        out.contains("Make .github/pull_request_template.md the default"),
+        "{out}"
+    );
+    assert_eq!(read(repo.path(), DEFAULT_TEMPLATE), "ours\n");
+    let labels = labels_in(repo.path());
+    for (name, heading) in AREA_SECTIONS {
+        let text = read(repo.path(), &format!("{TEMPLATE_DIR}/{name}.md"));
+        assert_eq!(text.lines().next(), Some("ours"), "{name}:\n{text}");
+        assert!(text.contains(heading), "{name}:\n{text}");
+        assert_eq!(labels[name].pr_template, format!("{name}.md"), "{name}");
+    }
+}
+
+/// Answered no, nothing is written and every label uses the repo's
+/// template: pr_template stays empty. A default at the root is found too.
+#[test]
+fn a_repos_own_default_template_answered_no_writes_nothing() {
+    let repo = bare_repo();
+    write_file(&repo.path().join("PULL_REQUEST_TEMPLATE.md"), "ours\n");
+    let out = init_own_default(repo.path(), "n\n");
+    assert!(
+        out.contains("Make PULL_REQUEST_TEMPLATE.md the default"),
+        "{out}"
+    );
+    assert!(!repo.path().join(TEMPLATE_DIR).exists());
+    assert!(!repo.path().join(DEFAULT_TEMPLATE).exists());
+    let labels = labels_in(repo.path());
+    for (name, _) in AREA_SECTIONS {
+        assert_eq!(labels[name].pr_template, "", "{name}");
+    }
+}
+
+/// With only a template directory, init asks which of its files is the
+/// default: the one picked is copied to the default's path and frames the
+/// label templates; the directory's own files are untouched.
+#[test]
+fn a_template_directory_alone_asks_which_is_the_default() {
+    let repo = bare_repo();
+    let dir = repo.path().join(TEMPLATE_DIR);
+    write_file(&dir.join("bug.md"), "bug\n");
+    write_file(&dir.join("feature.md"), "feature\n");
+    let out = init_own_default(repo.path(), "2");
+    assert!(
+        out.contains("Which of these is the default template?"),
+        "{out}"
+    );
+    for option in ["1. bug.md", "2. feature.md", "3. none"] {
+        assert!(out.contains(option), "{option}:\n{out}");
+    }
+    assert_eq!(read(repo.path(), DEFAULT_TEMPLATE), "feature\n");
+    assert_eq!(
+        read(repo.path(), &format!("{TEMPLATE_DIR}/bug.md")),
+        "bug\n"
+    );
+    assert_eq!(
+        read(repo.path(), &format!("{TEMPLATE_DIR}/feature.md")),
+        "feature\n"
+    );
+    let labels = labels_in(repo.path());
+    for (name, heading) in AREA_SECTIONS {
+        let text = read(repo.path(), &format!("{TEMPLATE_DIR}/{name}.md"));
+        assert!(
+            text.starts_with("feature\n") && text.contains(heading),
+            "{name}:\n{text}"
+        );
+        assert_eq!(labels[name].pr_template, format!("{name}.md"), "{name}");
+    }
+    assert!(
+        out.contains(&format!("init: wrote {DEFAULT_TEMPLATE}")),
+        "{out}"
+    );
+}
+
+/// none picked writes the generic default, as an empty repo gets.
+#[test]
+fn a_template_directory_alone_answered_none_gets_the_generic_default() {
+    let repo = bare_repo();
+    write_file(&repo.path().join(TEMPLATE_DIR).join("bug.md"), "bug\n");
+    init_own_default(repo.path(), "3");
+    let default = read(repo.path(), DEFAULT_TEMPLATE);
+    assert!(default.starts_with("## What\n"), "{default}");
+    let fe = read(repo.path(), &format!("{TEMPLATE_DIR}/fe.md"));
+    assert!(
+        fe.starts_with(&default) && fe.contains("## Screenshots"),
+        "{fe}"
+    );
+}
+
+/// An existing <name>.md in the directory is kept and mapped; the rest are
+/// built.
+#[test]
+fn an_existing_label_template_is_kept_and_mapped() {
+    let repo = bare_repo();
+    write_file(&repo.path().join(TEMPLATE_DIR).join("fe.md"), "mine\n");
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("Which of these"), "{out}");
+    assert_eq!(
+        read(repo.path(), &format!("{TEMPLATE_DIR}/fe.md")),
+        "mine\n"
+    );
+    let labels = labels_in(repo.path());
+    assert_eq!(labels["fe"].pr_template, "fe.md");
+    for (name, heading) in AREA_SECTIONS.iter().filter(|(name, _)| *name != "fe") {
+        let text = read(repo.path(), &format!("{TEMPLATE_DIR}/{name}.md"));
+        assert!(text.contains(heading), "{name}:\n{text}");
+        assert_eq!(labels[*name].pr_template, format!("{name}.md"), "{name}");
+    }
+}
+
+/// A second init overwrites no template and asks nothing about them.
+#[test]
+fn a_second_init_overwrites_no_template() {
+    let (repo, home) = (bare_repo(), TempDir::new());
+    init_keys(repo.path(), home.path(), &[]);
+    let github = repo.path().join(".github");
+    write_file(&github.join("pull_request_template.md"), "edited\n");
+    write_file(&github.join("PULL_REQUEST_TEMPLATE/fe.md"), "edited fe\n");
+    let before = snapshot(&github);
+    // The gate: refresh; TypeSafe no; the labels all checked.
+    let (code, out) = init_keys(repo.path(), home.path(), &["2", "n\n", "\r"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("PR TEMPLATES"), "{out}");
+    assert_eq!(snapshot(&github), before);
+    assert_eq!(labels_in(repo.path())["fe"].pr_template, "fe.md");
 }
