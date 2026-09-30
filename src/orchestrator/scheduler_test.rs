@@ -199,6 +199,30 @@ fn closed_pr_parks_the_ticket_and_conflict_is_reported_exactly_once() {
 }
 
 #[test]
+fn each_poll_asks_gh_once_per_open_pr() {
+    let tickets = ["hx-1", "hx-2", "hx-3"].map(BdTicket::new).to_vec();
+    let (w, o) = new_world(tickets);
+    for ticket in ["hx-1", "hx-2"] {
+        o.update(ticket, |ts| {
+            ts.status = STATUS_PR_OPEN.to_string();
+            ts.pr = format!("https://example.test/pr/{ticket}");
+        });
+    }
+    o.update("hx-3", |_| {}); // running: no PR yet
+
+    o.poll_merges();
+    let gh = w.called("gh ");
+    assert_eq!(gh.len(), 2, "{gh:#?}");
+    for (call, ticket) in gh.iter().zip(["hx-1", "hx-2"]) {
+        assert!(
+            call.starts_with("gh api graphql -f query=")
+                && call.ends_with(&format!(" -f url=https://example.test/pr/{ticket}")),
+            "{call}"
+        );
+    }
+}
+
+#[test]
 fn killed_run_resumes_at_the_right_stage_without_redoing_finished_ones() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
     w.lock().merged = true;
@@ -444,7 +468,7 @@ fn command_lines_say_what_was_refused_ignored_or_failed() {
     let gh_down = AtomicBool::new(true);
     w.hook(move |_, argv| {
         // the address Stage's own gh view, not the merge poll's
-        if argv.join(" ").contains("reviews") && gh_down.swap(false, Ordering::SeqCst) {
+        if argv.join(" ").starts_with("gh pr view") && gh_down.swap(false, Ordering::SeqCst) {
             return Some(Err("gh: boom".to_string()));
         }
         None

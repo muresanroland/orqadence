@@ -5,6 +5,7 @@
 //! queue, which the Shell adds to while it runs.
 
 use serde::Deserialize;
+use std::collections::BTreeSet;
 use std::fs;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use std::thread;
 use std::time::Instant;
 
 use super::app;
+use super::pr::{self, Item};
 use super::result::ResultRequirements;
 use super::stage::{pr_ref, result_name, Orchestrator, StageError, ADDRESS};
 use super::state::{TicketState, STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
@@ -54,9 +56,12 @@ pub(crate) struct BdDependency {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct GhPr {
-    state: String,
     mergeable: String,
 }
+
+/// How long a PR's head holds before the poll trusts that nothing is at
+/// work on it: a bot's context appears seconds after a push.
+const QUIET: chrono::TimeDelta = chrono::TimeDelta::seconds(60);
 
 impl Orchestrator {
     /// Every issue bd's reply to args holds, Epics included.
@@ -372,9 +377,11 @@ impl Orchestrator {
             .collect()
     }
 
-    /// Asks gh about every open PR. A merge is what closes a Ticket and so
-    /// unblocks its dependents (ADR 0002).
-    fn poll_merges(&self) {
+    /// Asks gh about every open PR, one GraphQL query each, serially. A
+    /// merge is what closes a Ticket and so unblocks its dependents (ADR
+    /// 0002). Gives back each Ticket whose PR's head is quiet, with the
+    /// PR's open items not offered before: they are offered now.
+    pub(crate) fn poll_merges(&self) -> Vec<(String, Vec<Item>)> {
         let open: Vec<(String, TicketState)> = self
             .state
             .lock()
@@ -385,19 +392,19 @@ impl Orchestrator {
             .map(|(id, ts)| (id.clone(), ts.clone()))
             .collect();
         let (tools, repo) = (&self.cfg.tools, &self.cfg.repo);
+        let query = format!("query={}", pr::QUERY);
 
+        let mut quiet = Vec::new();
         for (ticket, ts) in open {
-            let view = tools
-                .run(
-                    repo,
-                    &["gh", "pr", "view", &ts.pr, "--json", "state,mergeable"],
-                )
+            let url = format!("url={}", ts.pr);
+            let reply = tools
+                .run(repo, &["gh", "api", "graphql", "-f", &query, "-f", &url])
                 .map_err(|err| err.to_string())
-                .and_then(|out| serde_json::from_str::<GhPr>(&out).map_err(|err| err.to_string()));
-            let pr = match view {
+                .and_then(|out| pr::parse(&out));
+            let pr = match reply {
                 Ok(pr) => pr,
                 Err(err) => {
-                    self.log(&ticket, &format!("gh pr view failed: {err}"));
+                    self.log(&ticket, &format!("gh api graphql failed: {err}"));
                     continue;
                 }
             };
@@ -452,7 +459,32 @@ impl Orchestrator {
             } else if pr.mergeable == "MERGEABLE" && ts.conflict {
                 self.update(&ticket, |ts| ts.conflict = false);
             }
+            if pr.state != "OPEN" {
+                continue;
+            }
+
+            let now = (self.cfg.clock)();
+            if pr.head_ref_oid != ts.head {
+                self.update(&ticket, |ts| {
+                    ts.head = pr.head_ref_oid.clone();
+                    ts.head_at = Some(now);
+                });
+                continue;
+            }
+            if pr.busy() || ts.head_at.is_none_or(|at| now - at < QUIET) {
+                continue;
+            }
+            // what is no longer open leaves the set, so it is offered
+            // again if it comes back
+            let items = pr.items();
+            let ids: BTreeSet<String> = items.iter().map(|i| i.id.clone()).collect();
+            if ids != ts.offered {
+                self.update(&ticket, |ts| ts.offered = ids);
+            }
+            let fresh = items.into_iter().filter(|i| !ts.offered.contains(&i.id));
+            quiet.push((ticket, fresh.collect()));
         }
+        quiet
     }
 
     /// Runs the address Stage for a Ticket with an open PR, on the user's

@@ -182,7 +182,8 @@ pub(crate) struct Inner {
     pub(crate) epic_deps: Vec<String>,
     /// The Epic's description, as 'bd show hx --json' prints it.
     pub(crate) epic_description: String,
-    /// PR url -> gh JSON.
+    /// PR url -> the PR node in the poll's GraphQL shape. 'gh pr view',
+    /// the address Stage's, gets the same JSON: a test of it gives its shape.
     pub(crate) prs: BTreeMap<String, String>,
     /// Command prefix -> the error its next call fails with.
     failing: BTreeMap<String, String>,
@@ -569,14 +570,21 @@ impl World {
             return Ok(json!(listed.map(BdTicket::json).collect::<Vec<_>>()).to_string());
         }
 
+        // the PR at a url, as the poll's GraphQL query shapes it
+        let pr = |url: &str| match (w.prs.get(url), w.merged) {
+            (Some(pr), _) => pr.clone(),
+            (None, true) => r#"{"state":"MERGED","mergeable":"UNKNOWN"}"#.to_string(),
+            (None, false) => r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#.to_string(),
+        };
+        if cmd.starts_with("gh api graphql") {
+            let url = argv
+                .iter()
+                .find_map(|a| a.strip_prefix("url="))
+                .unwrap_or("");
+            return Ok(format!(r#"{{"data":{{"resource":{}}}}}"#, pr(url)));
+        }
         if cmd.starts_with("gh pr view") {
-            if let Some(pr) = w.prs.get(argv[3]) {
-                return Ok(pr.clone());
-            }
-            if w.merged {
-                return Ok(r#"{"state":"MERGED","mergeable":"UNKNOWN"}"#.to_string());
-            }
-            return Ok(r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#.to_string());
+            return Ok(pr(argv[3]));
         }
         if cmd == "git remote" {
             return Ok("origin\n".to_string());

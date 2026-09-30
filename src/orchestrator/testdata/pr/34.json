@@ -1,0 +1,147 @@
+{
+ "state": "MERGED",
+ "mergeable": "UNKNOWN",
+ "headRefOid": "034ef1009b9ecde2c299053934934b7d734e41e4",
+ "statusCheckRollup": {
+  "commit": {
+   "oid": "034ef1009b9ecde2c299053934934b7d734e41e4"
+  },
+  "state": "SUCCESS",
+  "contexts": {
+   "nodes": [
+    {
+     "__typename": "CheckRun",
+     "name": "Greptile Review",
+     "status": "COMPLETED",
+     "conclusion": "SUCCESS",
+     "checkSuite": {
+      "app": {
+       "slug": "greptile-apps"
+      }
+     }
+    }
+   ]
+  }
+ },
+ "reviewThreads": {
+  "nodes": [
+   {
+    "id": "PRRT_kwDOUiwtFs6lz7JY",
+    "isResolved": false,
+    "isOutdated": false,
+    "path": "src/setup.rs",
+    "line": 406,
+    "comments": {
+     "nodes": [
+      {
+       "databaseId": 4099629490,
+       "author": {
+        "login": "greptile-apps",
+        "__typename": "Bot"
+       },
+       "body": "<a href=\"#\"><img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\"></a> <a href=\"#\"><img alt=\"security\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/Security.svg?v=2\" align=\"top\"></a> **Instruction symlinks redirect writes**\n\nIf a Target repo supplies a `CLAUDE.md` or `AGENTS.md` symlink to a writable file outside the repo, non-interactive `harness init` follows it and appends the Agent skills block without an affirmative answer. Symlinked `docs/agents` paths can also redirect installed documents outside the repo. This permits a repository-controlled write beyond the intended target and must be fixed before merging.\n\n**How this was verified:** An isolated init run changed external files through instruction-file and documentation symlinks.\n\n<details><summary><strong>Artifacts</strong></summary><br />\n\n**[Executed temporary-repository reproduction source](https://app.greptile.com/trex/artifacts/1776e02d-fd7c-4fb2-93eb-23ff732b73d3)**\n\n- This executed script runs noninteractive init with fake tools against ordinary and symlinked paths in disposable repositories, leaving real instruction files untouched.\n\n**[Init with ordinary paths: outside files unchanged](https://app.greptile.com/trex/artifacts/73f9ae41-2f84-4eca-87a7-2c44f0823c80)**\n\n- The ordinary-path run captured CLI output and assertions showing that generated content stayed in the temporary target repositories.\n\n**[Init with symlinks: outside files written](https://app.greptile.com/trex/artifacts/f968ea4d-e3af-4d95-bf7e-6545d127b9eb)**\n\n- The symlink-path run captured CLI output and assertions showing writes to external instruction and docs targets despite no affirmative answer.\n\n<a href=\"https://app.greptile.com/trex/runs/26675054/artifacts?artifact=1776e02d-fd7c-4fb2-93eb-23ff732b73d3\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/ViewArtifactsDark.svg?v=4\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/ViewArtifacts.svg?v=4\"><img alt=\"View artifacts\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/ViewArtifacts.svg?v=4\"></picture></a>\n</details>\n\n<sub><a href=\"https://www.greptile.com/trex\"><img alt=\"T-Rex\" src=\"https://greptile-static-assets.s3.amazonaws.com/trex/trex_green.svg\" height=\"14\" align=\"absmiddle\"></a> Ran code and verified through T-Rex</sub>\n\n…"
+      }
+     ]
+    }
+   },
+   {
+    "id": "PRRT_kwDOUiwtFs6lz7Jj",
+    "isResolved": false,
+    "isOutdated": false,
+    "path": "src/setup.rs",
+    "line": 378,
+    "comments": {
+     "nodes": [
+      {
+       "databaseId": 4099629506,
+       "author": {
+        "login": "greptile-apps",
+        "__typename": "Bot"
+       },
+       "body": "<a href=\"#\"><img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\"></a> **Claude file misses guidance**\n\nWhen both instruction files exist and only `AGENTS.md` has an Agent skills section, init treats setup as complete and leaves `CLAUDE.md` unchanged. The Claude file therefore lacks the intended issue-tracker, triage, and domain pointers, making that guidance harder for Claude to discover. Check the instruction file that needs the block rather than accepting one in either file.\n\n<details><summary><strong>Artifacts</strong></summary><br />\n\n**[Executed test source for both agent files](https://app.greptile.com/trex/artifacts/8f83494a-b945-477a-9e54-b6e68ac6fee8)**\n\n- The test creates a temporary repo with both files, invokes the real setup function twice, and checks file contents and output; it isolates the claimed flow.\n\n**[Runner for the two revision checks](https://app.greptile.com/trex/artifacts/ab444887-8840-4263-b2eb-89e935015e20)**\n\n- The runner inserts the test into temporary git-snapshot source trees and executes Cargo tests; it leaves tracked files untouched.\n\n**[Test output on feature-introduction commit](https://app.greptile.com/trex/artifacts/846dc735-00df-4322-847c-b917c45eee39)**\n\n- The test ran on 55144bc and passed with both agent files unchanged; the claimed behavior predates later changes.\n\n**[Test output on PR HEAD](https://app.greptile.com/trex/artifacts/878aee19-b0bf-4452-9d77-04cddc0de6fc)**\n\n- The same test ran on HEAD and passed with identical file behavior; candidate 1 does not reproduce.\n\n<a href=\"https://app.greptile.com/trex/runs/26675054/artifacts?artifact=8f83494a-b945-477a-9e54-b6e68ac6fee8\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/ViewArtifactsDark.svg?v=4\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/ViewArtifacts.svg?v=4\"><img alt=\"View artifacts\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/ViewArtifacts.svg?v=4\"></picture></a>\n</details>\n\n<sub><a href=\"https://www.greptile.com/trex\"><img alt=\"T-Rex\" src=\"https://greptile-static-assets.s3.amazonaws.com/trex/trex_green.svg\" height=\"14\" align=\"absmiddle\"></a> Ran code and verified through T-Rex</sub>\n\n…"
+      }
+     ]
+    }
+   },
+   {
+    "id": "PRRT_kwDOUiwtFs6lz7Jy",
+    "isResolved": false,
+    "isOutdated": false,
+    "path": "src/setup.rs",
+    "line": 336,
+    "comments": {
+     "nodes": [
+      {
+       "databaseId": 4099629522,
+       "author": {
+        "login": "greptile-apps",
+        "__typename": "Bot"
+       },
+       "body": "<a href=\"#\"><img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\"></a> **Installed guide has broken pointer**\n\nIn a Target repo with `CLAUDE.md`, init writes the Agent skills block there but installs `issue-tracker.md` unchanged. The guide directs readers to `AGENTS.md`, which init does not create in that case. Agents following the pointer reach a missing file; make the guide target-neutral or adapt it to the instruction file init uses.\n\n<details><summary><strong>Artifacts</strong></summary><br />\n\n**[Temporary-target init reproduction script](https://app.greptile.com/trex/artifacts/ddb19ed9-f7f9-4dba-9e3f-32a88b72ca83)**\n\n- The authored script prepares a temporary Git target and runs the real init binary with third-party clones blocked, making the document behavior reproducible.\n\n**[Target documents before init](https://app.greptile.com/trex/artifacts/cf99565d-a1e8-4caf-b00f-012ea654f425)**\n\n- The executed inspection shows CLAUDE.md present and both AGENTS.md and the issue-tracker guide absent before init.\n\n**[Target documents after init](https://app.greptile.com/trex/artifacts/7d521972-d36d-4b6a-8ae0-8ce9623b06ce)**\n\n- The real init run shows the block written to CLAUDE.md, no AGENTS.md, and an unchanged guide whose AGENTS.md pointer cannot resolve.\n\n<a href=\"https://app.greptile.com/trex/runs/26675054/artifacts?artifact=ddb19ed9-f7f9-4dba-9e3f-32a88b72ca83\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/ViewArtifactsDark.svg?v=4\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/ViewArtifacts.svg?v=4\"><img alt=\"View artifacts\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/ViewArtifacts.svg?v=4\"></picture></a>\n</details>\n\n<sub><a href=\"https://www.greptile.com/trex\"><img alt=\"T-Rex\" src=\"https://greptile-static-assets.s3.amazonaws.com/trex/trex_green.svg\" height=\"14\" align=\"absmiddle\"></a> Ran code and verified through T-Rex</sub>\n\n…"
+      }
+     ]
+    }
+   },
+   {
+    "id": "PRRT_kwDOUiwtFs6lz7J6",
+    "isResolved": false,
+    "isOutdated": false,
+    "path": "skills/stage-moderate/SKILL.md",
+    "line": 40,
+    "comments": {
+     "nodes": [
+      {
+       "databaseId": 4099629532,
+       "author": {
+        "login": "greptile-apps",
+        "__typename": "Bot"
+       },
+       "body": "<a href=\"#\"><img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\"></a> **Moderator definition needs exception**\n\nWith TypeSafe off, this rule skips a disputed Finding without an outside score, while the Moderator definition still says disputed Findings are settled by an outside score. The mismatch makes it harder to understand why a disputed Finding can be listed in a PR without a scored decision. Qualify the definition to describe the TypeSafe-off exception.\n\n<details><summary><strong>Artifacts</strong></summary><br />\n\n**[Disputed-Finding assertion script](https://app.greptile.com/trex/artifacts/e786c70c-61ec-4832-9aab-1d157ee24c48)**\n\n- The authored script reads both revisions and checks their settlement rules and the current documented consequence.\n\n**[Baseline disputed-Finding assertion output](https://app.greptile.com/trex/artifacts/b54c436e-0b3b-49b8-9323-bf29ec14a069)**\n\n- Running the script against the baseline exited successfully and showed the instruction to ask TypeSafe for a disputed Finding.\n\n**[Current TypeSafe-off assertion output](https://app.greptile.com/trex/artifacts/f4e0084b-ba0d-4c33-8546-ca9c088dd1b5)**\n\n- Running the script against the current files exited successfully and showed the explicit skip rule, matching the README and PR-opening path.\n\n<a href=\"https://app.greptile.com/trex/runs/26675054/artifacts?artifact=e786c70c-61ec-4832-9aab-1d157ee24c48\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/ViewArtifactsDark.svg?v=4\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/ViewArtifacts.svg?v=4\"><img alt=\"View artifacts\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/ViewArtifacts.svg?v=4\"></picture></a>\n</details>\n\n<sub><a href=\"https://www.greptile.com/trex\"><img alt=\"T-Rex\" src=\"https://greptile-static-assets.s3.amazonaws.com/trex/trex_green.svg\" height=\"14\" align=\"absmiddle\"></a> Ran code and verified through T-Rex</sub>\n\n…"
+      }
+     ]
+    }
+   }
+  ]
+ },
+ "reviews": {
+  "nodes": [
+   {
+    "databaseId": 5311596055,
+    "url": "https://github.com/muresanroland/orqadence/pull/34#pullrequestreview-5311596055",
+    "author": {
+     "login": "greptile-apps",
+     "__typename": "Bot"
+    },
+    "submittedAt": "2026-09-24T23:48:40Z",
+    "commit": {
+     "oid": "034ef1009b9ecde2c299053934934b7d734e41e4"
+    },
+    "body": ""
+   }
+  ]
+ },
+ "comments": {
+  "nodes": [
+   {
+    "databaseId": 5824188876,
+    "url": "https://github.com/muresanroland/orqadence/pull/34#issuecomment-5824188876",
+    "author": {
+     "login": "greptile-apps",
+     "__typename": "Bot"
+    },
+    "lastEditedAt": "2026-09-24T23:48:55Z",
+    "body": "<!-- greptile_summary -->\n\n<h2><a href=\"https://app.greptile.com/api/retrigger?id=69060438\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/RetriggerDark.svg?v=2\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/Retrigger.svg?v=2\"><img alt=\"Retrigger\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/Retrigger.svg?v=2\" align=\"right\"></picture></a>Confidence Score: 3/5</h2>\n\nNot safe to merge until init prevents repository-controlled paths from redirecting writes outside the Target repo. The other findings are non-blocking.\n\n<h2>Findings</h2>\n\n1. <img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\">&nbsp;<img alt=\"Security\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/Security.svg?v=2\" align=\"top\">&nbsp;**Instruction symlinks redirect writes** <a href=\"https://github.com/muresanroland/harness/pull/34#discussion_r4099629490\">▶</a>\n2. <img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\">&nbsp;**Claude file misses guidance** <a href=\"https://github.com/muresanroland/harness/pull/34#discussion_r4099629506\">▶</a>\n3. <img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\">&nbsp;**Installed guide has broken pointer** <a href=\"https://github.com/muresanroland/harness/pull/34#discussion_r4099629522\">▶</a>\n4. <img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\">&nbsp;**Moderator definition needs exception** <a href=\"https://github.com/muresanroland/harness/pull/34#discussion_r4099629532\">▶</a>\n\n…"
+   },
+   {
+    "databaseId": 5824194433,
+    "url": "https://github.com/muresanroland/orqadence/pull/34#issuecomment-5824194433",
+    "author": {
+     "login": "greptile-apps",
+     "__typename": "Bot"
+    },
+    "lastEditedAt": null,
+    "body": "<!-- greptile_outside_diff -->\n\n<h3>Comments Outside Diff</h3>\n\nThese findings sit on lines the diff does not cover, so they could not be posted inline. Each one leaves this list once its file changes.\n\n- <img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\">&nbsp;**Init follows repository symlinks when writing agent instructions and docs** <a href=\"https://github.com/muresanroland/harness/pull/34\">▶</a>\n\n  - **Bug**\n    - A target repository can point CLAUDE.md or AGENTS.md at an outside writable file; init appends its Agent skills block to that outside file. A symlinked docs/agents directory likewise redirects three generated files outside the repository, and a dangling docs-file symlink creates its outside target. The noninteractive prompt is displayed but no answer is required. This is a security-relevant, repository-controlled write outside the intended boundary; it is limited to paths writable by the init process.\n  - **Cause**\n    - `src/setup.rs:382-406` treats `None` from the prompt as permission and uses symlink-following reads and `fs::write` for the instruction file, notably line 406. `src/setup.rs:372-389` uses `exists()` and `fs::write` without rejecting symlinked docs paths or parents. `src/cli.rs:45-50` supplies empty input in noninteractive mode.\n  - **Fix**\n    - Require affirmative confirmation for these writes, and reject symlinks at destination files and relevant parent components before writing; use a non-following open strategy to avoid a check/write race.\n- <img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\">&nbsp;**Installed issue\\-tracker guide points to an AGENTS\\.md that init does not create** <a href=\"https://github.com/muresanroland/harness/pull/34\">▶</a>\n\n  - **Bug**\n    - In a target that already has CLAUDE.md, init places the Agent skills block there but the installed issue-tracker.md tells readers to see AGENTS.md. The guide also describes this repo's beads conventions as the target's. This is a documentation wayfinding cost, not an init failure.\n  - **Cause**\n    - setup.rs lines 332–336 embed and install the source guide unchanged, while write_agent_docs selects CLAUDE.md when it exists.\n  - **Fix**\n    - Use target-neutral wording in the installed guide, or adapt its instruction-file pointer and repo-specific conventions when installing it."
+   }
+  ]
+ }
+}
