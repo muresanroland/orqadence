@@ -767,6 +767,9 @@ pub(crate) fn prefix(repo: &Path, manifest: &mut Manifest) -> io::Result<(Rename
                 fs::rename(&from, &to)?;
                 rename(&to, &new)?;
             }
+        } else if own(repo, FILES) && !stale {
+            // Moved by an earlier init that failed before naming it.
+            rename(&to, &new)?;
         }
         for link in links(repo, &name) {
             if fs::read_link(&link).is_ok_and(|to| to == target(&name)) {

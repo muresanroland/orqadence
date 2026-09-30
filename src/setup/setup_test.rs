@@ -213,7 +213,8 @@ fn a_skill_installed_under_both_names_loses_the_unprefixed_one() {
 
 /// A folder at a skill's new name the manifest does not name is not taken:
 /// the skill is left as it is and the user told. One whose old folder is
-/// gone, renamed by an init that failed after, takes it.
+/// gone, renamed by an init that failed after, takes it and is named in its
+/// SKILL.md.
 #[test]
 fn a_folder_at_the_new_name_is_taken_only_when_the_old_one_is_gone() {
     let repo = TempDir::new();
@@ -225,7 +226,7 @@ fn a_folder_at_the_new_name_is_taken_only_when_the_old_one_is_gone() {
     );
     write_file(
         &root.join(".orqadence/skills/orqa-caveman/SKILL.md"),
-        "---\nname: orqa-caveman\n---\n",
+        "---\nname: caveman\n---\n",
     );
     write_file(
         &root.join(".orqadence/skills.json"),
@@ -249,6 +250,10 @@ fn a_folder_at_the_new_name_is_taken_only_when_the_old_one_is_gone() {
         "someone else's"
     );
     assert!(fs::symlink_metadata(root.join(".claude/skills/orqa-tdd")).is_err());
+    assert_eq!(
+        read(root, ".orqadence/skills/orqa-caveman/SKILL.md"),
+        "---\nname: orqa-caveman\n---\n"
+    );
     let manifest = Manifest::load(root).unwrap();
     let names: Vec<&str> = manifest.skills.keys().map(String::as_str).collect();
     assert!(
