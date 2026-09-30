@@ -733,8 +733,9 @@ type Renames = Vec<(String, String)>;
 /// as orqadence-create-pr becomes CREATE_PR. One the manifest names already
 /// with it (a merge, or create-pr and orqadence-create-pr both) is stale:
 /// its folder, links and entry go, its picks turn to the new one. Gives
-/// each (old, new) renamed, then each left for the user: a stale one in a
-/// .orqadence/skills not the checkout's own (own).
+/// each (old, new) renamed, then each left for the user: one whose new
+/// name has a folder already that the manifest does not name, or a stale
+/// one in a .orqadence/skills not the checkout's own (own).
 pub(crate) fn prefix(repo: &Path, manifest: &mut Manifest) -> io::Result<(Renames, Renames)> {
     let old: Vec<String> = manifest
         .skills
@@ -751,18 +752,20 @@ pub(crate) fn prefix(repo: &Path, manifest: &mut Manifest) -> io::Result<(Rename
         let (from, to) = (skill_dir(repo, &name), skill_dir(repo, &new));
         let stale = manifest.skills.contains_key(&new);
         let had = fs::symlink_metadata(&from).is_ok();
-        if stale && had && !own(repo, FILES) {
+        let there = fs::symlink_metadata(&to).is_ok();
+        // A folder at the new name the manifest does not name is not this
+        // skill's to take. With none at the old name, an earlier init
+        // renamed it before it failed.
+        if had && (there && !stale || stale && !own(repo, FILES)) {
             left.push((name, new));
             continue;
         }
         if own(repo, FILES) && had {
-            match (fs::symlink_metadata(&to).is_ok(), stale) {
-                (false, _) => {
-                    fs::rename(&from, &to)?;
-                    rename(&to, &new)?;
-                }
-                (true, true) => fs::remove_dir_all(&from)?,
-                (true, false) => {}
+            if there {
+                fs::remove_dir_all(&from)?;
+            } else {
+                fs::rename(&from, &to)?;
+                rename(&to, &new)?;
             }
         }
         for link in links(repo, &name) {

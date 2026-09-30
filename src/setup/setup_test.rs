@@ -211,6 +211,53 @@ fn a_skill_installed_under_both_names_loses_the_unprefixed_one() {
     assert_eq!(manifest.pick("test-first"), "orqa-tdd");
 }
 
+/// A folder at a skill's new name the manifest does not name is not taken:
+/// the skill is left as it is and the user told. One whose old folder is
+/// gone, renamed by an init that failed after, takes it.
+#[test]
+fn a_folder_at_the_new_name_is_taken_only_when_the_old_one_is_gone() {
+    let repo = TempDir::new();
+    let root = repo.path();
+    put_linked(root, "tdd", "---\nname: tdd\n---\nmine\n");
+    write_file(
+        &root.join(".orqadence/skills/orqa-tdd/SKILL.md"),
+        "someone else's",
+    );
+    write_file(
+        &root.join(".orqadence/skills/orqa-caveman/SKILL.md"),
+        "---\nname: orqa-caveman\n---\n",
+    );
+    write_file(
+        &root.join(".orqadence/skills.json"),
+        r#"{"skills": {"tdd": {"repo": "https://github.com/mattpocock/skills"},
+            "caveman": {"repo": "https://github.com/JuliusBrussee/caveman"}}}"#,
+    );
+
+    let out = install(root, "");
+
+    assert!(out.contains("init: tdd is not renamed"), "{out}");
+    assert!(
+        out.contains("init: renamed caveman to orqa-caveman"),
+        "{out}"
+    );
+    assert_eq!(
+        read(root, ".claude/skills/tdd/SKILL.md"),
+        "---\nname: tdd\n---\nmine\n"
+    );
+    assert_eq!(
+        read(root, ".orqadence/skills/orqa-tdd/SKILL.md"),
+        "someone else's"
+    );
+    assert!(fs::symlink_metadata(root.join(".claude/skills/orqa-tdd")).is_err());
+    let manifest = Manifest::load(root).unwrap();
+    let names: Vec<&str> = manifest.skills.keys().map(String::as_str).collect();
+    assert!(
+        names.contains(&"tdd") && !names.contains(&"orqa-tdd"),
+        "{names:?}"
+    );
+    assert!(names.contains(&"orqa-caveman"), "{names:?}");
+}
+
 /// A checkout an older init set up at user level, run without HOME: its
 /// skills cannot be copied, so init stops rather than install afresh.
 #[test]
