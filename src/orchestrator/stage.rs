@@ -265,10 +265,10 @@ impl Orchestrator {
     /// demand, so its row Wakes it alone (attempt).
     pub(crate) fn new(cfg: Config) -> io::Result<Arc<Self>> {
         for st in [&IMPLEMENT, &REVIEW, &DEBATE, &FIX] {
-            stage_row(&cfg.repo, st).map_err(io::Error::other)?;
+            stage_row(&cfg.repo, st, &[]).map_err(io::Error::other)?;
         }
-        debate_inputs(&cfg.repo, "", |_| None).map_err(io::Error::other)?;
-        fallback_row(&cfg.repo).map_err(io::Error::other)?;
+        debate_inputs(&cfg.repo, "", &[], |_| None).map_err(io::Error::other)?;
+        fallback_row(&cfg.repo, &[]).map_err(io::Error::other)?;
         check(&cfg.repo).map_err(io::Error::other)?;
         let state = load_state(&cfg.repo)?;
         Ok(Arc::new(Self::with_state(cfg, state)))
@@ -773,13 +773,17 @@ impl Orchestrator {
         inputs: &[(&str, &str)],
         want: ResultRequirements,
     ) -> Held {
-        let row = match stage_row(&self.cfg.repo, st) {
+        let labels = match self.labels(ticket) {
+            Ok(labels) => labels,
+            Err(err) => return Held::Woke(format!("Ticket labels not read: {err}")),
+        };
+        let row = match stage_row(&self.cfg.repo, st, &labels) {
             Ok(row) => row,
             Err(err) => return Held::Woke(err),
         };
         // A Review on a Limited App goes as the user answered.
         let row = match st.name == REVIEW.name {
-            true => match self.review_row(ticket, label, file, row) {
+            true => match self.review_row(ticket, label, file, row, &labels) {
                 Ok(row) => row,
                 Err(held) => return held,
             },
@@ -799,7 +803,7 @@ impl Orchestrator {
         let now = (self.cfg.clock)();
         let limited = |app: &str| self.limited_until(app).map(|reset| until(reset, now));
         let (sides, runs) = match st.name == DEBATE.name {
-            true => match debate_inputs(&self.cfg.repo, &run_dir, limited) {
+            true => match debate_inputs(&self.cfg.repo, &run_dir, &labels, limited) {
                 Ok(got) => got,
                 Err(err) => return Held::Woke(err),
             },
@@ -1032,7 +1036,7 @@ impl Orchestrator {
         session: &Session,
         file: &Path,
     ) -> Result<String, String> {
-        let row = stage_row(&self.cfg.repo, st)?;
+        let row = stage_row(&self.cfg.repo, st, &self.labels(ticket)?)?;
         if row.app.name != session.app {
             return Err(format!("its App is now {}", row.app.name));
         }
@@ -1293,7 +1297,13 @@ impl Orchestrator {
 
     /// A bd comment on the Ticket for a Question that came while the user
     /// was Away: `lead`, then the question and its options.
-    fn comment_away(&self, ticket: &str, lead: &str, question: &str, options: &[String]) {
+    pub(super) fn comment_away(
+        &self,
+        ticket: &str,
+        lead: &str,
+        question: &str,
+        options: &[String],
+    ) {
         let options: String = options.iter().map(|o| format!("- {o}\n")).collect();
         let comment = format!("{lead}\n\n{question}\n{options}");
         let argv = ["bd", "comments", "add", ticket, comment.trim_end()];

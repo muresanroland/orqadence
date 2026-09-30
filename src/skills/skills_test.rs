@@ -124,37 +124,26 @@ fn fetch_inits_a_touched_terraform_root_in_a_temp_copy() {
             "plugin \"aws\" {\n  enabled = true\n  source  = \"github.com/terraform-linters/tflint-ruleset-aws\"\n}\n",
         ),
     ]);
-    let calls: Vec<(&str, &str, &str)> = log
-        .lines()
-        .map(|line| {
-            let mut words = line.splitn(3, ' ');
-            let tool = words.next().unwrap();
-            (tool, words.next().unwrap(), words.next().unwrap_or(""))
-        })
-        .collect();
     // the stubs log the cwd with links resolved (/var is /private/var on macOS)
     let worktree = fs::canonicalize(repo.path()).unwrap();
     let worktree = worktree.to_str().unwrap();
-    let init = calls
-        .iter()
-        .find(|(tool, _, args)| *tool == "terraform" && args.starts_with("init -backend=false"))
+    let init = log
+        .lines()
+        .find(|line| line.starts_with("terraform ") && line.contains(" init -backend=false"))
         .unwrap_or_else(|| panic!("no terraform init: {log}"));
-    assert!(init.1.ends_with("/infra"), "{log}");
-    let tflint = calls
-        .iter()
-        .find(|(tool, _, args)| *tool == "tflint" && *args == "--init")
+    assert!(init.split(' ').nth(1).unwrap().ends_with("/infra"), "{log}");
+    let tflint = log
+        .lines()
+        .find(|line| line.starts_with("tflint ") && line.ends_with(" --init"))
         .unwrap_or_else(|| panic!("no tflint --init: {log}"));
     assert!(
-        calls
-            .iter()
-            .any(|call| call.0 == "gh" && call.2 == "auth token"),
+        log.lines()
+            .any(|line| line.starts_with("gh ") && line.ends_with(" auth token")),
         "{log}"
     );
-    for (tool, cwd, _) in [init, tflint] {
-        assert!(
-            !cwd.starts_with(worktree),
-            "{tool} ran in the worktree: {log}"
-        );
+    for call in [init, tflint] {
+        let cwd = call.split(' ').nth(1).unwrap();
+        assert!(!cwd.starts_with(worktree), "ran in the worktree: {call}");
     }
     assert_eq!(git(repo.path(), &["status", "--porcelain"]), "");
 }

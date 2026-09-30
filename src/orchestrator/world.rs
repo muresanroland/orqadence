@@ -34,6 +34,8 @@ pub(crate) struct BdTicket {
     pub(crate) close_reason: String,
     /// No parent Epic: a Ticket bd lists on its own.
     pub(crate) no_epic: bool,
+    /// Its bd labels.
+    pub(crate) labels: Vec<String>,
 }
 
 impl BdTicket {
@@ -44,7 +46,8 @@ impl BdTicket {
         }
     }
 
-    /// The issue as 'bd list --json' prints it, dependencies included.
+    /// The issue as 'bd list --json' and 'bd show --json' print it,
+    /// dependencies and labels included.
     fn json(&self) -> serde_json::Value {
         let deps: Vec<_> = self
             .deps
@@ -59,6 +62,7 @@ impl BdTicket {
             "parent": if self.no_epic { "" } else { EPIC },
             "dependencies": deps,
             "close_reason": self.close_reason,
+            "labels": self.labels,
         })
     }
 }
@@ -542,6 +546,10 @@ impl World {
                 all.push(row);
             }
             return Ok(json!(all).to_string());
+        }
+        if cmd.starts_with("bd show") && cmd.ends_with(" --json") {
+            let shown = w.tickets.iter().filter(|t| t.id == argv[2]);
+            return Ok(json!(shown.map(BdTicket::json).collect::<Vec<_>>()).to_string());
         }
         if cmd.starts_with("bd ready") {
             let listed = w.tickets.iter().filter(scoped).filter(ready);

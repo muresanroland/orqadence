@@ -262,12 +262,14 @@ pub(crate) fn install_skills(
             }
             let write = match mode {
                 Mode::Overwrite => true,
-                // A file with no record is one an older release did not ship,
-                // written when absent, or one it did ship, kept as edited.
-                Mode::Refresh => match record.get(&rel) {
-                    Some(wrote) => fs::read_to_string(&dest).is_ok_and(|now| now == *wrote),
-                    None => !dest.exists(),
-                },
+                // A file not there yet, as a skill newer than the install, is
+                // installed; one there is rewritten only when unedited.
+                Mode::Refresh => {
+                    !dest.exists()
+                        || record.get(&rel).is_some_and(|wrote| {
+                            fs::read_to_string(&dest).is_ok_and(|now| now == *wrote)
+                        })
+                }
                 Mode::Fresh => !dest.exists(),
             };
             if write {
@@ -1043,7 +1045,7 @@ pub(crate) fn preflight(
             for (job, suggestions) in JOBS {
                 let pick = manifest.pick(job);
                 // A row that cannot be read is the Orchestrator's to refuse.
-                let Ok(row) = app::row(repo, manifest::job_row(job)) else {
+                let Ok(row) = app::row(repo, manifest::job_row(job), &[]) else {
                     continue;
                 };
                 let have: Vec<String> = found
@@ -1073,8 +1075,8 @@ pub(crate) fn preflight(
     // Review's fallback, unset, runs nothing.
     for key in app::ROWS {
         let row = match key {
-            app::IF_LIMITED => app::fallback_row(repo).ok().flatten(),
-            _ => app::row(repo, key).ok(),
+            app::IF_LIMITED => app::fallback_row(repo, &[]).ok().flatten(),
+            _ => app::row(repo, key, &[]).ok(),
         };
         let Some(row) = row else {
             continue;
