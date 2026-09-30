@@ -1716,6 +1716,54 @@ fn the_reviews_limit_question_names_the_extra_review() {
     await_end(&mut s);
 }
 
+/// While its Extra review's fetch.sh runs, a Ticket's TICKETS line reads
+/// fetching in place of its Stage.
+#[test]
+fn a_ticket_reads_fetching_while_its_fetch_runs() {
+    let ticket = BdTicket {
+        labels: vec!["orqa:security".to_string()],
+        ..BdTicket::new("hx-1")
+    };
+    let (w, _) = new_world(vec![ticket]);
+    write_file(
+        &w.repo.join(".orqadence/config.json"),
+        r#"{"labels": {"security": {"kind": "area", "extra_review": {"skill": "orqa-sec-review"}}}}"#,
+    );
+    w.installed("orqa-sec-review");
+    write_file(
+        &w.repo.join(".orqadence/skills/orqa-sec-review/fetch.sh"),
+        "#!/usr/bin/env bash\n",
+    );
+    let held = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let hold = held.clone();
+    w.hook(move |_, argv| {
+        if argv[0] != "env" {
+            return None;
+        }
+        while hold.load(std::sync::atomic::Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        Some(Ok(String::new()))
+    });
+    let mut s = shell(&w);
+    s.command("/start-ticket hx-1");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !s.state.tickets.get("hx-1").is_some_and(|ts| ts.fetching) {
+        assert!(Instant::now() < deadline, "never fetching");
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    let buf = render(&s, 120, 40);
+    let line = row_of(&buf, "hx-1 Ticket hx-1");
+    assert!(line.ends_with("fetching  WORKING"), "{line:?}");
+    held.store(false, std::sync::atomic::Ordering::SeqCst);
+    await_line(&mut s, "hx-1 PR #hx-1 opened");
+    assert!(find(&render(&s, 120, 40), "fetching").is_none());
+    s.command("/stop-work");
+    await_end(&mut s);
+}
+
 /// A pick not merged on the base asks when its Ticket starts: its two
 /// options above the input line, the one picked going to the Ticket, which
 /// has no pane. Run without it starts Implement with the job's line out.

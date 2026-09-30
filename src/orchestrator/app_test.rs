@@ -736,6 +736,7 @@ fn a_labels_object_parses_and_an_entry_needs_only_kind() {
             app: "codex".to_string(),
             model: "gpt-6-sol".to_string(),
             effort: "high".to_string(),
+            ..Default::default()
         },
     };
     assert_eq!(labels["be"], Ok(be));

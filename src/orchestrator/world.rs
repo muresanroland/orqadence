@@ -486,6 +486,11 @@ impl World {
                 .map(|()| String::new())
                 .map_err(|e| e.to_string());
         }
+        if cmd.starts_with("git show") {
+            // <rev>:<path> on the base, which is the checkout (check_out)
+            let path = argv[2].split_once(':').map_or("", |(_, path)| path);
+            return fs::read_to_string(self.repo.join(path)).map_err(|e| e.to_string());
+        }
         if cmd.starts_with("bd worktree remove") {
             let _ = fs::remove_dir_all(argv[3]);
             return Ok(String::new());

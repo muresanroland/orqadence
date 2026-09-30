@@ -144,6 +144,7 @@ fn every_field_survives_a_save_and_a_missing_file_is_an_empty_state() {
             feedback: "cover y too".to_string(),
             conflict: true,
             limited: "codex".to_string(),
+            fetching: false, // live only, never saved
         },
     );
     // Each App's limit, kept for a /continue after Orqadence closed.
