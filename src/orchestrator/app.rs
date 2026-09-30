@@ -662,9 +662,9 @@ pub(crate) static ROWS: [&str; 8] = [
 pub(crate) struct Label {
     /// "area" or "modifier".
     pub(crate) kind: String,
-    #[allow(dead_code)] // read by the label skills Ticket
+    /// The skills the code-editing Stages load, by name.
     pub(crate) skills: Vec<String>,
-    #[allow(dead_code)] // read by the label guidance Ticket
+    /// One line the code-editing Stages follow.
     pub(crate) guidance: String,
     /// Row overrides, shaped as config.json's rows: a non-empty field wins
     /// over the repo's row.
@@ -672,7 +672,6 @@ pub(crate) struct Label {
     /// A file name; empty is the default template.
     #[allow(dead_code)] // read by the PR template Ticket
     pub(crate) pr_template: String,
-    #[allow(dead_code)] // read by the Extra review Ticket
     pub(crate) extra_review: ExtraReview,
 }
 
@@ -760,6 +759,28 @@ impl Clash {
     }
 }
 
+/// The Ticket's labels' entries in doc, by name, the Area's first: a label
+/// with no entry is refused.
+fn entries(doc: &Value, names: &[String]) -> Result<Vec<(String, Label)>, String> {
+    let mut picked = Vec::new();
+    for name in names {
+        let label = match &doc["labels"][name.as_str()] {
+            Value::Null => Err(format!("orqa:{name} has no entry in config.json's labels")),
+            value => entry(name, value),
+        }?;
+        picked.push((name.clone(), label));
+    }
+    // The Area's first, so a Modifier's field wins.
+    picked.sort_by_key(|(_, label)| label.kind == "modifier");
+    Ok(picked)
+}
+
+/// The Ticket's labels' entries, read from config.json as a Stage starts,
+/// the Area's first.
+pub(crate) fn ticket_labels(repo: &Path, names: &[String]) -> Result<Vec<(String, Label)>, String> {
+    entries(&read(repo)?.1, names)
+}
+
 /// The first clash among the Ticket's labels, by name: an entry missing,
 /// then two Areas, then two Modifiers on one field. None for a clean set,
 /// and for an entry that cannot be read: that is the row's to refuse.
@@ -812,14 +833,9 @@ fn labelled(doc: &Value, names: &[String]) -> Result<Value, String> {
         }
         None => {}
     }
-    let mut picked = Vec::new();
-    for name in names {
-        picked.push(entry(name, &doc["labels"][name.as_str()])?);
-    }
-    // The Area's first, so a Modifier's field wins.
-    picked.sort_by_key(|label| label.kind == "modifier");
+    let picked = entries(doc, names)?;
     let mut doc = doc.clone();
-    for label in &picked {
+    for (_, label) in &picked {
         put_rows(&mut doc, label);
     }
     Ok(doc)

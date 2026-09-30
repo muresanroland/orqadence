@@ -81,8 +81,9 @@ Decided on the Waypoint "orqa:infra's Extra review: what the check runs, and fet
 - **Prerequisites.** infra-review's fetch.sh runs before every infra Extra review, so it picks up providers a Round adds. It writes to .orqadence-local/cache/infra, which every worktree of the checkout shares.
   - It works on temp copies of the touched Terraform roots and never writes the worktree.
   - It fills the provider cache.
+  - It keeps each touched root's .terraform/modules, so registry and git modules init offline.
   - It runs tflint --init, taking GITHUB_TOKEN from gh auth token.
   - It warms kubeconform's schema cache.
-- **In the review.** The worktree is read-only, so each touched Terraform root is copied to $TMPDIR, then initialised offline with init -backend=false -plugin-dir pointing at the cache. A CRD with no schema is skipped and listed under Not run.
+- **In the review.** The worktree is read-only, so each touched Terraform root is copied to $TMPDIR, then initialised offline with init -backend=false -plugin-dir pointing at the cache, and -get=false over the cached modules. A CRD with no schema is skipped and listed under Not run.
 - **Fetch failure.** On Run without, validate, the mocked tests, kubeconform and tflint's plugins are marked not run. Under Away, the Ticket parks.
 - **Lock file.** The review and fetch.sh never touch the worktree's .terraform.lock.hcl. Implement and Fix commit a change to it only when the Ticket adds or upgrades a provider. Then they regenerate it with terraform providers lock for every platform the lock file already lists. Without network, that step is Manual work.

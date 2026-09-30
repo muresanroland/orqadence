@@ -7,10 +7,12 @@
     "effort": "high",
     "model": "opus"
   },
+  "max_tickets": 4,
   "moderator": {
     "effort": "high",
     "model": "opus"
   },
+  "plan_floor": 0.7,
   "review": {
     "effort": "high",
     "model": "gpt-6.1-sol"

@@ -16,10 +16,11 @@ Your plan lists what you will change and the tests you will write; it covers eac
 
 ## Do
 
-1. Read the **Ticket file**, the Ticket as `bd show <Ticket>` prints it: the description and acceptance criteria are your whole scope. Do not start on other Tickets.
+1. Read the **Ticket file**, the Ticket as `bd show <Ticket>` prints it: the description and acceptance criteria are your whole scope. Do not start on other Tickets. Its `## Epic context`, when present, is the parent Epic's description: context, not scope.
 2. Read the repo's `CLAUDE.md` (or `AGENTS.md`) and `CONTEXT.md` if present, and any ADR the Ticket names. Use the repo's vocabulary and conventions.
    Use the {{working-mode}} skill for all your work: load it by name in this session. A hook may load it; do not count on it, and do not skip it because it looks active.
    Use the {{prose}} skill for your commits and result file: load it by name in this session.
+   Load every skill under **Label skills** by name in this session, and follow **Label guidance**.
 3. Implement the Ticket test-first: a failing test, then the code. The Ticket and the repo's existing tests tell you the seams; you cannot confirm them with anyone, so pick the public interface the acceptance criteria describe.
    Use the {{test-first}} skill for it.
 4. Run the repo's typecheck and the tests you touched as you go, and the full test suite once at the end.

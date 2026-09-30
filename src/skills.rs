@@ -1,5 +1,6 @@
-//! The skills Orqadence ships: one Stage skill per Stage, plus orqa-create-pr. 'orqa init' copies them into a Target repo. A new skill
-//! is one more line here.
+//! The skills Orqadence ships: one Stage skill per Stage, plus orqa-create-pr
+//! and orqa-infra-review with its fetch.sh. 'orqa init' copies them into a
+//! Target repo. A new skill is one more line here.
 
 use std::fs;
 use std::io;
@@ -11,6 +12,10 @@ use std::path::Path;
 /// a skill of the user's own.
 pub(crate) const SKILLS: &[(&str, &str)] = &[
     (CREATE_PR, include_str!("../skills/orqa-create-pr/SKILL.md")),
+    (
+        "orqa-infra-review",
+        include_str!("../skills/orqa-infra-review/SKILL.md"),
+    ),
     (
         "orqa-stage-address",
         include_str!("../skills/orqa-stage-address/SKILL.md"),
@@ -32,6 +37,14 @@ pub(crate) const SKILLS: &[(&str, &str)] = &[
         include_str!("../skills/orqa-stage-review/SKILL.md"),
     ),
 ];
+
+/// (skill, file, body): the files a Shipped skill carries beside its
+/// SKILL.md. init writes them executable.
+pub(crate) const EXTRA_FILES: &[(&str, &str, &str)] = &[(
+    "orqa-infra-review",
+    "fetch.sh",
+    include_str!("../skills/orqa-infra-review/fetch.sh"),
+)];
 
 /// The create-pr skill the Fix Stage runs.
 pub(crate) const CREATE_PR: &str = "orqa-create-pr";
@@ -60,3 +73,5 @@ pub(crate) mod manifest;
 
 #[cfg(test)]
 mod manifest_test;
+#[cfg(test)]
+mod skills_test;
