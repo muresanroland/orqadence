@@ -1,8 +1,12 @@
+use super::app::set_typesafe;
+use super::cost::logged;
 use super::judgment::fake::Fake;
 use super::judgment::{offered, plan_request, request, Action, PlanJudged, PLAN_FLOOR};
+use super::plan_test::nouls;
 use super::stage::{Answer, Ask, Config, Orchestrator};
 use super::state::{load_state, State, TicketState, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 use super::world::{new_world, spawn_ticket, succeed, working, BdTicket, World};
+use super::write_file;
 use crate::tempdir::TempDir;
 use serde_json::{json, Value};
 use std::fs;
@@ -947,4 +951,26 @@ fn the_plan_prototype_cases_build_judge_plan_pys_request() {
         seen += 1;
     }
     assert_eq!(seen, 33, "cases");
+}
+
+/// Each reply's model and tokens are logged, and the Epic summary prices
+/// them: jev-1.13.0 charges $0.042 per million input tokens, output free.
+/// With TypeSafe off nothing is asked, so nothing is logged or counted.
+#[test]
+fn a_replys_tokens_are_logged_and_priced_and_none_with_typesafe_off() {
+    let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
+    o.cfg.typesafe = Fake::new(|_| {
+        let mut reply = nouls(0.9, 0.9, 0.1);
+        reply["model"] = json!("jev-1.13.0");
+        reply["usage"] = json!({ "input_tokens": 1_000_000, "output_tokens": 53 });
+        Ok(reply)
+    });
+    assert!(o.judge_plan("hx-1", "# Plan").is_some());
+    set_typesafe(&w.repo, false).unwrap();
+    assert!(o.judge_plan("hx-1", "# Plan").is_none());
+
+    write_file(&w.repo.join(".orqadence-local/orchestrator.log"), &w.log());
+    let spent = logged(&w.repo).remove("hx-1").unwrap_or_default().typesafe;
+    assert_eq!((spent.tokens, spent.unpriced), (1_000_053, false));
+    assert!((spent.dollars - 0.042).abs() < 1e-9, "{}", spent.dollars);
 }

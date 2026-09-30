@@ -15,6 +15,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::app::{self, typesafe, Floor};
+use super::cost::typesafe_line;
 use super::stage::Orchestrator;
 use super::state::TicketState;
 
@@ -492,7 +493,9 @@ impl Orchestrator {
     }
 
     /// Posts a request under the key and reads the reply; an error, or a
-    /// reply `read` cannot use, is logged without the key.
+    /// reply `read` cannot use, is logged without the key. A reply's model
+    /// and tokens are logged for the Epic summary (cost::typesafe_line),
+    /// used or not, since they are billed either way.
     fn ask_typesafe<T>(
         &self,
         ticket: &str,
@@ -501,6 +504,16 @@ impl Orchestrator {
         read: impl FnOnce(&Value) -> Result<T, &'static str>,
     ) -> Option<T> {
         let reply = self.cfg.typesafe.systemone(key, body);
+        if let Ok(reply) = &reply {
+            let usage = &reply["usage"];
+            if let (Some(model), Some(input), Some(output)) = (
+                reply["model"].as_str(),
+                usage["input_tokens"].as_u64(),
+                usage["output_tokens"].as_u64(),
+            ) {
+                self.log(ticket, &typesafe_line(model, input, output));
+            }
+        }
         match reply.and_then(|reply| read(&reply).map_err(str::to_string)) {
             Ok(answer) => Some(answer),
             Err(err) => {
