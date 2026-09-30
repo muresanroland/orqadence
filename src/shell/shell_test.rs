@@ -7,7 +7,7 @@ use super::{About, Epic, NoticeKind, Pending, Screen};
 use crate::orchestrator::app::set_max_tickets;
 use crate::orchestrator::judgment::fake::Fake as TypeSafeFake;
 use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
-use crate::orchestrator::limit_test::hits;
+use crate::orchestrator::limit_test::{hits, CODEX};
 use crate::orchestrator::plan_test::{at_dialog, nouls};
 use crate::orchestrator::question_test::ASKS;
 use crate::orchestrator::scheduler::BdIssue;
@@ -1621,13 +1621,7 @@ fn the_reviews_limit_question_offers_the_fallback_and_its_answer_stands() {
         &w.repo.join(".orqadence/config.json"),
         r#"{"review_if_limited": {"app": "claude", "model": "opus"}}"#,
     );
-    hits(
-        &w,
-        "hx-1",
-        "review",
-        "idle",
-        "■ You’ve hit your usage limit. Try again at 3:05 PM.",
-    );
+    hits(&w, "hx-1", "review", "idle", CODEX);
     let mut s = shell(&w);
     let now = chrono::Local
         .with_ymd_and_hms(2026, 9, 25, 14, 0, 0)
@@ -1681,13 +1675,7 @@ fn the_reviews_limit_question_names_the_extra_review() {
         r#"{"labels": {"security": {"kind": "area", "extra_review": {"skill": "orqa-sec-review"}}}}"#,
     );
     w.installed("orqa-sec-review");
-    hits(
-        &w,
-        "hx-1",
-        "review",
-        "idle",
-        "■ You’ve hit your usage limit. Try again at 3:05 PM.",
-    );
+    hits(&w, "hx-1", "review", "idle", CODEX);
     let mut s = shell(&w);
     let now = chrono::Local
         .with_ymd_and_hms(2026, 9, 25, 14, 0, 0)

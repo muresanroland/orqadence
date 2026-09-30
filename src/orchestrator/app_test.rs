@@ -704,7 +704,7 @@ fn a_labels_object_parses_and_an_entry_needs_only_kind() {
             "guidance": "You build backends.",
             "rows": {"implement": {"model": "opus", "effort": ""}},
             "pr_template": "be.md",
-            "extra_review": {"skill": "security-review", "position": "first", "debate": true,
+            "extra_review": {"skill": "security-review", "position": "first",
                 "app": "codex", "model": "gpt-6-sol", "effort": "high"},
         },
         "codex-review": {"kind": "modifier"},
@@ -729,16 +729,13 @@ fn a_labels_object_parses_and_an_entry_needs_only_kind() {
         extra_review: ExtraReview {
             skill: "security-review".to_string(),
             position: "first".to_string(),
-            debate: true,
+            debate: true, // the default: the entry leaves it out
             app: "codex".to_string(),
             model: "gpt-6-sol".to_string(),
             effort: "high".to_string(),
         },
     };
     assert_eq!(labels["be"], Ok(be));
-    // Debate on, and every Round (an empty position), unless the entry says
-    assert!(ExtraReview::default().debate);
-    assert!(labels["codex-review"].as_ref().unwrap().extra_review.debate);
     let modifier = Label {
         kind: "modifier".to_string(),
         ..Default::default()

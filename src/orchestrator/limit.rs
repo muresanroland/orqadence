@@ -238,9 +238,11 @@ impl Orchestrator {
             .is_some();
         let mut asked = false;
         let answer = loop {
-            let put = {
+            {
+                // put and sent under `asked`, so Questions go out in order
+                // and none after review() takes the answer
                 let mut out = self.asked.lock().unwrap();
-                match out.get_mut(app) {
+                let put = match out.get_mut(app) {
                     // answered meanwhile: review holds `asked` as it answers
                     _ if answered().is_some() => None,
                     None => {
@@ -265,11 +267,11 @@ impl Orchestrator {
                         }
                         _ => None,
                     },
+                };
+                // put anew by the Ticket that asked, so it replaces the Question
+                if let Some((by, text, ask)) = put {
+                    self.ask_only(&by, &text, ask);
                 }
-            };
-            // put anew by the Ticket that asked, so it replaces the Question
-            if let Some((by, text, ask)) = put {
-                self.ask_only(&by, &text, ask);
             }
             if self.consume(&format!("park-{ticket}")) {
                 break Err(Held::Park);

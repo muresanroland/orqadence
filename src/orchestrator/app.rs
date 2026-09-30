@@ -676,7 +676,7 @@ pub(crate) struct Label {
 }
 
 /// The Extra review a label adds: none while its skill is empty.
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default)]
 pub(crate) struct ExtraReview {
     /// Its review skill, in place of the review pick's.
@@ -687,6 +687,7 @@ pub(crate) struct ExtraReview {
     pub(crate) position: String,
     /// Its Findings join the Debate (the default), or go straight to the
     /// Fix as fix items not debated.
+    #[serde(default = "debate_on")]
     pub(crate) debate: bool,
     /// Its row; each empty field is the Review's.
     pub(crate) app: String,
@@ -694,17 +695,8 @@ pub(crate) struct ExtraReview {
     pub(crate) effort: String,
 }
 
-impl Default for ExtraReview {
-    fn default() -> Self {
-        ExtraReview {
-            skill: String::new(),
-            position: String::new(),
-            debate: true,
-            app: String::new(),
-            model: String::new(),
-            effort: String::new(),
-        }
-    }
+fn debate_on() -> bool {
+    true
 }
 
 /// The Extra review of the Ticket's Area label, read from config.json as
