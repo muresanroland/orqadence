@@ -25,7 +25,7 @@ A side is **limited** when Inputs say so (`Side A: limited until <t>` or `Side B
 
 ## 1. Gather the Findings
 
-- Take every Finding from the **Review file**.
+- Take every Finding from the **Review file**, and from the **Extra review file** when Inputs carry one: an Area label's Extra review, whose Findings are settled with the Review's.
 - Save `git diff <base>...HEAD` (base: `git symbolic-ref --short refs/remotes/origin/HEAD`, fall back to `main`) to `<Run directory>/diff-<Round>.patch`.
 - Add over-engineering Findings with the audit on the line below. With no such line there is no audit: write "no over-engineering audit (none picked)" under the Verdict's Notes, or, when **Not installed** under Inputs names the audit, that its skill is not installed.
   Run `<Side A command> "Use the {{audit}} skill on the diff in <that file>. Output one line per finding: - (severity) path:line — what to cut and what replaces it. Output nothing else. Nobody can answer questions: decide and note."` and add each line it returns as a Finding. If that command fails, continue with the Review's Findings and say so in the Verdict.

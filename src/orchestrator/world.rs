@@ -104,12 +104,9 @@ fn parse_prompt(pane: &str, text: &str) -> Prompt {
             "Result file" => {
                 p.file = value.to_string();
                 let base = Path::new(value).file_name().unwrap().to_string_lossy();
-                p.stage = base
-                    .trim_end_matches(".md")
-                    .split('-')
-                    .next()
-                    .unwrap()
-                    .to_string();
+                // its name without the Round: verdict, extra-review
+                let name = base.trim_end_matches(".md");
+                p.stage = name.rsplit_once('-').map_or(name, |(n, _)| n).to_string();
             }
             "Open PR" => p.open_pr = value == "yes",
             _ => {}

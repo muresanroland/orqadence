@@ -2,8 +2,8 @@
 //! effort, read when the Stage starts.
 
 use super::app::{
-    app, canonical, checks, clash, debate_inputs, fallback_row, floor_in, labels, row, Clash,
-    ExtraReview, Floor, Label, IF_LIMITED,
+    app, canonical, checks, clash, debate_inputs, extra_review, fallback_row, floor_in, labels,
+    row, Clash, ExtraReview, Floor, Label, IF_LIMITED,
 };
 use super::stage::{Answer, Ask, Orchestrator, AWAY};
 use super::state::STATUS_PARKED;
@@ -707,7 +707,7 @@ fn a_labels_object_parses_and_an_entry_needs_only_kind() {
             "guidance": "You build backends.",
             "rows": {"implement": {"model": "opus", "effort": ""}},
             "pr_template": "be.md",
-            "extra_review": {"skill": "security-review", "position": "first", "debate": true,
+            "extra_review": {"skill": "security-review", "position": "first",
                 "app": "codex", "model": "gpt-6-sol", "effort": "high"},
         },
         "codex-review": {"kind": "modifier"},
@@ -732,7 +732,7 @@ fn a_labels_object_parses_and_an_entry_needs_only_kind() {
         extra_review: ExtraReview {
             skill: "security-review".to_string(),
             position: "first".to_string(),
-            debate: true,
+            debate: true, // the default: the entry leaves it out
             app: "codex".to_string(),
             model: "gpt-6-sol".to_string(),
             effort: "high".to_string(),
@@ -774,6 +774,24 @@ fn repo_with(body: &Value) -> TempDir {
 /// The Ticket's labels, by name.
 fn names(labels: &[&str]) -> Vec<String> {
     labels.iter().map(|l| l.to_string()).collect()
+}
+
+/// The Extra review is the Area label's: a Modifier's extra_review is not
+/// read, so a Ticket with no Area label runs none.
+#[test]
+fn only_an_area_label_brings_an_extra_review() {
+    let review = json!({"skill": "security-review"});
+    let repo = repo_with(&json!({"labels": {
+        "security": {"kind": "area", "extra_review": review},
+        "fast": {"kind": "modifier", "extra_review": review},
+    }}));
+    let skill =
+        |labels: &[&str]| extra_review(repo.path(), &names(labels)).map(|e| e.map(|e| e.skill));
+    assert_eq!(skill(&["fast"]), Ok(None));
+    assert_eq!(
+        skill(&["fast", "security"]),
+        Ok(Some("security-review".to_string()))
+    );
 }
 
 /// A Ticket label's row field wins over config.json's row; an empty one

@@ -10,7 +10,7 @@ use super::app;
 use super::result::{read_stage_result, ResultRequirements, StageResult};
 use super::stage::{
     plural, pr_ref, result_name, stage_label, Ask, Orchestrator, Stage, StageError, ADDRESS, AWAY,
-    DEBATE, FIX, IMPLEMENT, REVIEW,
+    DEBATE, EXTRA_REVIEW, FIX, IMPLEMENT, REVIEW,
 };
 use super::state::{STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 use crate::skills::manifest::{placeholder, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS};
@@ -61,30 +61,94 @@ impl Orchestrator {
             let review_file = self.run_dir(ticket).join(result_name(&REVIEW, round));
             let review =
                 self.run_read_only(ticket, &REVIEW, round, &[], ResultRequirements::default())?;
+            // The Area label's Extra review, after the Review in every Round
+            // or in Round 1 only.
+            // ponytail: before_pr runs as every; the last Fix without a PR,
+            // then the Extra review, its Debate and a final Fix
+            // (docs/design/extra-review.md) once harness-brd.7 builds them.
+            let labels = self
+                .labels(ticket)
+                .map_err(|err| StageError::Parked(format!("Ticket labels not read: {err}")))?;
+            let extra = app::extra_review(&self.cfg.repo, &labels).map_err(StageError::Parked)?;
+            let extra = extra.filter(|extra| {
+                if extra.position == "before_pr" {
+                    self.log(
+                        ticket,
+                        "extra review before the PR is not built yet: runs every Round",
+                    );
+                }
+                extra.position != "first" || round == 1
+            });
             // Its App Limited and the PR to open unreviewed: this Round's
-            // Review and Debate are skipped, and nothing is left to fix.
-            let unreviewed = review.unreviewed;
+            // Review, Extra review and Debate are skipped, and nothing is
+            // left to fix.
+            let mut unreviewed = review.unreviewed;
             let fixes = if !unreviewed.is_empty() {
                 self.report(
                     ticket,
                     &format!("review {round} and debate {round} skipped: {unreviewed}"),
                 );
+                if extra.is_some() {
+                    self.report(
+                        ticket,
+                        &format!("extra review {round} skipped: {unreviewed}"),
+                    );
+                    unreviewed += ", the extra review skipped too";
+                }
                 Vec::new()
             } else {
                 self.report(
                     ticket,
                     &format!(
                         "review {round} found {}",
-                        plural(review.findings, "finding")
+                        plural(review.found.len(), "finding")
                     ),
                 );
+                let review_file = review_file.display().to_string();
+                let extra_file = self
+                    .run_dir(ticket)
+                    .join(result_name(&EXTRA_REVIEW, round))
+                    .display()
+                    .to_string();
+                let mut inputs = vec![("Review file", review_file.as_str())];
+                let mut findings = review.found.len();
+                // Debate off: its Findings are fix items, not debated.
+                let mut not_debated = Vec::new();
+                if let Some(extra) = &extra {
+                    let found = self.run_read_only(
+                        ticket,
+                        &EXTRA_REVIEW,
+                        round,
+                        &[],
+                        ResultRequirements::default(),
+                    )?;
+                    self.report(
+                        ticket,
+                        &format!(
+                            "extra review {round} found {}",
+                            plural(found.found.len(), "finding")
+                        ),
+                    );
+                    if extra.debate {
+                        inputs.push(("Extra review file", extra_file.as_str()));
+                        findings += found.found.len();
+                    } else {
+                        not_debated = found
+                            .found
+                            .iter()
+                            .map(|item| {
+                                format!("- [fix] {} | not debated | extra review", &item[2..])
+                            })
+                            .collect();
+                    }
+                }
                 let verdict = self.run_read_only(
                     ticket,
                     &DEBATE,
                     round,
-                    &[("Review file", &review_file.display().to_string())],
+                    &inputs,
                     ResultRequirements {
-                        review_findings: review.findings,
+                        review_findings: findings,
                         ..Default::default()
                     },
                 )?;
@@ -102,7 +166,11 @@ impl Orchestrator {
                         .display()
                         .to_string(),
                 );
-                verdict.fixes
+                // the Extra review's, after the Verdict's: they keep the
+                // Rounds going too
+                let mut fixes = verdict.fixes;
+                fixes.extend(not_debated);
+                fixes
             };
 
             // The Fix session always runs, even with nothing to fix, because

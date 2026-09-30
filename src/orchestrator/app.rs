@@ -675,18 +675,56 @@ pub(crate) struct Label {
     pub(crate) extra_review: ExtraReview,
 }
 
-/// The Extra review a label adds: its skill, when it runs ("every",
-/// "first" or "before_pr"), whether its Findings are debated, and its row.
+/// The Extra review a label adds: none while its skill is empty.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default)]
-#[allow(dead_code)] // read by the Extra review Ticket
 pub(crate) struct ExtraReview {
+    /// Its review skill, in place of the review pick's.
     pub(crate) skill: String,
+    /// When it runs: "every" Round (the default, and any other value),
+    /// "first" Round only, or "before_pr", which runs as every until
+    /// harness-brd.7 builds it.
     pub(crate) position: String,
+    /// Its Findings join the Debate (the default), or go straight to the
+    /// Fix as fix items not debated.
+    #[serde(default = "debate_on")]
     pub(crate) debate: bool,
+    /// Its row; each empty field is the Review's.
     pub(crate) app: String,
     pub(crate) model: String,
     pub(crate) effort: String,
+}
+
+fn debate_on() -> bool {
+    true
+}
+
+/// The Extra review of the Ticket's Area label, read from config.json as
+/// the Round reaches it; None without one, or with no skill set.
+pub(crate) fn extra_review(repo: &Path, names: &[String]) -> Result<Option<ExtraReview>, String> {
+    Ok(ticket_labels(repo, names)?
+        .into_iter()
+        .filter(|(_, label)| label.kind == "area")
+        .map(|(_, label)| label.extra_review)
+        .find(|extra| !extra.skill.is_empty()))
+}
+
+/// The Extra review's row: the Review's, the Ticket's labels' over
+/// config.json's, with each field the Extra review sets over that.
+pub(crate) fn extra_row(repo: &Path, names: &[String], extra: &ExtraReview) -> Result<Row, String> {
+    let mut row = row(repo, "review", names)?;
+    if !extra.app.is_empty() {
+        row.app = app(&extra.app)
+            .ok_or_else(|| format!("no App named {:?} for the Extra review", extra.app))?;
+        runs_on("review", row.app)?;
+    }
+    if !extra.model.is_empty() {
+        row.model = extra.model.clone();
+    }
+    if !extra.effort.is_empty() {
+        row.effort = extra.effort.clone();
+    }
+    Ok(row)
 }
 
 /// config.json's labels, each entry by its name, or why it cannot be read.

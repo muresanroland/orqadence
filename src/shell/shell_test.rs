@@ -7,7 +7,7 @@ use super::{About, Epic, NoticeKind, Pending, Screen};
 use crate::orchestrator::app::set_max_tickets;
 use crate::orchestrator::judgment::fake::Fake as TypeSafeFake;
 use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
-use crate::orchestrator::limit_test::hits;
+use crate::orchestrator::limit_test::{hits, CODEX};
 use crate::orchestrator::plan_test::{at_dialog, nouls};
 use crate::orchestrator::question_test::ASKS;
 use crate::orchestrator::scheduler::BdIssue;
@@ -1621,13 +1621,7 @@ fn the_reviews_limit_question_offers_the_fallback_and_its_answer_stands() {
         &w.repo.join(".orqadence/config.json"),
         r#"{"review_if_limited": {"app": "claude", "model": "opus"}}"#,
     );
-    hits(
-        &w,
-        "hx-1",
-        "review",
-        "idle",
-        "■ You’ve hit your usage limit. Try again at 3:05 PM.",
-    );
+    hits(&w, "hx-1", "review", "idle", CODEX);
     let mut s = shell(&w);
     let now = chrono::Local
         .with_ymd_and_hms(2026, 9, 25, 14, 0, 0)
@@ -1659,6 +1653,49 @@ fn the_reviews_limit_question_offers_the_fallback_and_its_answer_stands() {
         load_state(&w.repo).unwrap().reviews["codex"],
         Review::Unreviewed
     );
+    s.command("/stop-work");
+    await_end(&mut s);
+}
+
+/// With an Extra review on the asking Ticket's Area label, the unreviewed
+/// option says it is skipped too.
+#[test]
+fn the_reviews_limit_question_names_the_extra_review() {
+    let ticket = BdTicket {
+        labels: vec!["orqa:security".to_string()],
+        ..BdTicket::new("hx-1")
+    };
+    let (w, _) = new_world(vec![ticket]);
+    write_file(
+        &w.repo.join(".orqadence-local/runs/hx-1/implement.md"),
+        "STATUS: done\n",
+    );
+    write_file(
+        &w.repo.join(".orqadence/config.json"),
+        r#"{"labels": {"security": {"kind": "area", "extra_review": {"skill": "orqa-sec-review"}}}}"#,
+    );
+    w.installed("orqa-sec-review");
+    hits(&w, "hx-1", "review", "idle", CODEX);
+    let mut s = shell(&w);
+    let now = chrono::Local
+        .with_ymd_and_hms(2026, 9, 25, 14, 0, 0)
+        .unwrap();
+    set_clock(&mut s.cfg, now);
+    s.command("/start-ticket hx-1");
+    await_line(&mut s, "hx-1 asking you: codex limited until 3:05pm");
+    assert_eq!(
+        s.options(),
+        [
+            "wait for the reset",
+            "open the PR unreviewed, the extra review skipped too"
+        ]
+    );
+    pick(&mut s, 2);
+    await_line(
+        &mut s,
+        "hx-1 extra review 1 skipped: codex was limited until 3:05pm",
+    );
+    await_line(&mut s, "hx-1 PR #hx-1 opened");
     s.command("/stop-work");
     await_end(&mut s);
 }

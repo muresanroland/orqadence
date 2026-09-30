@@ -302,7 +302,7 @@ fn a_reset_reads_as_its_time_today_or_its_day_otherwise() {
 }
 
 const CLAUDE: &str = "⎿  You've hit your session limit · resets 3:45pm (Europe/Bucharest)";
-const CODEX: &str = "■ You’ve hit your usage limit. Try again at 3:05 PM.";
+pub(crate) const CODEX: &str = "■ You’ve hit your usage limit. Try again at 3:05 PM.";
 
 /// Sets the Orchestrator's wall clock at now(); the test moves it.
 fn clock(o: &mut Orchestrator) -> Arc<Mutex<DateTime<Local>>> {
@@ -707,7 +707,7 @@ fn review_questions(w: &World) -> Vec<(String, Option<String>)> {
     w.events()
         .into_iter()
         .filter_map(|e| match e.ask {
-            Some(Ask::Limited { app, fallback }) => Some((app, fallback)),
+            Some(Ask::Limited { app, fallback, .. }) => Some((app, fallback)),
             _ => None,
         })
         .collect()

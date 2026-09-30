@@ -11,7 +11,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::app::{self, check, debate_inputs, fallback_row, stage_row, ticket_labels, App, Row};
+use super::app::{
+    self, check, debate_inputs, extra_review, extra_row, fallback_row, stage_row, ticket_labels,
+    App, Row,
+};
 use super::herdr::{agent_name, split_target};
 use super::judgment::{offered, Action, Judged, PlanJudged, TypeSafe, WAKE_FLOOR};
 use super::limit::{codex_review, until, Limit, LAST_LINES};
@@ -32,6 +35,15 @@ pub(crate) struct Stage {
     pub(crate) timeout: Duration,
 }
 
+impl Stage {
+    /// Whether it leaves the code as it found it and runs in the Run
+    /// directory, the only place its sandbox may write: the Review and the
+    /// Extra review.
+    fn read_only(&self) -> bool {
+        self.name == REVIEW.name || self.name == EXTRA_REVIEW.name
+    }
+}
+
 const fn stage(name: &'static str, skill: &'static str, minutes: u64) -> Stage {
     Stage {
         name,
@@ -43,6 +55,9 @@ const fn stage(name: &'static str, skill: &'static str, minutes: u64) -> Stage {
 // The App each Stage runs on comes from .orqadence/config.json (app.rs).
 pub(crate) const IMPLEMENT: Stage = stage("implement", "orqa-stage-implement", 60);
 pub(crate) const REVIEW: Stage = stage("review", "orqa-stage-review", 30);
+/// An Area label's Extra review: the Review's skill with the label's review
+/// skill, on the label's row, after the Review.
+pub(crate) const EXTRA_REVIEW: Stage = stage("extra-review", "orqa-stage-review", 30);
 pub(crate) const DEBATE: Stage = stage("debate", "orqa-stage-moderate", 30);
 pub(crate) const FIX: Stage = stage("fix", "orqa-stage-fix", 60);
 pub(crate) const ADDRESS: Stage = stage("address", "orqa-stage-address", 60);
@@ -117,10 +132,13 @@ pub(crate) enum Ask {
         feedback: Option<String>,
     },
     /// The Review's App at its usage limit: how Reviews go until the reset,
-    /// asked once for the run. The fallback row, as said, when one is set.
+    /// asked once for the run. The fallback row, as said, when one is set,
+    /// and whether a Ticket holding for the answer has an Extra review,
+    /// skipped too when the PR opens unreviewed.
     Limited {
         app: String,
         fallback: Option<String>,
+        extra_review: bool,
     },
     /// The Stage's own question (STATUS: question): its pane, the question
     /// and its options.
@@ -243,9 +261,9 @@ pub(crate) struct Orchestrator {
     pub(crate) answers: Mutex<Vec<(String, String, Answer)>>,
     /// The Tickets running on a thread of this process.
     pub(crate) active: Mutex<BTreeSet<String>>,
-    /// The Apps whose Review limit Question is out, asked by a Ticket still
-    /// holding for its answer.
-    pub(super) asked: Mutex<BTreeSet<String>>,
+    /// The Review limit Questions out, by App, each asked by a Ticket
+    /// still holding for its answer: that Ticket, the text and the Ask.
+    pub(super) asked: Mutex<BTreeMap<String, (String, String, Ask)>>,
     /// Each Ticket's live session's deadline, which a wait keeps.
     deadlines: Mutex<BTreeMap<String, Instant>>,
     /// The plan last judged for each Ticket's Implement session: a plan.md
@@ -289,7 +307,7 @@ impl Orchestrator {
             commands: Mutex::new(Vec::new()),
             answers: Mutex::new(Vec::new()),
             active: Mutex::new(BTreeSet::new()),
-            asked: Mutex::new(BTreeSet::new()),
+            asked: Mutex::new(BTreeMap::new()),
             deadlines: Mutex::new(BTreeMap::new()),
             plans: Mutex::new(BTreeMap::new()),
             shadows: Mutex::new(BTreeMap::new()),
@@ -541,12 +559,14 @@ pub(crate) fn run_dir(repo: &Path, ticket: &str) -> PathBuf {
     repo.join(LOCAL).join("runs").join(ticket)
 }
 
-/// How a Stage is named in an event: "implement", "review 1", "fix 2".
+/// How a Stage is named in an event: "implement", "review 1", "fix 2",
+/// "extra review 1".
 pub(crate) fn stage_label(st: &Stage, round: usize) -> String {
+    let name = st.name.replace('-', " ");
     if round == 0 {
-        st.name.to_string()
+        name
     } else {
-        format!("{} {round}", st.name)
+        format!("{name} {round}")
     }
 }
 
@@ -566,7 +586,7 @@ pub(crate) fn pr_ref(url: &str) -> String {
 pub(crate) fn result_name(st: &Stage, round: usize) -> String {
     match st.name {
         "debate" => format!("verdict-{round}.md"),
-        "review" | "fix" => format!("{}-{round}.md", st.name),
+        "review" | "fix" | "extra-review" => format!("{}-{round}.md", st.name),
         _ => format!("{}.md", st.name),
     }
 }
@@ -795,8 +815,8 @@ impl Orchestrator {
             }
             Err(StageError::Stopped) => return Held::Stopped,
         }
-        let row = match stage_row(&self.cfg.repo, st, &labels) {
-            Ok(row) => row,
+        let (row, extra_skill) = match self.row_for(st, &labels) {
+            Ok(got) => got,
             Err(err) => return Held::Woke(err),
         };
         // A Review on a Limited App goes as the user answered.
@@ -842,10 +862,14 @@ impl Orchestrator {
                 )
             }
         };
-        let manifest = match Manifest::load(&self.cfg.repo) {
+        let mut manifest = match Manifest::load(&self.cfg.repo) {
             Ok(manifest) => manifest,
             Err(err) => return Held::Woke(err),
         };
+        // The Extra review's skill takes the review pick's line.
+        if let Some(skill) = extra_skill {
+            manifest.picks.insert("review".to_string(), skill);
+        }
         // Known limit, short of ADR 0006: the Review's pane starts in the
         // Run directory, under .orqadence-local/ inside the checkout, so
         // claude and codex find its Delegate skill by walking up to the
@@ -1076,7 +1100,7 @@ impl Orchestrator {
             ]
             .map(String::from)
             .to_vec()
-        } else if st.name == REVIEW.name {
+        } else if st.read_only() {
             (row.app.run_dir_args)(&self.worktree(ticket).display().to_string())
         } else {
             // Implement off claude plans in two steps (plan.rs); codex runs
@@ -1100,7 +1124,7 @@ impl Orchestrator {
         session: &Session,
         file: &Path,
     ) -> Result<String, String> {
-        let row = stage_row(&self.cfg.repo, st, &self.labels(ticket)?)?;
+        let row = self.row_for(st, &self.labels(ticket)?)?.0;
         if row.app.name != session.app {
             return Err(format!("its App is now {}", row.app.name));
         }
@@ -1168,11 +1192,26 @@ impl Orchestrator {
         Ok(true)
     }
 
+    /// The Stage's row with the Ticket's labels: the Extra review's is the
+    /// Review's with its label's fields over it, and its label's skill.
+    fn row_for(&self, st: &Stage, labels: &[String]) -> Result<(Row, Option<String>), String> {
+        if st.name != EXTRA_REVIEW.name {
+            return Ok((stage_row(&self.cfg.repo, st, labels)?, None));
+        }
+        match extra_review(&self.cfg.repo, labels)? {
+            Some(extra) => Ok((
+                extra_row(&self.cfg.repo, labels, &extra)?,
+                Some(extra.skill),
+            )),
+            None => Err("its label has no Extra review now".to_string()),
+        }
+    }
+
     /// The directory a Stage's pane starts in: the Ticket's worktree, or the
-    /// run directory for the Review, whose sandbox may write only where it
-    /// starts.
+    /// run directory for the Review and the Extra review, whose sandbox may
+    /// write only where it starts.
     fn stage_cwd(&self, ticket: &str, st: &Stage) -> PathBuf {
-        if st.name == REVIEW.name {
+        if st.read_only() {
             self.run_dir(ticket)
         } else {
             self.worktree(ticket)

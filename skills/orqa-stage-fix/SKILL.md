@@ -9,7 +9,7 @@ You are the Fix Stage of the Orqadence Pipeline, in a fresh session inside the T
 
 ## 1. Apply the fix items
 
-**Fix items** under Inputs is everything you have to fix: the items the Debate's Verdict marked fix, one per line as `- [fix] (severity) location — problem | reason | settled`. Findings the Verdict marked skip were argued and rejected; you are not shown them, so do not go looking for other things to improve.
+**Fix items** under Inputs is everything you have to fix: the items the Debate's Verdict marked fix, one per line as `- [fix] (severity) location — problem | reason | settled`, and, when the Ticket's Area label has an Extra review whose Findings skip the Debate, its Findings as `- [fix] (severity) location — problem | not debated | extra review`. Findings the Verdict marked skip were argued and rejected; you are not shown them, so do not go looking for other things to improve.
 
 The **Ticket file** is the Ticket as `bd show <Ticket>` prints it, with its parent Epic's description under `## Epic context`: context, not scope. Load every skill under **Label skills** by name in this session, and follow **Label guidance**.
 
@@ -21,7 +21,7 @@ With **Fix items** `none` there is nothing to apply: go to step 2.
 
 1. Run the orqa-create-pr skill. It owns the repo's conventions for pushing the branch and creating the PR.
 2. Make sure the PR description includes, adding them with `gh pr edit --body-file` if orqa-create-pr did not:
-   - **Unreviewed**: if Inputs carry **Unreviewed** (`<app> was limited until <t>`), open the description by saying that this Round's Review and Debate were skipped because that App was at its usage limit, so no second model reviewed the latest changes, and that a human review is required.
+   - **Unreviewed**: if Inputs carry **Unreviewed** (`<app> was limited until <t>`, with `the extra review skipped too` when the label's Extra review was), open the description by saying that this Round's Review and Debate, and the Extra review when it says so, were skipped because that App was at its usage limit, so no second model reviewed the latest changes, and that a human review is required.
    - The Ticket id and what was built (the run directory's `implement.md` has the summary).
    - **Verdict history**: from every file under **Verdict history**, each skipped Finding with its reason and how it was settled, grouped by Round. Carry over each Verdict's Notes.
    - **Leftovers never re-checked**: if this is Round 3 and you applied fix items, list them. No Review ran after them, so the human reviewer is the first to see those changes. Otherwise write "none".

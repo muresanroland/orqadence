@@ -220,3 +220,17 @@ fn fetch_leaves_invalid_manifests_and_missing_schemas_to_the_review() {
         assert!(ok, "fetch.sh failed on {out:?}: {stderr}");
     }
 }
+
+/// stage-moderate takes the Extra review's Findings from its second Input,
+/// and stage-fix knows the not-debated fix items and the Unreviewed wording.
+#[test]
+fn the_stage_skills_know_the_extra_review() {
+    let skill = |name| SKILLS.iter().find(|(n, _)| *n == name).unwrap().1;
+    assert!(skill("orqa-stage-moderate").contains(
+        "Take every Finding from the **Review file**, and from the **Extra review file** when Inputs carry one"
+    ));
+    let fix = skill("orqa-stage-fix");
+    assert!(fix.contains("| not debated | extra review`"));
+    assert!(fix.contains("`the extra review skipped too`"));
+    assert!(skill("orqa-stage-review").contains("`extra-review-*.md`"));
+}

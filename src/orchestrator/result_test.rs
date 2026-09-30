@@ -205,7 +205,7 @@ Not a finding: - [fix] inside prose is ignored only when it does not start the l
             "Review",
             "STATUS: done\n- (high) a.go:1 — x\n- (low) b.go:2 — y\nprose\n",
             StageResult {
-                findings: 2,
+                found: vec!["- (high) a.go:1 — x".to_string(), "- (low) b.go:2 — y".to_string()],
                 ..Default::default()
             },
         ),
