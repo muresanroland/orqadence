@@ -52,7 +52,7 @@ Write the body to a file and pass `--body-file`, so markdown and quotes survive 
 Files you are told to attach (the Orqadence Fix Stage's screenshots) go on the same
 `gh pr create` call, one `--attach <file>` each. Reference each from its section as
 `![what it shows](<file>)`, the path exactly as passed, so gh puts the uploaded file there;
-gh appends the ones not referenced. If an upload fails and gh exits non-zero, the PR may or
+gh appends the ones not referenced. If `gh pr create --attach` fails, the PR may or
 may not exist (gh creates none when every upload fails). Keep it only if gh printed its URL or
 `gh pr view` finds one for the branch; otherwise run `gh pr create` again without `--attach`.
 Either way, say in the body which files did not attach and why.

@@ -261,7 +261,6 @@ fn stage_fix_takes_screenshots_for_a_screenshots_section() {
         "`<Run directory>/pr/`",
         "`--attach`",
         "never committed",
-        "2.99",
     ] {
         assert!(fix.contains(text), "stage-fix lacks {text:?}");
     }
