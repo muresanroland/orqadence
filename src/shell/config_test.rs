@@ -2500,6 +2500,55 @@ fn a_rule_one_label_breaks_is_refused_on_another() {
     assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
 }
 
+/// A label's Implement effort alone leaves its planning split: only a new
+/// App or model plans on one model.
+#[test]
+fn a_labels_implement_effort_keeps_its_plan_model() {
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"labels": {"be": {"kind": "area", "rows": {"implement":
+            {"app": "claude", "model": "claude-opus-5-5", "plan_model": "claude-fable-5-1"}}}}}"#,
+    );
+    let mut s = open_label(apps(""), repo.path());
+    pick(&mut s, LabelItem::Row(0, Field::Effort), "high");
+    assert_eq!(
+        config_json(repo.path())["labels"]["be"]["rows"]["implement"],
+        json!({"app": "claude", "model": "claude-opus-5-5",
+               "plan_model": "claude-fable-5-1", "effort": "high"}),
+        "{}",
+        note(&s)
+    );
+}
+
+/// config.json changed by hand while a label's model is probed is checked
+/// again before it saves: a rule the change now breaks refuses it.
+#[test]
+fn a_label_override_is_checked_again_after_its_probe() {
+    let repo = TempDir::new();
+    let file = repo.path().join(".orqadence/config.json");
+    write_file(
+        &file,
+        r#"{"side_a": {"app": "codex"}, "labels": {"b": {"kind": "modifier"}}}"#,
+    );
+    let mut s = open_label(apps(""), repo.path());
+    pick(&mut s, LabelItem::Row(5, Field::App), "claude");
+    type_in(&mut s, "type");
+    s.key(key(KeyCode::Enter));
+    type_line(&mut s, "claude-opus-5-5");
+    assert!(s.settings.as_ref().unwrap().probe.is_some(), "{}", note(&s));
+    let meanwhile =
+        r#"{"side_a": {"model": "claude-opus-5-5"}, "labels": {"b": {"kind": "modifier"}}}"#;
+    write_file(&file, meanwhile);
+    await_probe(&mut s);
+    assert!(
+        note(&s).starts_with("b side_b: Both sides would be Anthropic"),
+        "{}",
+        note(&s)
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), meanwhile);
+}
+
 /// An Extra review model of none is refused, unprobed, as on the Stage
 /// pages: the review row would run on no model.
 #[test]

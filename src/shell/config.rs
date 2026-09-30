@@ -752,10 +752,9 @@ impl Settings {
             Field::ExtraSkill => return self.extra_skill_entries(pick),
             _ => {}
         }
-        let current = match (pick.app, pick.scope) {
-            (Some(_), _) => String::new(),
-            (None, Scope::Repo) => self.value(pick.row, pick.field),
-            (None, scope) => self.own(scope, pick.row, pick.field),
+        let current = match pick.app {
+            Some(_) => String::new(),
+            None => self.own(pick.scope, pick.row, pick.field),
         };
         let filter = pick.filter.to_lowercase();
         let mut out = Vec::new();
@@ -1136,11 +1135,6 @@ impl Settings {
         items
     }
 
-    /// The open label's rules over the rows it sets, each held or broken.
-    pub(crate) fn label_checks(&self) -> Vec<Check> {
-        app::label_checks_of(&self.doc, self.label.as_deref().unwrap_or_default())
-    }
-
     /// A label name as typed, as bd takes a label: not empty, no whitespace,
     /// no comma (bd's list separator), and not one config.json has.
     fn valid_label(&self, typed: &str) -> Result<String, String> {
@@ -1171,7 +1165,10 @@ impl Settings {
             .unwrap_or_default();
         let filter = pick.filter.to_lowercase();
         let skills = self.manifest.skills.iter();
-        let listed = skills.filter(|(name, _)| !is_stage_skill(name));
+        // The Stage skills and create-pr are not reviews.
+        let listed = skills.filter(|(name, _)| {
+            !name.starts_with("orqa-stage-") && *name != crate::skills::CREATE_PR
+        });
         let mut out = Vec::new();
         if NONE.contains(&filter) {
             out.push(Entry {
@@ -1288,11 +1285,6 @@ impl Settings {
     }
 }
 
-/// A skill Stage, not a review: the Extra review's list leaves it out.
-fn is_stage_skill(name: &str) -> bool {
-    name.starts_with("orqa-stage-") || name == crate::skills::CREATE_PR
-}
-
 /// A label name as typed: trimmed, a typed orqa: dropped.
 fn label_name(typed: &str) -> &str {
     let name = typed.trim();
@@ -1386,7 +1378,10 @@ fn put_override(
     }
     // An App or model of its own plans on one model, as put's new App
     // does: the repo's split may not fit it.
-    if scope == Scope::Label && key == "implement" {
+    let moved = fields
+        .iter()
+        .any(|(field, _)| matches!(field, Field::App | Field::Model));
+    if scope == Scope::Label && key == "implement" && moved {
         let row = holder.as_object_mut().unwrap();
         match row.contains_key("app") || row.contains_key("model") {
             true => _ = row.insert(Field::Plan.key().into(), json!("default")),
@@ -1443,6 +1438,33 @@ fn staged(
         return Err(broken.text);
     }
     Ok((path, read, doc, row))
+}
+
+/// config.json read afresh with a label's override put in, as
+/// put_override, and the row as the Stage that starts on it will read it;
+/// a change that breaks a rule refuses.
+fn staged_override(
+    repo: &Path,
+    name: &str,
+    scope: Scope,
+    key: &str,
+    fields: &[(Field, String)],
+) -> Result<(PathBuf, Value, Row), String> {
+    let (path, read) = app::read_object(repo)?;
+    let mut doc = read.clone();
+    let labels = doc["labels"]
+        .as_object_mut()
+        .ok_or_else(|| "labels in config.json is not an object".to_string())?;
+    put_override(labels, name, scope, key, fields)?;
+    if let Some(broken) = broken_by(&read, &doc).filter(|_| scope == Scope::Label) {
+        return Err(broken.text);
+    }
+    let view = match scope {
+        Scope::Extra => app::with_extra(&doc, name),
+        _ => app::with_label(&doc, name),
+    };
+    let row = app::row_in(&view, key, &path)?;
+    Ok((path, doc, row))
 }
 
 /// The first rule the change from before to after breaks: one broken after
@@ -1999,23 +2021,8 @@ impl Screen {
         if fields.iter().all(|(f, v)| st.own(scope, row, *f) == *v) {
             return;
         }
-        let staged = app::read_object(&repo).and_then(|(path, read)| {
-            let mut doc = read.clone();
-            let labels = doc["labels"]
-                .as_object_mut()
-                .ok_or_else(|| "labels in config.json is not an object".to_string())?;
-            put_override(labels, &name, scope, key, &fields)?;
-            if let Some(broken) = broken_by(&read, &doc).filter(|_| scope == Scope::Label) {
-                return Err(broken.text);
-            }
-            let view = match scope {
-                Scope::Extra => app::with_extra(&doc, &name),
-                _ => app::with_label(&doc, &name),
-            };
-            app::row_in(&view, key, &path)
-        });
-        let row_now = match staged {
-            Ok(row_now) => row_now,
+        let row_now = match staged_override(&repo, &name, scope, key, &fields) {
+            Ok((_, _, row_now)) => row_now,
             Err(err) => {
                 st.note = Some((format!("Refused: {err}. Nothing changed."), RED));
                 return;
@@ -2591,6 +2598,11 @@ impl Screen {
             change(labels)?;
             app::write(&path, &doc).map(|()| doc)
         });
+        self.label_saved(saved, text)
+    }
+
+    /// config.json as a label change wrote it, or why it did not.
+    fn label_saved(&mut self, saved: Result<Value, String>, text: String) -> bool {
         match saved {
             Ok(doc) => {
                 self.settings.as_mut().unwrap().doc = doc;
@@ -2788,11 +2800,10 @@ impl Screen {
             })
             .collect();
         let text = format!("orqa:{name} {what} {}", parts.join(", "));
-        let (key, fields, label) = (ROWS[row].key, fields.to_vec(), name.clone());
-        self.save_label(
-            move |labels| put_override(labels, &label, scope, key, &fields),
-            text,
-        );
+        // staged again: config.json may have changed during a probe
+        let saved = staged_override(&self.cfg.repo, &name, scope, ROWS[row].key, fields)
+            .and_then(|(path, doc, _)| app::write(&path, &doc).map(|()| doc));
+        self.label_saved(saved, text);
     }
 
     /// The name of the label open on the Labels page; empty with none.

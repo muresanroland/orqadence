@@ -11,7 +11,7 @@ use ratatui::Frame;
 use super::modal::{divider, dock, joined, wrap_spans};
 use super::{bold, cut, fg, SPINNER};
 use crate::on_call;
-use crate::orchestrator::app::{Check, APPS};
+use crate::orchestrator::app::{self, Check, APPS};
 use crate::setup;
 use crate::shell::brand::{BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT};
 use crate::shell::config::{
@@ -284,28 +284,27 @@ fn label_page(st: &Settings, name: &str, width: usize) -> (Vec<Line<'static>>, u
         }
     };
     // above the rows, where a long page shows them
-    check_lines(&mut lines, st.label_checks(), width);
+    check_lines(&mut lines, app::label_checks_of(&st.doc, name), width);
     lines.push(Line::default());
     let room = width.saturating_sub(15);
     let or_none = |text: String| match text.is_empty() {
         true => vec![Span::styled("none", fg(MUTED))],
         false => vec![Span::styled(cut(&text, room), fg(TEXT))],
     };
-    let heading = |lines: &mut Vec<Line<'static>>, text: String, blank: bool| {
-        if blank {
-            lines.push(Line::default());
-        }
-        lines.push(Line::from(Span::styled(text, bold(MUTED))));
-    };
+    let heading = |text: String| Line::from(Span::styled(text, bold(MUTED)));
     let mut at = 0;
     for (i, it) in st.label_items().into_iter().enumerate() {
         match it {
-            LabelItem::ExtraSkill => heading(&mut lines, "EXTRA REVIEW".into(), true),
-            LabelItem::Row(0, Field::App) => heading(&mut lines, "ROW OVERRIDES".into(), true),
+            LabelItem::ExtraSkill => {
+                lines.extend([Line::default(), heading("EXTRA REVIEW".into())]);
+            }
+            LabelItem::Row(0, Field::App) => lines.extend([
+                Line::default(),
+                heading("ROW OVERRIDES".into()),
+                heading(format!("  {}", ROWS[0].name)),
+            ]),
+            LabelItem::Row(row, Field::App) => lines.push(heading(format!("  {}", ROWS[row].name))),
             _ => {}
-        }
-        if let LabelItem::Row(row, Field::App) = it {
-            heading(&mut lines, format!("  {}", ROWS[row].name), false);
         }
         let (field, value) = match it {
             LabelItem::Kind => (
