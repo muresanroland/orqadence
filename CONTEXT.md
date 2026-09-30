@@ -173,7 +173,7 @@ The Orchestrator's answer to a Wake or a Plan, taken from a typed model over the
 _Avoid_: LLM call, Main session
 
 **Plan**:
-What an Implement session writes before it may edit: the changes and tests it intends for its Ticket, the decisions it made with the answer taken, and an open question only when it has one. A Judgment approves it when it covers every acceptance criterion, stays in scope and asks nothing; otherwise the user reads it and answers, and the session revises it. An open question always goes to the user.
+What an Implement session writes before it may edit: the changes and tests it intends for its Ticket, the decisions it made with the answer taken, and an open question only when it has one. A Judgment approves it when it covers every acceptance criterion, stays in scope and asks nothing; otherwise the user reads it and answers, and the session revises it. An open question always goes to the user; while they are Away it parks its Ticket until they continue it.
 
 **Question**:
 What the Shell puts to the user when the Orchestrator cannot act alone: a Wake the Judgment was unsure about, a blocked session, a plan to approve, a Stage's own question, a pick not yet merged on a Ticket's base or a personal skill shadowing a committed one when the Ticket starts, Manual work its session waits on, the Review's App at its usage limit, or a confirmation. It holds only its Ticket (the Review's limit, every Ticket reaching the Review on that App until it is answered), is answered from a fixed set of options or a line of the user's own text, and is never saved: on resume it is derived again from the live session or the Stage result.
@@ -188,7 +188,7 @@ Something a code-editing Stage or a Brainstorm session needs done that it cannot
 _Avoid_: Manual step, human task, hand-off
 
 **Away**:
-What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question, or one at a Ticket's start, then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket. Nothing is pushed to the phone, and the Shell never goes On call. Nothing else changes: Judgments still answer what they can.
+What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question, a Plan's open question, or one at a Ticket's start, then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket. Nothing is pushed to the phone, and the Shell never goes On call. Nothing else changes: Judgments still answer what they can.
 _Avoid_: AFK, offline, unattended mode
 
 **On call**:
