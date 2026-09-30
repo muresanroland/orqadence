@@ -6,7 +6,7 @@ use std::path::Path;
 
 use serde_json::json;
 
-use super::app::{self, ExtraReview};
+use super::app;
 use super::result::{read_stage_result, ResultRequirements, StageResult};
 use super::stage::{
     plural, pr_ref, result_name, stage_label, Ask, Orchestrator, Stage, StageError, ADDRESS, AWAY,
@@ -21,15 +21,6 @@ pub(crate) const MAX_ROUNDS: usize = 3;
 /// What a run keeps for whoever reads it later: the Stages' result files,
 /// diffs and debate transcripts, all flat text.
 const EVIDENCE: [&str; 5] = ["md", "txt", "patch", "json", "sh"];
-
-/// The Fix Stage's Input of fix items: "none", or one per line.
-fn fix_items(fixes: &[String]) -> String {
-    if fixes.is_empty() {
-        "none".to_string()
-    } else {
-        format!("\n  {}", fixes.join("\n  "))
-    }
-}
 
 /// An Extra review's Findings as fix items that skipped the Debate.
 fn not_debated_items(found: &StageResult) -> Vec<String> {
@@ -163,33 +154,12 @@ impl Orchestrator {
             // before the PR holds the PR for a final Fix.
             let last = fixes.is_empty() || round == MAX_ROUNDS;
             let held = last && unreviewed.is_empty() && before_pr.is_some();
-            let items = fix_items(&fixes);
-            let history = verdicts.join(", ");
-            let open_pr = last && !held;
-            let mut inputs = vec![("Open PR", "no"), ("Fix items", items.as_str())];
-            if open_pr {
-                inputs[0].1 = "yes";
-                inputs.push(("Verdict history", history.as_str()));
-            }
-            if !unreviewed.is_empty() {
-                inputs.push(("Unreviewed", unreviewed.as_str()));
-            }
-            let mut fix = self.run_stage(
-                ticket,
-                &FIX,
-                round,
-                &inputs,
-                ResultRequirements {
-                    require_pr: open_pr,
-                    ..Default::default()
-                },
-            )?;
-            self.report(ticket, &format!("fix {round} done"));
+            let mut fix = self.fix(ticket, round, &fixes, last && !held, &unreviewed, &verdicts)?;
             if !last {
                 continue;
             }
             if let Some(extra) = before_pr.filter(|_| held) {
-                fix = self.final_fix(ticket, &extra, &mut verdicts)?;
+                fix = self.final_fix(ticket, extra.debate, &mut verdicts)?;
             }
 
             let tab = self.ticket(ticket).tab;
@@ -227,7 +197,7 @@ impl Orchestrator {
     fn final_fix(
         &self,
         ticket: &str,
-        extra: &ExtraReview,
+        debate: bool,
         verdicts: &mut Vec<String>,
     ) -> Result<StageResult, StageError> {
         let found = self.run_read_only(
@@ -244,7 +214,7 @@ impl Orchestrator {
                 plural(found.found.len(), "finding")
             ),
         );
-        let fixes = if extra.debate {
+        let fixes = if debate {
             let file = self.run_dir(ticket).join(result_name(&EXTRA_REVIEW, FINAL));
             let file = file.display().to_string();
             let inputs = [("Review file", file.as_str())];
@@ -252,23 +222,48 @@ impl Orchestrator {
         } else {
             not_debated_items(&found)
         };
-        let (items, history) = (fix_items(&fixes), verdicts.join(", "));
-        let inputs = [
-            ("Open PR", "yes"),
-            ("Fix items", items.as_str()),
-            ("Verdict history", history.as_str()),
-        ];
+        self.fix(ticket, FINAL, &fixes, true, "", verdicts)
+    }
+
+    /// A Fix given only the fix items ("none" without any); one that opens
+    /// the PR also gets the Verdict files, for the PR description.
+    fn fix(
+        &self,
+        ticket: &str,
+        round: usize,
+        fixes: &[String],
+        open_pr: bool,
+        unreviewed: &str,
+        verdicts: &[String],
+    ) -> Result<StageResult, StageError> {
+        let items = if fixes.is_empty() {
+            "none".to_string()
+        } else {
+            format!("\n  {}", fixes.join("\n  "))
+        };
+        let history = verdicts.join(", ");
+        let mut inputs = vec![("Open PR", "no"), ("Fix items", items.as_str())];
+        if open_pr {
+            inputs[0].1 = "yes";
+            inputs.push(("Verdict history", history.as_str()));
+        }
+        if !unreviewed.is_empty() {
+            inputs.push(("Unreviewed", unreviewed));
+        }
         let fix = self.run_stage(
             ticket,
             &FIX,
-            FINAL,
+            round,
             &inputs,
             ResultRequirements {
-                require_pr: true,
+                require_pr: open_pr,
                 ..Default::default()
             },
         )?;
-        self.report(ticket, "final fix done");
+        match round {
+            FINAL => self.report(ticket, "final fix done"),
+            _ => self.report(ticket, &format!("fix {round} done")),
+        }
         Ok(fix)
     }
 

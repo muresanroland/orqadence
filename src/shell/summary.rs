@@ -173,15 +173,16 @@ fn ticket(
         .unwrap_or_default();
     // Once the PR opened: the cap's fix items and the final Fix's, which no
     // Review re-checked.
-    let left: Vec<String> = match pr.is_empty() {
-        true => Vec::new(),
-        false => verdicts
+    let left: Vec<String> = if pr.is_empty() {
+        Vec::new()
+    } else {
+        verdicts
             .last()
             .filter(|_| rounds == MAX_ROUNDS)
             .into_iter()
             .chain([&before_pr])
             .flat_map(|v| v.fixes.clone())
-            .collect(),
+            .collect()
     };
     let ts = state.tickets.get(&t.id);
     let (mut cost, logged) = (cost.unwrap_or_default(), logged.unwrap_or_default());
