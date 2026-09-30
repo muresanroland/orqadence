@@ -49,7 +49,7 @@ fn git(repo: &Path, args: &[&str]) -> String {
 /// manifest holding the folder init ran in. Returns the worktree, the cache
 /// and the log. The real bash and git run: fetch.sh is outside the Tools seam.
 fn fetch(files: &[(&str, &str)]) -> (TempDir, TempDir, String) {
-    let (repo, cache, log, out) = run_fetch(files, "", 0);
+    let (repo, cache, log, out) = run_fetch(files, "", 0, None);
     assert!(
         out.status.success(),
         "fetch.sh: {}",
@@ -59,11 +59,13 @@ fn fetch(files: &[(&str, &str)]) -> (TempDir, TempDir, String) {
 }
 
 /// fetch.sh run as in `fetch`, with each stub tool printing `stub_out` and
-/// exiting with `stub_status`; returns the cache and fetch.sh's output too.
+/// exiting with `stub_status`, and `mv`, when given, as a stub script too;
+/// returns the cache and fetch.sh's output too.
 fn run_fetch(
     files: &[(&str, &str)],
     stub_out: &str,
     stub_status: i32,
+    mv: Option<&str>,
 ) -> (TempDir, TempDir, String, std::process::Output) {
     let (repo, cache, stubs) = (TempDir::new(), TempDir::new(), TempDir::new());
     git(repo.path(), &["init", "-q", "-b", "main"]);
@@ -87,6 +89,11 @@ fn run_fetch(
              mkdir -p .terraform/modules && pwd -P > .terraform/modules/modules.json; fi\n\
              printf '%s' \"$STUB_OUT\"\nexit \"$STUB_STATUS\"\n",
         );
+        fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    if let Some(script) = mv {
+        let stub = stubs.path().join("mv");
+        write_file(&stub, script);
         fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
     }
     let path = format!(
@@ -180,6 +187,34 @@ fn fetch_keeps_a_roots_modules_in_the_cache() {
     assert!(manifest.exists(), "no {}\n{log}", manifest.display());
 }
 
+/// Another fetch of the same commit renames its snapshot in first, and ours
+/// fails on their non-empty folder: that passes when theirs is complete,
+/// fails when it is not, and leaves no folder of ours behind either way.
+#[test]
+fn fetch_losing_the_snapshot_race_keeps_the_winners() {
+    for (rival, passes) in [(": > \"$3/modules.json\"", true), (":", false)] {
+        // mv -f <ours> <dest>: the rival's folder lands at dest first
+        let mv = format!("#!/bin/sh\nmkdir -p \"$3\" && {rival}\nexit 1\n");
+        let (repo, cache, _, out) = run_fetch(
+            &[("infra/main.tf", "module \"m\" { source = \"x/y/z\" }\n")],
+            "",
+            0,
+            Some(&mv),
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.success(), passes, "{rival}: {stderr}");
+        let head = git(repo.path(), &["rev-parse", "HEAD"]);
+        let dir = cache
+            .path()
+            .join(format!("modules/{}/infra/.terraform", head.trim()));
+        let left: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["modules"], "{rival}");
+    }
+}
+
 /// A manifest fetch.sh validates with kubeconform, which prints `out` and
 /// exits with `status`; returns whether fetch.sh succeeded, and its stderr.
 fn fetch_kube(out: &str, status: i32) -> (bool, String) {
@@ -187,6 +222,7 @@ fn fetch_kube(out: &str, status: i32) -> (bool, String) {
         &[("k8s/app.yaml", "kind: Deployment\nmetadata:\n  name: web\n")],
         out,
         status,
+        None,
     );
     assert!(log.starts_with("kubeconform "), "{log}");
     (

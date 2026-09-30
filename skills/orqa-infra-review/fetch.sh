@@ -66,8 +66,10 @@ if [ -n "$roots" ]; then
 		# this review reads, and a snapshot never holds another commit's modules.
 		# A root with no module call writes none, and one already there is kept.
 		# The copy lands by rename from a folder of its own, so a run killed
-		# halfway leaves no half-copied entry; when another fetch of this commit
-		# renames first, mv puts ours inside theirs, and it is removed.
+		# halfway leaves no half-copied entry. When another fetch of this commit
+		# renames first, mv puts ours inside theirs or fails on their non-empty
+		# folder; either way ours is removed, and a failed mv counts only when
+		# theirs is no complete snapshot.
 		# ponytail: snapshots of old commits pile up; prune by age if the cache grows.
 		modules=$copy/$root/.terraform/modules
 		dest=$ORQA_CACHE/modules/$head/$root/.terraform/modules
@@ -75,8 +77,12 @@ if [ -n "$roots" ]; then
 			mkdir -p "$(dirname "$dest")"
 			new=$(mktemp -d "$dest.XXXXXX")
 			cp -Rf "$modules/." "$new"
-			mv -f "$new" "$dest"
-			rm -rf "${dest:?}/$(basename "$new")"
+			if ! mv -f "$new" "$dest" 2>/dev/null && [ ! -f "$dest/modules.json" ]; then
+				rm -rf "$new"
+				echo "fetch.sh: cannot move $root's modules into $dest" >&2
+				exit 1
+			fi
+			rm -rf "$new" "${dest:?}/$(basename "$new")"
 		fi
 	done
 	# tflint reads the .tflint.hcl in its folder; only a plugin with a source
