@@ -30,6 +30,8 @@ mod async_result_test;
 #[cfg(test)]
 mod cost_test;
 #[cfg(test)]
+mod extra_review_test;
+#[cfg(test)]
 mod judgment_test;
 #[cfg(test)]
 mod label_test;
@@ -38,7 +40,7 @@ pub(crate) mod limit_test;
 #[cfg(test)]
 mod panes_test;
 #[cfg(test)]
-mod pipeline_test;
+pub(crate) mod pipeline_test;
 #[cfg(test)]
 pub(crate) mod plan_test;
 #[cfg(test)]

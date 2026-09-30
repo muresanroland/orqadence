@@ -12,7 +12,7 @@ use chrono::{
 };
 use regex::Regex;
 
-use super::app::{app, fallback_row, stage_row, App, Row};
+use super::app::{app, extra_review, fallback_row, stage_row, App, Row};
 use super::result::{read_stage_result, ResultRequirements, StageResult};
 use super::stage::{Ask, Held, Orchestrator, Stage, REVIEW};
 use super::state::{Review, TicketState};
@@ -236,9 +236,11 @@ impl Orchestrator {
                 // stands for every Ticket, each running its own
                 let labels = self.labels(ticket).unwrap_or_default();
                 let fallback = fallback_row(&self.cfg.repo, &labels).ok().flatten();
+                let extra = extra_review(&self.cfg.repo, &labels).ok().flatten();
                 let ask = Ask::Limited {
                     app: app.to_string(),
                     fallback: fallback.filter(|f| f.app.name != app).map(|f| f.said()),
+                    extra_review: extra.is_some(),
                 };
                 let text = format!("{app} limited until {when}: how do Reviews go until then?");
                 self.ask_only(ticket, &text, ask);

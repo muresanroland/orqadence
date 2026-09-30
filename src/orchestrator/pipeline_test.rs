@@ -11,8 +11,9 @@ pub(crate) fn stages_run(w: &World) -> Vec<String> {
     w.called("herdr agent start")
         .iter()
         .map(|call| {
+            // h-<ticket>-<stage>, the ticket id one dash long
             let name = call.split_whitespace().nth(3).unwrap();
-            name[name.rfind('-').unwrap() + 1..].to_string()
+            name.splitn(4, '-').nth(3).unwrap().to_string()
         })
         .collect()
 }

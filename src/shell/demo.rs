@@ -451,6 +451,7 @@ fn asked(kind: Kind) -> Ask {
         Kind::Limited => Ask::Limited {
             app: "codex".to_string(),
             fallback: Some("claude opus".to_string()),
+            extra_review: false,
         },
         Kind::Wake => Ask::Wake {
             pane: "2-4".to_string(),

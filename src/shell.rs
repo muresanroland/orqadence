@@ -1000,10 +1000,17 @@ impl Screen {
                     )
                     .collect()
             }
-            About::Asked(Ask::Limited { fallback, .. }) => ["wait for the reset".to_string()]
+            About::Asked(Ask::Limited {
+                fallback,
+                extra_review,
+                ..
+            }) => ["wait for the reset".to_string()]
                 .into_iter()
                 .chain(fallback.iter().map(|f| format!("review with {f}")))
-                .chain(["open the PR unreviewed".to_string()])
+                .chain([match extra_review {
+                    true => "open the PR unreviewed, the extra review skipped too".to_string(),
+                    false => "open the PR unreviewed".to_string(),
+                }])
                 .collect(),
             About::Asked(Ask::StageQuestion { options, .. }) => options
                 .iter()

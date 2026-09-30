@@ -736,6 +736,9 @@ fn a_labels_object_parses_and_an_entry_needs_only_kind() {
         },
     };
     assert_eq!(labels["be"], Ok(be));
+    // Debate on, and every Round (an empty position), unless the entry says
+    assert!(ExtraReview::default().debate);
+    assert!(labels["codex-review"].as_ref().unwrap().extra_review.debate);
     let modifier = Label {
         kind: "modifier".to_string(),
         ..Default::default()

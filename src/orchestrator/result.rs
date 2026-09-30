@@ -8,7 +8,8 @@ use std::path::Path;
 /// part of Stage completion.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct StageResult {
-    pub(crate) findings: usize,
+    /// A review's Findings, each line as written: "- (severity) path — what".
+    pub(crate) found: Vec<String>,
     pub(crate) fixes: Vec<String>,
     pub(crate) skips: Vec<String>,
     pub(crate) pr: String,
@@ -63,7 +64,7 @@ pub(crate) fn read_stage_result(path: &Path, want: ResultRequirements) -> (Stage
             pr_pending = false;
         }
         if line.starts_with("- (") {
-            result.findings += 1;
+            result.found.push(line.trim().to_string());
         }
         let lower = line.to_lowercase();
         if lower.starts_with("- [fix]") {

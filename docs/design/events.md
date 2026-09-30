@@ -28,6 +28,7 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 | trust accepted | claude trusts `dir` now, carrying on |
 | Implement done | implemented |
 | Review done | review N found K findings |
+| Extra review done | *an Area label's, after the Review, every Round or in Round 1 only:* extra review N found K findings *(started, holds and stuck lines name it extra review N too)* |
 | Debate done | debate N settled: K to fix, J skipped |
 | Fix done | fix N done |
 | PR opened | PR #12 opened after N rounds *(log line adds the url)* |
@@ -69,7 +70,7 @@ Decided on the map tickets "Limited" (harness-0sx.8) and "Apps per Stage" (harne
 | a session that would not take the continue | Wake reason: never took the continue |
 | the Review's App at a short limit, once for the run *(Ticket 15)* | asking you: codex limited until 3:05pm: how do Reviews go until then? *(options: wait for the reset · review with claude opus, when review_if_limited is set · open the PR unreviewed; every other Ticket reaching Review holds, log only, until the answer, which stands until the reset)* |
 | the answer | you answered: wait for the reset *(the Review holds as any Stage)* · you answered: review with claude opus *(then: review 1 started: claude opus (pane 2-3))* · you answered: open the PR unreviewed |
-| a Review skipped, the PR to open unreviewed | review 1 and debate 1 skipped: codex was limited until 3:05pm *(the last Fix gets the Input Unreviewed: codex was limited until 3:05pm)* |
+| a Review skipped, the PR to open unreviewed | review 1 and debate 1 skipped: codex was limited until 3:05pm *(the last Fix gets the Input Unreviewed: codex was limited until 3:05pm)* · *with an Extra review:* extra review 1 skipped: codex was limited until 3:05pm *(the Input ends ", the extra review skipped too", and the Question's option reads open the PR unreviewed, the extra review skipped too)* |
 | a Debate side's App at its limit | *no line:* the Moderator's Inputs carry Side B: limited until 3:05pm |
 
 ## Wake reasons

@@ -1663,6 +1663,55 @@ fn the_reviews_limit_question_offers_the_fallback_and_its_answer_stands() {
     await_end(&mut s);
 }
 
+/// With an Extra review on the asking Ticket's Area label, the unreviewed
+/// option says it is skipped too.
+#[test]
+fn the_reviews_limit_question_names_the_extra_review() {
+    let ticket = BdTicket {
+        labels: vec!["orqa:security".to_string()],
+        ..BdTicket::new("hx-1")
+    };
+    let (w, _) = new_world(vec![ticket]);
+    write_file(
+        &w.repo.join(".orqadence-local/runs/hx-1/implement.md"),
+        "STATUS: done\n",
+    );
+    write_file(
+        &w.repo.join(".orqadence/config.json"),
+        r#"{"labels": {"security": {"kind": "area", "extra_review": {"skill": "orqa-sec-review"}}}}"#,
+    );
+    w.installed("orqa-sec-review");
+    hits(
+        &w,
+        "hx-1",
+        "review",
+        "idle",
+        "■ You’ve hit your usage limit. Try again at 3:05 PM.",
+    );
+    let mut s = shell(&w);
+    let now = chrono::Local
+        .with_ymd_and_hms(2026, 9, 25, 14, 0, 0)
+        .unwrap();
+    set_clock(&mut s.cfg, now);
+    s.command("/start-ticket hx-1");
+    await_line(&mut s, "hx-1 asking you: codex limited until 3:05pm");
+    assert_eq!(
+        s.options(),
+        [
+            "wait for the reset",
+            "open the PR unreviewed, the extra review skipped too"
+        ]
+    );
+    pick(&mut s, 2);
+    await_line(
+        &mut s,
+        "hx-1 extra review 1 skipped: codex was limited until 3:05pm",
+    );
+    await_line(&mut s, "hx-1 PR #hx-1 opened");
+    s.command("/stop-work");
+    await_end(&mut s);
+}
+
 /// A pick not merged on the base asks when its Ticket starts: its two
 /// options above the input line, the one picked going to the Ticket, which
 /// has no pane. Run without it starts Implement with the job's line out.
