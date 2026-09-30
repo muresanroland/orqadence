@@ -607,24 +607,16 @@ pub(crate) fn install_defaults(
     out: &mut dyn Write,
 ) -> io::Result<()> {
     let defaults = JOBS.iter().map(|(job, suggestions)| {
-        let (name, source) = suggestions[0];
         (
-            name,
-            source,
+            suggestions[0],
             format!("the {} default", job.replace('-', " ")),
         )
     });
-    let typesafe = typesafe.then(|| {
-        (
-            TYPESAFE_SKILL.0,
-            TYPESAFE_SKILL.1,
-            "for TypeSafe".to_string(),
-        )
-    });
+    let typesafe = typesafe.then(|| (TYPESAFE_SKILL, "for TypeSafe".to_string()));
     install_missing(repo, tools, out, defaults.chain(typesafe))
 }
 
-/// Installs each (name, source, what) the manifest lacks, in
+/// Installs each ((name, source), what) the manifest lacks, in
 /// .orqadence/skills, pinned by its commit. An empty source is built into
 /// an App or Shipped: nothing to install. A failure is said and init goes
 /// on: the preflight names what is missing.
@@ -632,9 +624,9 @@ fn install_missing<'a>(
     repo: &Path,
     tools: &dyn Tools,
     out: &mut dyn Write,
-    wanted: impl Iterator<Item = (&'a str, &'a str, String)>,
+    wanted: impl Iterator<Item = ((&'a str, &'a str), String)>,
 ) -> io::Result<()> {
-    for (name, source, what) in wanted {
+    for ((name, source), what) in wanted {
         // Loaded each time: add saves the manifest.
         let manifest = Manifest::load(repo).map_err(io::Error::other)?;
         if source.is_empty() || manifest.skills.contains_key(name) {
@@ -811,7 +803,7 @@ fn ask_labels(
     let wanted = picked().flat_map(|(label, _)| {
         label
             .sources()
-            .map(move |(name, source)| (name, source, format!("for orqa:{}", label.name)))
+            .map(move |skill| (skill, format!("for orqa:{}", label.name)))
     });
     install_missing(repo, tools, out, wanted)
 }
@@ -1231,38 +1223,20 @@ fn checklist(
         )?;
         out.flush()
     };
-    let all = vec![true; options.len()];
-    let (mut sel, mut on, mut pressed) = (0, all.clone(), false);
+    let (mut sel, mut on) = (0, vec![true; options.len()]);
+    // Auto-wrap off, so a row wider than the terminal stays one row and the
+    // moves up count right; fold turns it back on.
+    write!(out, "\x1b[?7l")?;
     draw(out, sel, &on)?;
-    let fold = |out: &mut dyn Write, on: &[bool]| -> io::Result<Vec<bool>> {
-        let names: Vec<&str> = options
-            .iter()
-            .zip(on)
-            .filter(|(_, on)| **on)
-            .map(|((name, _), _)| *name)
-            .collect();
-        let said = if names.is_empty() {
-            "none".to_string()
-        } else {
-            names.join(", ")
-        };
-        let answer = Span::styled(format!("  ✓ {said}"), GREEN);
-        write!(
-            out,
-            "\x1b[{}A\r\x1b[J{}\r\n",
-            options.len(),
-            paint(vec![answer])
-        )?;
-        out.flush()?;
-        Ok(on.to_vec())
-    };
     while let Some(key) = next_key(input) {
-        pressed = true;
         match key {
             0xc1 | 0xc4 | b'k' => sel = sel.saturating_sub(1), // up, left
             0xc2 | 0xc3 | b'j' => sel = (sel + 1).min(options.len() - 1), // down, right
-            b'\r' | b'\n' => return fold(out, &on),
-            3 | 4 | b'q' => return fold(out, &all),
+            b'\r' | b'\n' => break,
+            3 | 4 | b'q' => {
+                on = vec![true; options.len()];
+                break;
+            }
             b' ' => on[sel] = !on[sel],
             // ponytail: one digit each, as choose has; letters past 9 if a list ever grows.
             digit if digit > b'0' && usize::from(digit - b'0') <= options.len() => {
@@ -1273,24 +1247,37 @@ fn checklist(
         write!(out, "\x1b[{}A", options.len())?; // back over the list and redraw it
         draw(out, sel, &on)?;
     }
-    if pressed {
-        return fold(out, &on);
-    }
-    write!(out, "\r\n")?;
-    Ok(all)
+    let names: Vec<&str> = options
+        .iter()
+        .zip(&on)
+        .filter(|(_, on)| **on)
+        .map(|((name, _), _)| *name)
+        .collect();
+    let said = if names.is_empty() {
+        "none".to_string()
+    } else {
+        names.join(", ")
+    };
+    fold(out, options.len(), &said)?;
+    Ok(on)
 }
 
 /// Folds the menu into one line naming the choice.
 fn done(out: &mut dyn Write, options: &[&str], sel: usize) -> io::Result<Option<usize>> {
-    let answer = Span::styled(format!("  ✓ {}", options[sel]), GREEN);
+    fold(out, options.len(), options[sel])?;
+    Ok(Some(sel))
+}
+
+/// Goes back up `lines` rows, clears them and what is below, and says the
+/// answer in one line; auto-wrap back on, as the checklist turns it off.
+fn fold(out: &mut dyn Write, lines: usize, said: &str) -> io::Result<()> {
+    let answer = Span::styled(format!("  ✓ {said}"), GREEN);
     write!(
         out,
-        "\x1b[{}A\r\x1b[J{}\r\n",
-        options.len(),
+        "\x1b[{lines}A\r\x1b[J\x1b[?7h{}\r\n",
         paint(vec![answer])
     )?;
-    out.flush()?;
-    Ok(Some(sel))
+    out.flush()
 }
 
 /// Takes out of the file at path each line that is one of lines, trimmed,
@@ -1368,6 +1355,24 @@ pub(crate) fn preflight(
             }
         }
         Err(err) => missing.push(err),
+    }
+    // Each configured label's skills and Extra review skill, which init's
+    // install may have failed to fetch; a broken entry is app::checks'.
+    let labels = app::read(repo)
+        .map(|(_, doc)| app::labels(&doc))
+        .unwrap_or_default();
+    for (name, label) in labels {
+        let Ok(label) = label else {
+            continue;
+        };
+        let review = Some(label.extra_review.skill).filter(|skill| !skill.is_empty());
+        for skill in label.skills.into_iter().chain(review) {
+            if !found.iter().any(|(have, _)| *have == skill) {
+                missing.push(format!(
+                    "orqa:{name}'s skill {skill} is missing: orqa init installs a shipped label's"
+                ));
+            }
+        }
     }
     // A row that cannot be read is the Orchestrator's to refuse; the
     // Review's fallback, unset, runs nothing.

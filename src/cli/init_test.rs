@@ -1216,3 +1216,41 @@ fn a_committed_checkout_does_not_ask_the_labels() {
     assert!(!out.contains(LABELS_STEP), "{out}");
     assert!(labels_in(repo.path()).is_empty());
 }
+
+/// A label skill whose fetch fails leaves init unready: the preflight names
+/// the missing Extra review skill, as it does a label's own skill.
+#[test]
+fn a_failed_label_skill_fetch_fails_the_preflight() {
+    let repo = bare_repo();
+    let tools = Fake::new(|dir, argv| {
+        if argv.contains(&"clone") && argv.iter().any(|arg| arg.contains("getsentry")) {
+            return Err("clone failed".to_string());
+        }
+        ok(dir, argv)
+    });
+    let (code, out) = run_with(&["init"], repo.path(), tools, &herdr_env);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("init: orqa-security-review not installed"),
+        "{out}"
+    );
+    assert!(
+        out.contains("preflight: orqa:security's skill orqa-security-review is missing"),
+        "{out}"
+    );
+    assert!(!out.contains("ready"), "{out}");
+}
+
+/// The checklist draws with auto-wrap off, so a row wider than the terminal
+/// stays one row, and turns it back on when it folds, even unanswered.
+#[test]
+fn the_labels_checklist_turns_auto_wrap_off_and_back_on() {
+    let repo = bare_repo();
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "{out}");
+    let list = &out[out.find(LABELS_STEP).expect("no labels step")..];
+    let (off, on) = (list.find("\x1b[?7l"), list.find("\x1b[?7h"));
+    assert!(off.is_some() && on > off, "{list:?}");
+    assert!(list[off.unwrap()..].find("[x] 1. fe") < on.map(|on| on - off.unwrap()));
+    assert!(list.contains("✓ fe, be, db"), "{list:?}");
+}
