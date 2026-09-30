@@ -42,7 +42,7 @@ For Dockerfiles, charts and manifests:
 
 - `hadolint -f json <Dockerfile>`, and `trivy config --skip-check-update --cache-dir "$TMPDIR/trivy" --format json` on each touched Dockerfile, chart and manifest.
 - `helm lint --strict <chart>`, and `helm template <chart> | kubeconform ... -` with the flags below.
-- `kubeconform -strict -summary -output json -cache <Cache>/kubeconform -ignore-missing-schemas <files>`, for its default Kubernetes version. A resource it skips, or whose schema fails to download (`failed downloading schema`: offline, a kind with no cached schema, such as a CRD), is not checked: list it under Not run.
+- `kubeconform -strict -verbose -summary -output json -cache <Cache>/kubeconform -ignore-missing-schemas <files>`, for its default Kubernetes version. Without `-verbose` its JSON lists only invalid and errored resources, and `-summary` counts the skipped ones without naming them. A resource it skips (`"status": "statusSkipped"`), or whose schema fails to download (`failed downloading schema`: offline, a kind with no cached schema, such as a CRD), is not checked: list each under Not run.
 - `actionlint -format '{{json .}}' <workflow files>`.
 
 A check that stops with a tool error, not with results, goes under Not run with its last error line.
