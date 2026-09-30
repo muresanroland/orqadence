@@ -381,7 +381,7 @@ fn the_pipeline_list_a_stage_page_and_a_pick_list_render() {
     );
     let text =
         |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
-    let left: Vec<String> = (1..16).map(|y| text(&buf, y, 69, 97)).collect();
+    let left: Vec<String> = (1..17).map(|y| text(&buf, y, 69, 97)).collect();
     assert_eq!(
         left,
         [
@@ -398,6 +398,7 @@ fn the_pipeline_list_a_stage_page_and_a_pick_list_render() {
             "────────────────────────────",
             "  Apps      6 of 6 installed",
             "  Skills    0 installed",
+            "  Labels    0 labels",
             "  TypeSafe  on",
             "  Run       3 at once",
         ]
@@ -1555,7 +1556,7 @@ fn the_skills_page_turns_your_personal_skills_on_and_off() {
 /// /config open on the TypeSafe page.
 fn typesafe_page(s: &mut Screen) {
     type_line(s, "/config");
-    keys(s, &[KeyCode::Down; 7]);
+    keys(s, &[KeyCode::Down; 8]);
     s.key(key(KeyCode::Enter));
 }
 
@@ -1729,7 +1730,7 @@ fn a_floor_that_is_not_a_number_from_0_to_1_is_flagged() {
     assert!(row(&buf, 0).contains("━ ✗ 1 check ┓"), "{:?}", row(&buf, 0));
     assert!(find(&buf, "TypeSafe  on ✗").is_some(), "{:#?}", rows(&buf));
 
-    keys(&mut s, &[KeyCode::Down; 7]);
+    keys(&mut s, &[KeyCode::Down; 8]);
     s.key(key(KeyCode::Enter));
     let buf = render(&s, 160, 45);
     let (x, y) = find(&buf, "\"high\"").unwrap_or_else(|| panic!("{:#?}", rows(&buf)));
@@ -1754,7 +1755,7 @@ fn the_run_page_keeps_the_tickets_a_run_takes_at_once() {
     let repo = TempDir::new();
     let mut s = screen_at(apps(""), repo.path());
     type_line(&mut s, "/config");
-    keys(&mut s, &[KeyCode::Down; 8]);
+    keys(&mut s, &[KeyCode::Down; 9]);
     s.key(key(KeyCode::Enter));
     let buf = render(&s, 160, 45);
     assert!(
@@ -1804,7 +1805,7 @@ fn the_run_page_keeps_the_tickets_a_run_takes_at_once() {
         "{:#?}",
         rows(&buf)
     );
-    keys(&mut s, &[KeyCode::Down; 8]);
+    keys(&mut s, &[KeyCode::Down; 9]);
     let buf = render(&s, 160, 45);
     let (x, y) =
         find(&buf, "tickets at once       \"lots\"").unwrap_or_else(|| panic!("{:#?}", rows(&buf)));
@@ -1905,7 +1906,7 @@ fn a_garbled_manifest_opens_config_and_refuses_a_pick() {
 /// /config open on the On call page.
 fn on_call_page(s: &mut Screen) {
     type_line(s, "/config");
-    keys(s, &[KeyCode::Down; 9]);
+    keys(s, &[KeyCode::Down; 10]);
     s.key(key(KeyCode::Enter));
 }
 
@@ -2072,4 +2073,324 @@ fn on_call_minutes_refuse_past_u32_max() {
         "Refused: 4294967296 is not a whole number of at least 1. Nothing changed."
     );
     assert_eq!(s.on_call.minutes, 5);
+}
+
+/// Two labels in config.json: fe with a skill, guidance and a PR template,
+/// codex-review a modifier pinning a row.
+const LABELS: &str = r#"{"labels": {
+  "fe": {"kind": "area", "skills": ["orqa-a11y"], "guidance": "Build the UI.", "pr_template": "fe.md"},
+  "codex-review": {"kind": "modifier", "rows": {"review": {"app": "codex"}}}
+}}"#;
+
+/// /config open on the Labels page.
+fn labels_page(tools: Arc<Fake>, repo: &Path) -> Screen {
+    let mut s = screen_at(tools, repo);
+    type_line(&mut s, "/config");
+    keys(&mut s, &[KeyCode::Down; 7]);
+    s.key(key(KeyCode::Enter));
+    s
+}
+
+/// The Labels page lists each label of config.json as orqa:<name> with its
+/// kind and what it carries; the left counts them.
+#[test]
+fn the_labels_page_lists_each_label_and_renders() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), LABELS);
+    let s = labels_page(clones(), repo.path());
+    let text =
+        |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
+    let buf = render(&s, 160, 45);
+    assert_eq!(text(&buf, 14, 69, 97), "▸ Labels    2 labels");
+    let right: Vec<String> = (1..8).map(|y| text(&buf, y, 99, 158)).collect();
+    assert_eq!(
+        right,
+        [
+            "Labels  2 labels",
+            "A bd label orqa:<name> on a Ticket changes how it runs: the",
+            "skills and guidance its code-editing Stages get, its rows,",
+            "its PR template and an Extra review.",
+            "",
+            "▸ orqa:codex-review   modifier",
+            "  orqa:fe             area     skills: orqa-a11y · guidance",
+        ]
+    );
+    assert!(
+        find(&buf, "a adds a label, e or Enter opens it").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+}
+
+/// a types a name: Enter writes orqa:mobile as an area label at once and
+/// opens its fields; picking an installed skill and typing a guidance line
+/// each save at once, uncommitted.
+#[test]
+fn adding_a_label_as_an_area_with_an_installed_skill_writes_the_entry() {
+    let repo = TempDir::new();
+    let tools = clones();
+    add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
+    let mut s = labels_page(tools, repo.path());
+    s.key(key(KeyCode::Char('a')));
+    type_in(&mut s, "mobile");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        config_json(repo.path())["labels"],
+        json!({"mobile": {"kind": "area"}})
+    );
+    assert_eq!(
+        note(&s),
+        "added orqa:mobile, an area label, saved uncommitted in .orqadence/config.json"
+    );
+    let text =
+        |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
+    let buf = render(&s, 160, 45);
+    let right: Vec<String> = (1..6).map(|y| text(&buf, y, 99, 158)).collect();
+    assert_eq!(
+        right,
+        [
+            "orqa:mobile",
+            "",
+            "▸ kind        area",
+            "  skills      none",
+            "  guidance    none",
+        ]
+    );
+
+    keys(&mut s, &[KeyCode::Down, KeyCode::Enter]);
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "orqa:mobile skills").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    assert!(find(&buf, "▸ orqa-tdd").is_some(), "{:#?}", rows(&buf));
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        config_json(repo.path())["labels"]["mobile"]["skills"],
+        json!(["orqa-tdd"])
+    );
+    assert_eq!(
+        note(&s),
+        "orqa:mobile takes orqa-tdd, saved uncommitted in .orqadence/config.json"
+    );
+    // the list stays open, the skill marked on
+    let buf = render(&s, 160, 45);
+    assert!(find(&buf, "on ✓").is_some(), "{:#?}", rows(&buf));
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        config_json(repo.path())["labels"]["mobile"]["skills"],
+        json!([])
+    );
+    keys(&mut s, &[KeyCode::Esc, KeyCode::Down, KeyCode::Enter]);
+    type_in(&mut s, "Small screens first.");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        config_json(repo.path())["labels"]["mobile"]["guidance"],
+        json!("Small screens first.")
+    );
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "▸ guidance    Small screens first.").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    keys(&mut s, &[KeyCode::Up, KeyCode::Up, KeyCode::Char(' ')]);
+    assert_eq!(
+        config_json(repo.path())["labels"]["mobile"]["kind"],
+        json!("modifier")
+    );
+}
+
+/// A source typed on a label's skills clones it, installs the skill into
+/// the Skill manifest, and lists it on the entry.
+#[test]
+fn a_source_typed_on_a_labels_skills_clones_it_and_lists_it_on_the_entry() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), LABELS);
+    let tools = clones();
+    let mut s = labels_page(tools.clone(), repo.path());
+    keys(
+        &mut s,
+        &[KeyCode::Down, KeyCode::Enter, KeyCode::Down, KeyCode::Enter],
+    );
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "▸ from a source…").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    s.key(key(KeyCode::Enter));
+    type_in(&mut s, "mattpocock/skills/skills/engineering/tdd");
+    s.key(key(KeyCode::Enter));
+    await_busy(&mut s);
+    assert!(
+        tools.calls().iter().any(|c| c.contains("clone")),
+        "{:#?}",
+        tools.calls()
+    );
+    assert!(manifest(repo.path()).skills.contains_key("orqa-tdd"));
+    assert_eq!(
+        config_json(repo.path())["labels"]["fe"]["skills"],
+        json!(["orqa-a11y", "orqa-tdd"])
+    );
+    assert_eq!(
+        note(&s),
+        "installed orqa-tdd from mattpocock/skills @ abc1234; orqa:fe takes it, saved uncommitted in .orqadence/config.json"
+    );
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "skills      orqa-a11y, orqa-tdd").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+}
+
+/// r renames fe to web: the entry moves whole, its pr_template fe.md with
+/// it, and the file is not touched.
+#[test]
+fn renaming_fe_to_web_moves_the_entry_and_keeps_its_pr_template() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), LABELS);
+    let mut s = labels_page(clones(), repo.path());
+    keys(&mut s, &[KeyCode::Down, KeyCode::Char('r')]);
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "rename orqa:fe › fe▏").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    keys(&mut s, &[KeyCode::Backspace, KeyCode::Backspace]);
+    type_in(&mut s, "web");
+    s.key(key(KeyCode::Enter));
+    let labels = config_json(repo.path())["labels"].clone();
+    assert!(labels.get("fe").is_none(), "{labels}");
+    assert_eq!(labels["web"]["pr_template"], json!("fe.md"));
+    assert_eq!(labels["web"]["skills"], json!(["orqa-a11y"]));
+    assert_eq!(
+        note(&s),
+        "renamed orqa:fe to orqa:web, saved uncommitted in .orqadence/config.json"
+    );
+    let buf = render(&s, 160, 45);
+    assert!(find(&buf, "▸ orqa:web").is_some(), "{:#?}", rows(&buf));
+}
+
+/// d asks first; n keeps the label, y removes its entry and leaves its PR
+/// template file.
+#[test]
+fn deleting_a_label_asks_then_removes_the_entry_and_leaves_the_file() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), LABELS);
+    let file = repo.path().join(".github/PULL_REQUEST_TEMPLATE/fe.md");
+    write_file(&file, "## Screenshots\n");
+    let mut s = labels_page(clones(), repo.path());
+    keys(&mut s, &[KeyCode::Down, KeyCode::Char('d')]);
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(
+            &buf,
+            "Delete orqa:fe? A Ticket still carrying it wakes its next Stage; its PR"
+        )
+        .is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    s.key(key(KeyCode::Char('n')));
+    assert!(config_json(repo.path())["labels"].get("fe").is_some());
+    keys(&mut s, &[KeyCode::Char('d'), KeyCode::Char('y')]);
+    assert_eq!(
+        config_json(repo.path())["labels"],
+        json!({"codex-review": {"kind": "modifier", "rows": {"review": {"app": "codex"}}}})
+    );
+    assert!(file.is_file());
+    assert_eq!(
+        note(&s),
+        "deleted orqa:fe, saved uncommitted in .orqadence/config.json"
+    );
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "▸ orqa:codex-review").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+}
+
+/// A name with a space is not a bd label, nothing after orqa: is no name,
+/// and one config.json has clashes: each refused, the text kept to mend,
+/// nothing written.
+#[test]
+fn a_name_that_is_not_a_valid_label_is_refused() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), LABELS);
+    let mut s = labels_page(clones(), repo.path());
+    s.key(key(KeyCode::Char('a')));
+    type_in(&mut s, "my label");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        note(&s),
+        "Refused: 'my label' is not a bd label: no spaces or commas. Nothing changed."
+    );
+    assert!(s.settings.as_ref().unwrap().typing.is_some());
+    keys(&mut s, &[KeyCode::Backspace; 8]);
+    type_in(&mut s, "orqa:");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(note(&s), "Refused: no name after orqa:. Nothing changed.");
+    type_in(&mut s, "fe");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        note(&s),
+        "Refused: orqa:fe is there already. Nothing changed."
+    );
+    assert!(s.settings.as_ref().unwrap().typing.is_some());
+    assert_eq!(
+        config_json(repo.path()),
+        serde_json::from_str::<Value>(LABELS).unwrap()
+    );
+}
+
+/// A label added to config.json since /config opened clashes as well: the
+/// fresh read refuses it, the entry already there kept whole.
+#[test]
+fn a_label_added_meanwhile_is_not_overwritten() {
+    let repo = TempDir::new();
+    let path = repo.path().join(".orqadence/config.json");
+    write_file(&path, LABELS);
+    let mut s = labels_page(clones(), repo.path());
+    let meanwhile = r#"{"labels": {"mobile": {"kind": "modifier", "guidance": "Mine."}}}"#;
+    write_file(&path, meanwhile);
+    s.key(key(KeyCode::Char('a')));
+    type_in(&mut s, "mobile");
+    s.key(key(KeyCode::Enter));
+    assert!(
+        note(&s).contains("orqa:mobile is there already"),
+        "{}",
+        note(&s)
+    );
+    assert_eq!(
+        config_json(repo.path()),
+        serde_json::from_str::<Value>(meanwhile).unwrap()
+    );
+}
+
+/// A label a Stage could not read (skills not a list of strings) refuses a
+/// pick: config.json is read afresh and its entry left as it was.
+#[test]
+fn a_malformed_skills_list_refuses_a_pick() {
+    let repo = TempDir::new();
+    let tools = clones();
+    add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
+    let odd = r#"{"labels": {"fe": {"kind": "area", "skills": ["orqa-a11y", 7]}}}"#;
+    write_file(&repo.path().join(".orqadence/config.json"), odd);
+    let mut s = labels_page(tools, repo.path());
+    keys(&mut s, &[KeyCode::Enter, KeyCode::Down, KeyCode::Enter]);
+    s.key(key(KeyCode::Enter));
+    assert!(
+        note(&s).contains("labels fe: invalid type: integer `7`, expected a string"),
+        "{}",
+        note(&s)
+    );
+    assert_eq!(
+        config_json(repo.path())["labels"]["fe"]["skills"],
+        json!(["orqa-a11y", 7])
+    );
 }
