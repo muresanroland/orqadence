@@ -225,7 +225,8 @@ impl Orchestrator {
     /// Review's limit Question, which stands until the reset. Asked once
     /// for the run, by the first Ticket that needs it, which holds, as does
     /// every other, until the answer. None once the limit is over; Park on
-    /// /park, Stopped on /stop-work.
+    /// /park, Stopped on /stop-work. A codex-review Ticket is asked nothing:
+    /// None, its own row, held by wait_limit.
     fn review_answer(
         &self,
         ticket: &str,
@@ -233,6 +234,9 @@ impl Orchestrator {
         app: &str,
         labels: &[String],
     ) -> Result<Option<Review>, Held> {
+        if codex_review(labels) {
+            return Ok(None);
+        }
         let answered = || self.state.lock().unwrap().reviews.get(app).copied();
         let Some(reset) = self.limited_until(app) else {
             return Ok(None);
@@ -284,8 +288,7 @@ impl Orchestrator {
     /// the user answered: its own once the limit is over (wait), the
     /// fallback's, or none, the Review skipped (unreviewed): its result
     /// written to `file` as any Stage's, so a resumed run skips it too. The
-    /// fallback is the Ticket's labels' over config.json's. A codex-review
-    /// Ticket is asked nothing: its own row, held by wait_limit.
+    /// fallback is the Ticket's labels' over config.json's.
     pub(super) fn review_row(
         &self,
         ticket: &str,
@@ -295,9 +298,6 @@ impl Orchestrator {
         labels: &[String],
     ) -> Result<Row, Held> {
         let app = row.app.name;
-        if codex_review(labels) {
-            return Ok(row);
-        }
         let Some(reset) = self.limited_until(app) else {
             return Ok(row);
         };
@@ -403,17 +403,15 @@ impl Orchestrator {
         );
         // A Review on its own App goes as the user answered: on wait it holds
         // as any Stage; otherwise its session is left, and it starts again.
-        // On its fallback's, or on a codex-review Ticket, it holds as any
-        // Stage: the answer stands, or none is asked. Unreadable labels read
-        // as none.
-        let labels = match st.name == REVIEW.name {
-            true => self.labels(ticket).unwrap_or_default(),
-            false => Vec::new(),
-        };
-        if st.name == REVIEW.name
-            && !codex_review(&labels)
-            && stage_row(&self.cfg.repo, st, &labels).is_ok_and(|row| row.app.name == app)
-        {
+        // On its fallback's, on a codex-review Ticket, or with its labels
+        // unread, it holds as any Stage: the answer stands, or none is asked.
+        let labels = (st.name == REVIEW.name)
+            .then(|| self.labels(ticket).ok())
+            .flatten()
+            .filter(|labels| {
+                stage_row(&self.cfg.repo, st, labels).is_ok_and(|row| row.app.name == app)
+            });
+        if let Some(labels) = labels {
             match self.review_answer(ticket, label, app, &labels) {
                 Err(held) => return held,
                 Ok(Some(Review::Fallback | Review::Unreviewed)) => {

@@ -1115,6 +1115,44 @@ fn a_codex_review_ticket_holds_its_review_at_a_codex_limit_and_carries_on_at_the
     assert!(!review.contains("UNREVIEWED"), "{review}");
 }
 
+/// A bd show failing as the limit is seen never reads as no labels, the
+/// default row's Question: the Review holds as any Stage.
+#[test]
+fn a_codex_review_ticket_whose_labels_go_unread_at_the_limit_asks_nothing() {
+    let (w, o, clock) = codex_review_world(vec![]);
+    write_file(&o.run_dir("hx-1").join("implement.md"), "STATUS: done\n");
+    let world = w.clone();
+    let file = Mutex::new(String::new());
+    w.session(move |p| {
+        if p.ticket == "hx-1" && p.stage == "review" {
+            world.lock().tails.insert(p.pane.clone(), CODEX.to_string());
+            world.fail_once("bd show hx-1", "bd down");
+            *file.lock().unwrap() = p.file.clone();
+            return (String::new(), "idle".to_string());
+        }
+        if p.text == "continue" {
+            write_file(
+                std::path::Path::new(&*file.lock().unwrap()),
+                "STATUS: done\n",
+            );
+            return (String::new(), "idle".to_string());
+        }
+        succeed(p)
+    });
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    wait_until("hx-1 held on codex", || o.ticket("hx-1").limited == "codex");
+    thread::sleep(std::time::Duration::from_millis(20));
+    assert!(review_questions(&w).is_empty(), "a Question was asked");
+    assert!(o.ticket("hx-1").panes.contains_key("review"));
+
+    *clock.lock().unwrap() = at(25, 15, 7);
+    run.wait();
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert!(review_questions(&w).is_empty(), "a Question was asked");
+    assert_eq!(w.called("herdr agent start h-hx-1-review").len(), 1);
+}
+
 /// Other Tickets keep the Question and the fallback, one whose other
 /// Modifier pins the Review to codex too; their answer never reaches the
 /// codex-review Ticket.

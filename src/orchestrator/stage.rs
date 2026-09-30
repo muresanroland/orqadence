@@ -636,7 +636,7 @@ impl Orchestrator {
         let asked = |s: &Session| {
             st.name == REVIEW.name
                 && self.limited_until(&s.app).is_some()
-                && !codex_review(&self.labels(ticket).unwrap_or_default())
+                && self.labels(ticket).is_ok_and(|l| !codex_review(&l))
         };
         if let Some(session) = saved
             .sessions
