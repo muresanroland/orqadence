@@ -288,9 +288,12 @@ impl Orchestrator {
     /// the review's pane starts: bash in the worktree, ORQA_CACHE the
     /// label's `cache` in the checkout (made first, shared by every
     /// worktree), ORQA_BASE the base branch. The Ticket reads "fetching"
-    /// while it runs. A failure is a Question with its error: retry runs it
-    /// again, run without gives the error back for the Fetch Input, park
-    /// parks; Away, the Ticket parks, and /continue asks again.
+    /// while it runs. Implement and Fix can write the worktree, and this
+    /// runs outside their sandbox, so a fetch.sh that is not the one
+    /// committed where the branch left its base is not run: a failure too.
+    /// A failure is a Question with its error: retry runs it again, run
+    /// without gives the error back for the Fetch Input, park parks; Away,
+    /// the Ticket parks, and /continue asks again.
     fn run_fetch_sh(
         &self,
         ticket: &str,
@@ -312,6 +315,23 @@ impl Orchestrator {
             "bash",
             &script.display().to_string(),
         ];
+        let unchanged = || {
+            let fork = ["git", "merge-base", "HEAD", base];
+            let fork = tools
+                .run(&worktree, &fork)
+                .map_err(|err| fetch_error(&err))?;
+            let rel = script.strip_prefix(&worktree).unwrap_or(script);
+            let at = format!("{}:{}", fork.trim(), rel.display());
+            match (
+                fs::read_to_string(script),
+                tools.run(&worktree, &["git", "show", &at]),
+            ) {
+                (Ok(text), Ok(committed)) if text == committed => Ok(()),
+                _ => Err(format!(
+                    "it is not the one committed on {base}, so it was not run"
+                )),
+            }
+        };
         loop {
             self.update(ticket, |ts| ts.fetching = true);
             // ponytail: the call blocks, so /stop-work waits for fetch.sh to
@@ -319,6 +339,7 @@ impl Orchestrator {
             let ran = local_dir(&self.cfg.repo)
                 .and_then(|_| fs::create_dir_all(cache))
                 .map_err(|err| err.to_string())
+                .and_then(|()| unchanged())
                 .and_then(|()| tools.run(&worktree, &argv).map_err(|err| fetch_error(&err)));
             self.update(ticket, |ts| ts.fetching = false);
             let Err(error) = ran else {
