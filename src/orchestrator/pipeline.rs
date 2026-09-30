@@ -240,24 +240,28 @@ impl Orchestrator {
     /// and the review gets its cache as the Cache Input, and, run without
     /// it, the Fetch Input. Asked only where a session starts fresh, so a
     /// resumed one, which may be reading the cache, is not fetched for,
-    /// and one whose resume failed is. None for any other Stage; a Ticket
-    /// whose labels are not read gets none either, and its start says why.
+    /// and one whose resume failed is. None for any other Stage.
     pub(super) fn fetch_inputs(
         &self,
         ticket: &str,
         st: &Stage,
         label: &str,
     ) -> Result<Vec<(&'static str, String)>, StageError> {
-        let extra = match st.name == EXTRA_REVIEW.name {
-            true => self.labels(ticket).ok(),
-            false => None,
-        };
-        let extra = extra.and_then(|labels| app::extra_review(&self.cfg.repo, &labels).ok());
-        let Some(extra) = extra.flatten() else {
+        if st.name != EXTRA_REVIEW.name {
+            return Ok(Vec::new());
+        }
+        let labels = self
+            .labels(ticket)
+            .map_err(|err| StageError::Parked(format!("Ticket labels not read: {err}")))?;
+        let Some(extra) = app::extra_review(&self.cfg.repo, &labels).map_err(StageError::Parked)?
+        else {
             return Ok(Vec::new());
         };
-        let script = self.worktree(ticket).join(FILES).join(&extra.skill);
-        let script = script.join("fetch.sh");
+        let script = self
+            .worktree(ticket)
+            .join(FILES)
+            .join(&extra.skill)
+            .join("fetch.sh");
         if !script.exists() {
             return Ok(Vec::new());
         }
@@ -368,10 +372,7 @@ impl Orchestrator {
                 ..Default::default()
             },
         )?;
-        match round {
-            FINAL => self.report(ticket, "final fix done"),
-            _ => self.report(ticket, &format!("fix {round} done")),
-        }
+        self.report(ticket, &format!("{} done", stage_label(&FIX, round)));
         Ok(fix)
     }
 

@@ -696,6 +696,9 @@ impl Orchestrator {
                 Some(pane) => self.hold(ticket, st, &label, &pane, &file, want, true, None),
                 None => {
                     let fetched = self.fetch_inputs(ticket, st, &label)?;
+                    if self.stopping() {
+                        return Err(StageError::Stopped);
+                    }
                     let mut all = all.clone();
                     all.extend(fetched.iter().map(|(name, value)| (*name, value.as_str())));
                     self.attempt(ticket, st, &label, retry, &file, &all, want)

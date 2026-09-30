@@ -5,7 +5,7 @@
 
 use super::limit_test::{hits, CODEX};
 use super::pipeline_test::stages_run;
-use super::stage::{Answer, Ask, Orchestrator, AWAY};
+use super::stage::{Answer, Ask, Orchestrator, StageError, AWAY, EXTRA_REVIEW};
 use super::state::{Review, Session, STATUS_PARKED};
 use super::world::{new_world, set_clock, spawn_ticket, succeed, wait_until, BdTicket, World};
 use super::write_file;
@@ -773,4 +773,40 @@ fn before_pr_an_unreviewed_last_round_goes_to_a_fix_that_opens_the_pr() {
         ),
         "{fix}"
     );
+}
+
+/// Labels that cannot be read where an Extra review is fetched for park
+/// the Ticket: a fresh Extra review never starts without its fetch.
+#[test]
+fn labels_not_read_for_the_fetch_park_it() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    config(&w, json!({}));
+    w.hook(|_, argv| match argv {
+        ["bd", "show", ..] => Some(Err("dolt locked".to_string())),
+        _ => None,
+    });
+    match o.fetch_inputs("hx-1", &EXTRA_REVIEW, "extra review 1") {
+        Err(StageError::Parked(reason)) => assert!(reason.starts_with("Ticket labels not read")),
+        other => panic!("not parked: {other:?}"),
+    }
+}
+
+/// A stop that arrives while fetch.sh runs starts no Extra review.
+#[test]
+fn stop_during_the_fetch_starts_no_extra_review() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    config(&w, json!({}));
+    fetch_sh(&w);
+    let o = Arc::new(o);
+    let stopper = o.clone();
+    w.hook(move |_, argv| {
+        if argv.first() == Some(&"env") {
+            stopper.stop.store(true, Ordering::SeqCst);
+        }
+        None
+    });
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    run.wait();
+    assert_eq!(w.called("env ").len(), 1);
+    assert!(w.called("herdr agent start h-hx-1-extra-review").is_empty());
 }
