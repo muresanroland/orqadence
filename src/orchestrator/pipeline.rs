@@ -13,6 +13,7 @@ use super::stage::{
     DEBATE, EXTRA_REVIEW, FINAL, FIX, IMPLEMENT, REVIEW,
 };
 use super::state::{STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
+use crate::setup::{DEFAULT_TEMPLATE, TEMPLATE_DIR};
 use crate::skills::manifest::{placeholder, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS};
 use crate::skills::{stage_skill, CREATE_PR};
 
@@ -226,7 +227,8 @@ impl Orchestrator {
     }
 
     /// A Fix given only the fix items ("none" without any); one that opens
-    /// the PR also gets the Verdict files, for the PR description.
+    /// the PR also gets the Verdict files, its template and the Extra
+    /// review's result files, for the PR description.
     fn fix(
         &self,
         ticket: &str,
@@ -242,29 +244,68 @@ impl Orchestrator {
             format!("\n  {}", fixes.join("\n  "))
         };
         let history = verdicts.join(", ");
+        let want = ResultRequirements {
+            require_pr: open_pr,
+            ..Default::default()
+        };
+        // resolved for a Fix that runs: a resumed one already done says nothing
+        let file = self.run_dir(ticket).join(result_name(&FIX, round));
+        let done = read_stage_result(&file, want).1.is_empty();
+        let template = (open_pr && !done)
+            .then(|| self.pr_template(ticket))
+            .flatten();
+        let extra_files: Vec<_> = (1..=FINAL)
+            .map(|round| self.run_dir(ticket).join(result_name(&EXTRA_REVIEW, round)))
+            .filter(|file| file.exists())
+            .map(|file| file.display().to_string())
+            .collect();
+        let extra_files = extra_files.join(", ");
         let mut inputs = vec![("Open PR", "no"), ("Fix items", items.as_str())];
         if open_pr {
             inputs[0].1 = "yes";
             inputs.push(("Verdict history", history.as_str()));
+            if let Some(template) = &template {
+                inputs.push(("PR template", template));
+            }
+            if !extra_files.is_empty() {
+                inputs.push(("Extra review files", extra_files.as_str()));
+            }
         }
         if !unreviewed.is_empty() {
             inputs.push(("Unreviewed", unreviewed));
         }
-        let fix = self.run_stage(
-            ticket,
-            &FIX,
-            round,
-            &inputs,
-            ResultRequirements {
-                require_pr: open_pr,
-                ..Default::default()
-            },
-        )?;
+        let fix = self.run_stage(ticket, &FIX, round, &inputs, want)?;
         match round {
             FINAL => self.report(ticket, "final fix done"),
             _ => self.report(ticket, &format!("fix {round} done")),
         }
         Ok(fix)
+    }
+
+    /// The template the PR is written from, as a path in the checkout, so
+    /// one not yet committed or merged still works: the Area label's
+    /// pr_template, else the default, else none. A mapped file since gone
+    /// falls back to the default, and RECENT says so.
+    fn pr_template(&self, ticket: &str) -> Option<String> {
+        let repo = &self.cfg.repo;
+        // labels or config not read parked the Round already
+        let labels = self.labels(ticket).unwrap_or_default();
+        let mapped = app::pr_template(repo, &labels).unwrap_or_default();
+        let default = repo.join(DEFAULT_TEMPLATE);
+        let default = default.exists().then(|| default.display().to_string());
+        if !mapped.is_empty() {
+            let file = repo.join(TEMPLATE_DIR).join(&mapped);
+            if file.exists() {
+                return Some(file.display().to_string());
+            }
+            let instead = match default {
+                Some(_) => ": the default instead",
+                None => ", and there is no default",
+            };
+            let gone = format!("PR template {TEMPLATE_DIR}/{mapped} is gone{instead}");
+            self.report(ticket, &gone);
+        }
+        default
     }
 
     /// A Debate over `findings` Findings, reported as settled; its Verdict

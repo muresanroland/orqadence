@@ -49,8 +49,11 @@ inventing one.
 
 Write the body to a file and pass `--body-file`, so markdown and quotes survive the shell.
 
-If the repo has a template (`.github/pull_request_template.md`, `docs/`, or
-`.github/PULL_REQUEST_TEMPLATE/`), fill every section of it. Otherwise:
+A template you are given comes before any you find yourself (the Orqadence Fix Stage gives
+one as **PR template**). Without one, use the repo's template (`.github/pull_request_template.md`,
+`docs/`, or `.github/PULL_REQUEST_TEMPLATE/`). Fill every section of the template, and
+replace each section's HTML comment (`<!-- ... -->`) with that section's content. With no
+template at all, use this:
 
 ```
 ## What      one or two sentences, concrete

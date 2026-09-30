@@ -19,13 +19,17 @@ With **Fix items** `none` there is nothing to apply: go to step 2.
 
 ## 2. Open the pull request, only if **Open PR** is yes
 
-1. Run the orqa-create-pr skill. It owns the repo's conventions for pushing the branch and creating the PR.
-2. Make sure the PR description includes, adding them with `gh pr edit --body-file` if orqa-create-pr did not:
-   - **Unreviewed**: if Inputs carry **Unreviewed** (`<app> was limited until <t>`, with `the extra review skipped too` when the label's Extra review was), open the description by saying that this Round's Review and Debate, and the Extra review when it says so, were skipped because that App was at its usage limit, so no second model reviewed the latest changes, and that a human review is required.
-   - The Ticket id and what was built (the run directory's `implement.md` has the summary).
+**PR template**, when Inputs carry it, is the path of the template this PR is written from, in the Target repo's checkout rather than your worktree, so a template not yet committed or merged still works. **Extra review files**, when Inputs carry them, are the Extra review's result files, from each Round it ran in and from before the PR.
+
+1. Run the orqa-create-pr skill, giving it the template at **PR template** when Inputs carry one. It owns the repo's conventions for pushing the branch and creating the PR. The repo may have edited its own orqa-create-pr, so check that the body follows the template it was written from (**PR template**, else the repo's own): every section there, each HTML comment replaced with content. Make sure the body names the Ticket id and says what was built (the run directory's `implement.md` has the summary). Fix the body with `gh pr edit --body-file` where it falls short.
+2. **Unreviewed**: if Inputs carry **Unreviewed** (`<app> was limited until <t>`, with `the extra review skipped too` when the label's Extra review was), open the description, above the template's sections, by saying, with `gh pr edit --body-file` if orqa-create-pr did not, that this Round's Review and Debate, and the Extra review when it says so, were skipped because that App was at its usage limit, so no second model reviewed the latest changes, and that a human review is required.
+3. Add Orqadence's run sections after the template's own, under one `## Orqadence run` heading, with `gh pr edit --body-file` if orqa-create-pr did not. Do this whichever template the PR follows, the repo's own too. In this order:
    - **Verdict history**: from every file under **Verdict history**, each skipped Finding with its reason and how it was settled, grouped by Round. Carry over each Verdict's Notes.
    - **Leftovers never re-checked**: if this is Round 3 or the final Fix, list the fix items applied in this Fix and, for the final Fix, in Round 3's Fix too (its result file in the Run directory, when it exists). No Review ran after them, so the human reviewer is the first to see those changes. Otherwise write "none".
-3. Do not merge the PR and do not close the Ticket: the Ticket closes when a human merges.
+   - **Extra review skipped**: if **Unreviewed** says `the extra review skipped too`, say that the label's Extra review did not run because the PR opened unreviewed. Otherwise leave this part out.
+   - **Extra review Findings still open at the cap**: if this is Round 3 or the final Fix, list the Extra review's Findings (from **Extra review files**) that came to this Fix as fix items. Mark the ones whose item says `not debated`: the label's Debate is off. Otherwise leave this part out.
+   - **Not run**: copy each **Extra review files** file's `## Not run` section, naming its file. Leave this part out when none has one.
+4. Do not merge the PR and do not close the Ticket: the Ticket closes when a human merges.
 
 If **Open PR** is no, do not push and do not open anything: another Round follows, or, after the last Round, the Extra review before the PR and a final Fix.
 
