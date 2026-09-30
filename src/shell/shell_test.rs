@@ -6002,7 +6002,7 @@ fn on_call_rings_a_failure_after_the_summary() {
 }
 
 /// The front Notice modal's text, "" when none shows.
-fn notice_modal(s: &Screen) -> &str {
+pub(super) fn notice_modal(s: &Screen) -> &str {
     s.notices.first().map_or("", |n| n.text.as_str())
 }
 

@@ -182,9 +182,9 @@ pub(crate) struct Question {
 }
 
 /// A Notice modal's kind: red and titled ERROR, or green and titled NOTICE.
-#[allow(dead_code)] // nothing raises one yet: /config's App errors and the update notice will
 pub(crate) enum NoticeKind {
     Error,
+    #[allow(dead_code)] // nothing raises one yet: the update notice will
     Info,
 }
 
@@ -2103,7 +2103,6 @@ impl Screen {
 
     /// Raises a Notice modal; one raised while another shows waits behind it.
     /// An autoclose counts down only while it shows.
-    #[allow(dead_code)] // nothing raises one yet: /config's App errors and the update notice will
     pub(crate) fn notify(&mut self, kind: NoticeKind, text: &str, autoclose: Option<Duration>) {
         self.notices.push(Notice {
             kind,
