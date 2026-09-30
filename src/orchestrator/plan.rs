@@ -684,14 +684,17 @@ pub(super) fn open_question(plan: &str) -> Option<String> {
                 _ => {}
             }
         }
+        // A heading may sit after up to three spaces; four make a code block.
+        let head = line.trim_start_matches(' ');
         let level = match fence {
             Some(_) => 0,
-            None => line.len() - line.trim_start_matches('#').len(),
+            None if line.len() - head.len() > 3 => 0,
+            None => head.len() - head.trim_start_matches('#').len(),
         };
         (line, level)
     });
     let at = lines.by_ref().find_map(|(line, level)| {
-        let text = line.trim_start_matches('#').trim().to_lowercase();
+        let text = line.trim_start().trim_start_matches('#').trim().to_lowercase();
         (level > 0 && text.starts_with("open question")).then_some(level)
     })?;
     let question: Vec<&str> = lines

@@ -1184,3 +1184,12 @@ fn an_open_question_after_a_longer_fence_is_still_found() {
     assert_eq!(open_question(plan).as_deref(), Some("Which parser stays?"));
     assert_eq!(open_question("```\n## Open question\n```rust\n"), None);
 }
+
+/// A heading counts after up to three spaces, as in Markdown; four or more
+/// make an indented code block, never a heading.
+#[test]
+fn an_open_question_under_an_indented_heading_is_still_found() {
+    let plan = "# Plan\n\n   ## Open question\n\nWhich parser stays?\n\n  ## Steps\n\n1. Parse.\n";
+    assert_eq!(open_question(plan).as_deref(), Some("Which parser stays?"));
+    assert_eq!(open_question("# Plan\n\n    ## Open question\n\nNot one.\n"), None);
+}
