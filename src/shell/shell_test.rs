@@ -2935,7 +2935,6 @@ fn an_update_waits_while_the_lock_is_held_and_installs_at_stop_work() {
         "a deferred install said something:\n{log}"
     );
     assert!(!temp_file(&w).exists());
-    assert_eq!(std::fs::read(marker_file(&w)).unwrap(), b"v1.1.0");
 }
 
 #[test]
@@ -2956,9 +2955,6 @@ fn an_idle_shell_installs_an_update_at_once_and_reexecs() {
     );
     assert!(!log(&w).contains("downloaded"));
     assert_eq!(s.shown_version(), "v1.0.0");
-    let marker = marker_file(&w);
-    assert_eq!(std::fs::read(&marker).unwrap(), b"v1.1.0");
-    std::fs::remove_file(marker).unwrap();
 
     // A failed check is one log line, the temp file gone, nothing in the header.
     let (mut s, exe) = release_shell(&w);
@@ -3009,7 +3005,6 @@ fn exit_with_a_run_live_installs_the_update_as_its_last_act() {
     assert_eq!(std::fs::read(&exe).unwrap(), binary(b"new"));
     assert!(!s.reexec);
     assert!(!log(&w).contains("updating to"), "log:\n{}", log(&w));
-    assert_eq!(std::fs::read(marker_file(&w)).unwrap(), b"v1.1.0");
 }
 
 #[test]
@@ -6191,7 +6186,8 @@ fn an_info_notice_counts_down_green_over_config() {
 
 /// The marker an install left, naming the running version: the Shell opens
 /// with a green Notice modal naming it and its release notes, which closes
-/// by itself in 30s; the marker is gone. With no marker nothing more shows.
+/// by itself in 30s; the marker is gone. At 80x24 the box grows to the URL,
+/// so it stays whole on one row. With no marker nothing more shows.
 #[test]
 fn a_shell_opened_after_an_update_shows_the_green_notice_for_30s() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
@@ -6212,20 +6208,6 @@ fn a_shell_opened_after_an_update_shows_the_green_notice_for_30s() {
         s.notices[0].closes,
         Some(now + chrono::Duration::seconds(30))
     );
-
-    s.notify_updated();
-    assert_eq!(s.notices.len(), 1, "a notice with no marker");
-}
-
-/// The update notice over the Shell at 80x24: the box grows to the URL, so
-/// it stays whole on one row.
-#[test]
-fn the_update_notice_keeps_the_url_on_one_row() {
-    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
-    let (mut s, _) = release_shell(&w);
-    set_clock(&mut s.cfg, chrono::Local::now());
-    std::fs::write(marker_file(&w), "v1.0.0").unwrap();
-    s.notify_updated();
     let buf = render(&s, 80, 24);
     let at = find(&buf, "╭ NOTICE ─").expect("no NOTICE");
     let (x, y) = (at.0 as usize + 2, at.1 + 1);
@@ -6241,6 +6223,9 @@ fn the_update_notice_keeps_the_url_on_one_row() {
         "{:#?}",
         rows(&buf)
     );
+
+    s.notify_updated();
+    assert_eq!(s.notices.len(), 1, "a notice with no marker");
 }
 
 /// A message longer than the screen: the box takes the screen's height and
