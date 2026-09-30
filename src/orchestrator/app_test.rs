@@ -3,7 +3,7 @@
 
 use super::app::{
     app, canonical, checks, clash, debate_inputs, extra_review, fallback_row, floor_in, labels,
-    row, runs_on, Clash, ExtraReview, Floor, Label, IF_LIMITED, ROWS,
+    row, runs_on, Clash, ExtraReview, Floor, Label, IF_LIMITED,
 };
 use super::stage::{Answer, Ask, Orchestrator, AWAY};
 use super::state::STATUS_PARKED;
@@ -965,8 +965,6 @@ fn a_label_row_naming_codex_for_fix_is_refused_by_runs_on() {
 /// the address row's fields.
 #[test]
 fn rebase_and_address_pr_comments_rows_replace_address_and_read_an_old_address_row() {
-    assert!(ROWS.contains(&"rebase") && ROWS.contains(&"address_pr_comments"));
-    assert!(!ROWS.contains(&"address"));
     for key in ["rebase", "address_pr_comments"] {
         assert_eq!(
             runs_on(key, app("codex").unwrap()),

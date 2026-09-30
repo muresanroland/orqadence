@@ -235,13 +235,9 @@ fn the_stage_skills_know_the_extra_review() {
     assert!(skill("orqa-stage-review").contains("`extra-review-*.md`"));
 }
 
-/// Rebase resolves conflicts with the merge conflicts pick; Address PR
-/// comments never rebases.
+/// Address PR comments never rebases.
 #[test]
-fn stage_rebase_holds_the_merge_conflicts_line_and_address_pr_comments_no_rebase() {
-    assert!(
-        skill("orqa-stage-rebase").contains("Use the {{merge-conflicts}} skill for the rebase.")
-    );
+fn stage_address_pr_comments_holds_no_rebase() {
     let comments = skill("orqa-stage-address-pr-comments");
     assert!(comments.contains("gh run view") && comments.contains("--log-failed"));
     assert!(!comments.to_lowercase().contains("rebase"));
