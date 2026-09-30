@@ -1,6 +1,6 @@
 use super::judgment::fake::Fake;
 use super::judgment::{Action, PlanJudged, PLAN_FLOOR};
-use super::stage::{Answer, Ask, Config, Orchestrator};
+use super::stage::{Answer, Ask, Config, Orchestrator, AWAY};
 use super::state::{load_state, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 use super::world::{new_world, spawn_ticket, succeed, BdTicket, Prompt, World};
 use super::write_file;
@@ -1060,4 +1060,131 @@ fn planning_does_not_use_up_the_implement_deadline() {
         run.wait();
         assert_eq!(o.ticket("hx-1").status, STATUS_PARKED);
     }
+}
+
+/// A plan with an Open question, the Implement Stage skill's own heading,
+/// and a section after it.
+const ASKING: &str = "# Plan\n\n- change src/x.rs\n\n## Open question\n\nWhich parser stays?\n- ours\n- theirs\n\n## Decisions I made\n\n- kept the old flag\n";
+
+/// Implement presents `plan`: at its plan dialog on claude, in plan.md and
+/// STATUS: plan on codex; every other Stage succeeds.
+fn presents(w: &World, app: &str, plan: &'static str) {
+    let codex = app == "codex";
+    if codex {
+        write_file(
+            &w.repo.join(".orqadence/config.json"),
+            r#"{"implement": {"app": "codex"}}"#,
+        );
+    }
+    let run = w.repo.join(".orqadence-local/runs/hx-1");
+    w.session(move |p: &Prompt| match (p.stage.as_str(), codex) {
+        ("implement", false) => at_dialog(&run, plan),
+        ("implement", true) => {
+            write_file(&run.join("plan.md"), plan);
+            write_file(&run.join("implement.md"), "STATUS: plan\n");
+            (String::new(), "idle".to_string())
+        }
+        _ => succeed(p),
+    });
+}
+
+/// Away, a plan below the floor with an Open question parks its Ticket as
+/// a Stage's question does: a bd comment with the question, its pane left
+/// open, no Question. /continue @hx-1 puts the plan to the user, from the
+/// same session.
+#[test]
+fn away_parks_a_plan_with_an_open_question_until_continue_puts_it_to_you() {
+    for app in ["claude", "codex"] {
+        let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
+        presents(&w, app, ASKING);
+        o.cfg.typesafe = typesafe(|_| Ok(nouls(0.9, 0.9, 0.9)));
+        o.cfg.away.store(true, Ordering::SeqCst);
+        let o = Arc::new(o);
+        o.run_ticket("hx-1");
+
+        w.await_line("hx-1 parked: asked you while away");
+        let ts = o.ticket("hx-1");
+        assert_eq!(
+            (ts.status.as_str(), ts.reason.as_str()),
+            (STATUS_PARKED, AWAY),
+            "{app}"
+        );
+        let comments = w.called("bd comments add hx-1 ");
+        assert!(
+            comments.len() == 1
+                && comments[0].contains("implement planned")
+                && comments[0].contains("/continue @hx-1")
+                && comments[0].contains("Which parser stays?\n- ours\n- theirs")
+                && !comments[0].contains("Decisions I made"),
+            "{app}: bd comments = {comments:?}"
+        );
+        assert!(w.called("herdr pane close").is_empty(), "{app}");
+        let pane = ts.panes["implement"].clone();
+        let waiting = if app == "claude" { "blocked" } else { "idle" };
+        assert_eq!(w.lock().agents[&pane], waiting, "{app}");
+        assert!(
+            w.events().iter().all(|e| e.ask.is_none()),
+            "{app}: Away still put a Question"
+        );
+
+        // /continue @hx-1: Away off, the Ticket run again
+        o.cfg.away.store(false, Ordering::SeqCst);
+        let mut run = spawn_ticket(o.clone(), "hx-1");
+        let (asked, plan, _, _) = plan_question(&w, 1);
+        assert_eq!(
+            (asked.as_str(), plan.as_str()),
+            (pane.as_str(), ASKING),
+            "{app}"
+        );
+        assert_eq!(
+            w.called("herdr agent start h-hx-1-implement").len(),
+            1,
+            "{app}: continue started a fresh session"
+        );
+        o.answer("hx-1", &pane, Answer::Act(Action::Park));
+        run.wait();
+        assert_eq!(w.called("bd comments add hx-1 ").len(), 1, "{app}");
+    }
+}
+
+/// With Away off a plan's Open question is the plan Question, no bd
+/// comment; Away turned on while it waits parks the Ticket as a Stage's
+/// question.
+#[test]
+fn away_off_asks_a_plans_open_question_and_away_turned_on_parks_it() {
+    let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
+    presents(&w, "claude", ASKING);
+    o.cfg.typesafe = typesafe(|_| Ok(nouls(0.9, 0.9, 0.9)));
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    let (_, plan, _, _) = plan_question(&w, 1);
+    assert_eq!(plan, ASKING);
+    assert!(w.called("bd comments add").is_empty());
+
+    o.cfg.away.store(true, Ordering::SeqCst);
+    w.await_line("hx-1 parked: asked you while away");
+    run.wait();
+    assert_eq!(o.ticket("hx-1").reason, AWAY);
+    assert_eq!(w.called("bd comments add hx-1 ").len(), 1);
+    assert!(w.called("herdr pane close").is_empty());
+}
+
+/// Away, a plan below the floor with no Open question still waits on the
+/// plan Question.
+#[test]
+fn away_leaves_a_plan_without_an_open_question_waiting_for_you() {
+    let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
+    presents(&w, "claude", PLAN);
+    o.cfg.typesafe = typesafe(|_| Ok(covers(0.5)));
+    o.cfg.away.store(true, Ordering::SeqCst);
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    let (pane, plan, _, _) = plan_question(&w, 1);
+    assert_eq!(plan, PLAN);
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(o.ticket("hx-1").status, STATUS_RUNNING);
+    o.answer("hx-1", &pane, Answer::Act(Action::Park));
+    run.wait();
+    assert_eq!(o.ticket("hx-1").reason, "by you at implement");
+    assert!(w.called("bd comments add").is_empty());
 }

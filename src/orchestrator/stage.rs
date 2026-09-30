@@ -1293,7 +1293,13 @@ impl Orchestrator {
 
     /// A bd comment on the Ticket for a Question that came while the user
     /// was Away: `lead`, then the question and its options.
-    fn comment_away(&self, ticket: &str, lead: &str, question: &str, options: &[String]) {
+    pub(super) fn comment_away(
+        &self,
+        ticket: &str,
+        lead: &str,
+        question: &str,
+        options: &[String],
+    ) {
         let options: String = options.iter().map(|o| format!("- {o}\n")).collect();
         let comment = format!("{lead}\n\n{question}\n{options}");
         let argv = ["bd", "comments", "add", ticket, comment.trim_end()];

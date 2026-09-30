@@ -18,6 +18,7 @@
 //! changed it before approval is a plan failure.
 
 use std::fs;
+use std::sync::atomic::Ordering;
 use std::thread;
 
 use serde_json::{json, Value};
@@ -224,7 +225,8 @@ impl Orchestrator {
     /// A plan ready: the plan Judgment approves it when its Nouls clear the
     /// floor, otherwise the user answers its Question, until the session
     /// moves on (None) or the Stage ends. No deadline runs while the
-    /// Question waits.
+    /// Question waits. Away, a plan with an Open question parks its Ticket
+    /// instead, as a Stage's own question does (parks_away).
     pub(super) fn plan(
         &self,
         ticket: &str,
@@ -255,6 +257,9 @@ impl Orchestrator {
                 let answer = match approved.take() {
                     Some(answer) => answer,
                     None => {
+                        if self.parks_away(ticket, label, &plan) {
+                            return Some(Held::Away);
+                        }
                         let ask = Ask::Plan {
                             pane: pane.to_string(),
                             plan: plan.clone(),
@@ -262,7 +267,7 @@ impl Orchestrator {
                             feedback: kept.clone(),
                         };
                         self.ask_only(ticket, &ready, ask);
-                        let answered = self.plan_answer(ticket, pane);
+                        let answered = self.plan_answer(ticket, label, pane, &plan);
                         self.new_deadline(ticket, st); // none ran while it waited
                         match answered {
                             Ok(answer) => answer,
@@ -312,9 +317,16 @@ impl Orchestrator {
     }
 
     /// Waits for the plan Question's approve or feedback; or ends the wait
-    /// with park, stop, the session dying, or its moving on in the pane
-    /// (None, "carrying on"). A Question has no timeout.
-    fn plan_answer(&self, ticket: &str, pane: &str) -> Result<Answer, Option<Held>> {
+    /// with park, stop, Away turned on over a plan with an Open question,
+    /// the session dying, or its moving on in the pane (None, "carrying
+    /// on"). A Question has no timeout.
+    fn plan_answer(
+        &self,
+        ticket: &str,
+        label: &str,
+        pane: &str,
+        plan: &str,
+    ) -> Result<Answer, Option<Held>> {
         // at its dialog, or idle at its written plan
         let waiting: &[&str] = match self.writes_plan(ticket) {
             true => &["idle", "done"],
@@ -338,10 +350,34 @@ impl Orchestrator {
                     return Err(None);
                 }
             }
+            if self.parks_away(ticket, label, plan) {
+                return Err(Some(Held::Away));
+            }
             if !self.sleep() {
                 return Err(Some(Held::Stopped));
             }
         }
+    }
+
+    /// Away, a plan with an Open question parks its Ticket as a Stage's own
+    /// question does: a bd comment with the question, its session left
+    /// waiting at the plan in its pane. The plan is no longer the one
+    /// judged, so /continue @ticket finds it ready and puts it to the user.
+    fn parks_away(&self, ticket: &str, label: &str, plan: &str) -> bool {
+        if !self.cfg.away.load(Ordering::SeqCst) {
+            return false;
+        }
+        let Some(question) = open_question(plan) else {
+            return false;
+        };
+        let lead = format!(
+            "{label} planned with an open question while you were away and needs a manual \
+             resume: /continue @{ticket} in the Orqadence Shell puts its plan to you, its \
+             session still waiting in its pane."
+        );
+        self.comment_away(ticket, &lead, &question, &[]);
+        self.plans.lock().unwrap().remove(ticket);
+        true
     }
 
     /// Approves the plan, only while the pane is blocked at the plan dialog
@@ -626,6 +662,22 @@ impl Orchestrator {
             }
         }
     }
+}
+
+/// The text under a plan's Open question heading, the Implement Stage
+/// skill's own, of any level: to the next heading as high, trimmed.
+// ponytail: a line starting with # inside a code block reads as a heading.
+fn open_question(plan: &str) -> Option<String> {
+    let level = |line: &str| line.len() - line.trim_start_matches('#').len();
+    let mut lines = plan.lines();
+    let at = lines.by_ref().find_map(|line| {
+        let text = line.trim_start_matches('#').trim().to_lowercase();
+        (level(line) > 0 && text.starts_with("open question")).then(|| level(line))
+    })?;
+    let question: Vec<&str> = lines
+        .take_while(|line| !(1..=at).contains(&level(line)))
+        .collect();
+    Some(question.join("\n").trim().to_string())
 }
 
 fn unanswered(err: RunError) -> String {
