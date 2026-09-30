@@ -795,11 +795,10 @@ pub(crate) fn with_label(doc: &Value, name: &str) -> Value {
 /// with_label, then each field the label's Extra review sets over the
 /// review row: the row the Extra review runs on.
 pub(crate) fn with_extra(doc: &Value, name: &str) -> Value {
-    let mut doc = doc.clone();
+    let mut doc = with_label(doc, name);
     let Some(Ok(label)) = labels(&doc).remove(name) else {
         return doc;
     };
-    put_rows(&mut doc, &label);
     if !doc["review"].is_object() {
         doc["review"] = json!({});
     }

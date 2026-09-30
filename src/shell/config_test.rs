@@ -2523,6 +2523,23 @@ fn an_extra_review_model_of_none_is_refused_unprobed() {
     assert_eq!(std::fs::read_to_string(&file).unwrap(), EXTRA);
 }
 
+/// A label's review_if_limited model of none is the no-fallback sentinel:
+/// saved at once, unprobed, as on the Stage pages.
+#[test]
+fn a_labels_if_limited_model_of_none_saves_unprobed() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), MOBILE);
+    let mut s = open_label(apps(""), repo.path());
+    pick(&mut s, LabelItem::Row(2, Field::Model), "none");
+    assert!(s.settings.as_ref().unwrap().probe.is_none());
+    assert_eq!(
+        config_json(repo.path())["labels"]["mobile"]["rows"],
+        json!({"review_if_limited": {"model": "none"}}),
+        "{}",
+        note(&s)
+    );
+}
+
 /// security with its Extra review, and codex-review, a Modifier.
 const EXTRA: &str = r#"{"labels": {
   "codex-review": {"kind": "modifier"},
@@ -2785,6 +2802,30 @@ fn a_new_template_for_a_user_label_asks_the_heading() {
     assert_eq!(
         config_json(repo.path())["labels"]["mobile"]["pr_template"],
         json!("mobile.md")
+    );
+}
+
+/// A template file made while the heading is typed is kept: the write is
+/// refused, not an overwrite.
+#[test]
+fn a_template_made_during_the_heading_prompt_is_not_overwritten() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), MOBILE);
+    let mut s = open_label(clones(), repo.path());
+    pick(&mut s, LabelItem::Template, "new");
+    let file = repo.path().join(".github/PULL_REQUEST_TEMPLATE/mobile.md");
+    write_file(&file, "mine\n");
+    type_in(&mut s, "Devices tried");
+    s.key(key(KeyCode::Enter));
+    assert!(
+        note(&s).starts_with(".github/PULL_REQUEST_TEMPLATE/mobile.md: "),
+        "{}",
+        note(&s)
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "mine\n");
+    assert_eq!(
+        config_json(repo.path())["labels"]["mobile"],
+        json!({"kind": "area"})
     );
 }
 

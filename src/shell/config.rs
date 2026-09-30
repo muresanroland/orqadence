@@ -679,40 +679,30 @@ impl Settings {
 
     /// A pick's row setting as its scope runs it.
     fn row_value(&self, pick: &Pick, field: Field) -> String {
-        match pick.scope {
-            Scope::Repo => self.value(pick.row, field),
-            scope => value(&self.view(scope), pick.row, field),
-        }
+        value(&self.view(pick.scope), pick.row, field)
     }
 
     /// What the open label sets on a row field, or its Extra review's: empty
-    /// falls through.
+    /// falls through. The repo row's own value for Repo scope.
     pub(crate) fn own(&self, scope: Scope, row: usize, field: Field) -> String {
+        if scope == Scope::Repo {
+            return self.value(row, field);
+        }
         let label = self.label.as_deref().map(|name| self.label_of(name));
         let Some(Ok(label)) = label else {
             return String::new();
         };
         let extra = label.extra_review;
         match (scope, field) {
-            (Scope::Repo, _) => String::new(),
-            (Scope::Label, _) => label
+            (Scope::Extra, Field::App) => extra.app,
+            (Scope::Extra, Field::Model) => extra.model,
+            (Scope::Extra, _) => extra.effort,
+            _ => label
                 .rows
                 .get(ROWS[row].key)
                 .and_then(|fields| fields.get(field.key()))
                 .cloned()
                 .unwrap_or_default(),
-            (Scope::Extra, Field::App) => extra.app,
-            (Scope::Extra, Field::Model) => extra.model,
-            (Scope::Extra, _) => extra.effort,
-        }
-    }
-
-    /// A pick's setting as its scope holds it: the row's, or what the label
-    /// itself sets, empty when it falls through.
-    fn row_own(&self, pick: &Pick, field: Field) -> String {
-        match pick.scope {
-            Scope::Repo => self.value(pick.row, field),
-            scope => self.own(scope, pick.row, field),
         }
     }
 
@@ -1874,7 +1864,7 @@ impl Screen {
         let st = self.settings.as_mut().unwrap();
         match picked {
             Picked::App(a) if !st.is_installed(a) => st.note = Some((not_on_path(a), MUTED)),
-            Picked::App(a) if st.row_own(&pick, Field::App) == a.name => {}
+            Picked::App(a) if st.own(pick.scope, pick.row, Field::App) == a.name => {}
             Picked::App(a) => match app::runs_on(ROWS[pick.row].key, a) {
                 Ok(()) => self.open_pick(pick.row, Field::Model, Some(a), pick.scope),
                 Err(err) => st.note = Some((format!("Refused: {err}. Nothing changed."), RED)),
@@ -2035,7 +2025,11 @@ impl Screen {
             .iter()
             .any(|(f, v)| *f == Field::Model && !v.is_empty());
         let model = row_now.model;
-        if !named || model == "default" || st.probed.contains(&(row_now.app.name, model.clone())) {
+        if !named
+            || model == "default"
+            || model == "none"
+            || st.probed.contains(&(row_now.app.name, model.clone()))
+        {
             return self.save_override(scope, row, &fields);
         }
         self.start_probe(scope, row, fields, row_now.app, model);
@@ -2966,8 +2960,14 @@ impl Screen {
             .and_then(|path| std::fs::read_to_string(path).ok())
             .unwrap_or_else(|| setup::PR_TEMPLATE.to_string());
         let dir = repo.join(setup::TEMPLATE_DIR);
-        let written = std::fs::create_dir_all(&dir)
-            .and_then(|()| std::fs::write(dir.join(&file), setup::with_section(&frame, section)));
+        // create_new: a file made since the check in new_template is not overwritten
+        let written = std::fs::create_dir_all(&dir).and_then(|()| {
+            let mut out = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dir.join(&file))?;
+            std::io::Write::write_all(&mut out, setup::with_section(&frame, section).as_bytes())
+        });
         if let Err(err) = written {
             return self.refused(&format!("{}/{file}: {err}", setup::TEMPLATE_DIR));
         }
