@@ -682,8 +682,8 @@ pub(crate) struct ExtraReview {
     /// Its review skill, in place of the review pick's.
     pub(crate) skill: String,
     /// When it runs: "every" Round (the default, and any other value),
-    /// "first" Round only, or "before_pr", which runs as every until
-    /// harness-brd.7 builds it.
+    /// "first" Round only, or "before_pr", once on the finished branch
+    /// before the PR.
     pub(crate) position: String,
     /// Its Findings join the Debate (the default), or go straight to the
     /// Fix as fix items not debated.

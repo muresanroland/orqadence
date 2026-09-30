@@ -361,3 +361,156 @@ fn a_ticket_with_an_extra_review_joining_the_limit_question_names_it() {
     w.await_line("hx-2 extra review 1 skipped: codex was limited until 3:05pm");
     assert_eq!(limit_questions(&w).len(), 2, "asked again after the answer");
 }
+
+/// Position before_pr: the last Round's Fix commits without opening the PR,
+/// the Extra review runs once on the finished branch, its Debate follows,
+/// and a final Fix, given the Verdict history with the final Debate's,
+/// opens the PR.
+#[test]
+fn before_pr_the_last_fix_holds_the_pr_for_the_extra_review_its_debate_and_a_final_fix() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    config(&w, json!({"position": "before_pr", "debate": true}));
+    w.session(|p| match (p.stage.as_str(), p.round) {
+        ("extra-review", _) => (FOUND.to_string(), "idle".to_string()),
+        ("verdict", 4) => (FIX.to_string(), "idle".to_string()),
+        _ => succeed(p),
+    });
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened after 1 round");
+    assert_eq!(
+        stages_run(&w),
+        [
+            "implement",
+            "review",
+            "debate",
+            "fix",
+            "extra-review",
+            "debate",
+            "fix"
+        ]
+    );
+    w.await_line("hx-1 extra review before the PR found 1 finding");
+    w.await_line("hx-1 debate final settled: 1 to fix, 0 skipped");
+    let last = w.prompt("fix-1.md");
+    assert!(last.contains("- Open PR: no\n"), "{last}");
+    assert!(!last.contains("- Verdict history:"), "{last}");
+    let debate = w.prompt("verdict-final.md");
+    let file = format!(
+        "- Review file: {}\n",
+        o.run_dir("hx-1").join("extra-review-final.md").display()
+    );
+    assert!(debate.contains(&file), "{debate}");
+    let fin = w.prompt("fix-final.md");
+    assert!(fin.contains("- Open PR: yes\n"), "{fin}");
+    assert!(
+        fin.contains("- Fix items: \n  - [fix] (medium) a.go:1 — x | reason: agreed"),
+        "{fin}"
+    );
+    assert!(fin.contains("verdict-1.md, "), "{fin}");
+    assert!(fin.contains("verdict-final.md\n"), "{fin}");
+}
+
+/// No Findings: the final Fix still runs, with nothing to fix, and opens
+/// the PR.
+#[test]
+fn before_pr_with_no_findings_the_final_fix_still_opens_the_pr() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    config(&w, json!({"position": "before_pr"}));
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened after 1 round");
+    w.await_line("hx-1 extra review before the PR found 0 findings");
+    let fin = w.prompt("fix-final.md");
+    assert!(fin.contains("- Open PR: yes\n"), "{fin}");
+    assert!(fin.contains("- Fix items: none\n"), "{fin}");
+}
+
+/// Debate off: no final Debate; its Findings go to the final Fix as fix
+/// items marked not debated.
+#[test]
+fn before_pr_with_debate_off_the_final_fix_gets_the_findings_not_debated() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    config(&w, json!({"position": "before_pr", "debate": false}));
+    w.session(|p| match p.stage.as_str() {
+        "extra-review" => (FOUND.to_string(), "idle".to_string()),
+        _ => succeed(p),
+    });
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened after 1 round");
+    assert_eq!(
+        stages_run(&w),
+        [
+            "implement",
+            "review",
+            "debate",
+            "fix",
+            "extra-review",
+            "fix"
+        ]
+    );
+    let fin = w.prompt("fix-final.md");
+    let item = "- Fix items: \n  - [fix] (medium) a.go:1 — x | not debated | extra review\n";
+    assert!(fin.contains(item), "{fin}");
+    assert!(fin.contains("- Open PR: yes\n"), "{fin}");
+}
+
+/// A run stopped after the final Extra review resumes at its Debate.
+#[test]
+fn before_pr_a_run_stopped_after_the_final_extra_review_resumes_at_its_debate() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    config(&w, json!({"position": "before_pr"}));
+    let dir = o.run_dir("hx-1");
+    for (file, text) in [
+        ("implement.md", "STATUS: done\n"),
+        ("review-1.md", "STATUS: done\n"),
+        ("verdict-1.md", "STATUS: done\n"),
+        ("fix-1.md", "STATUS: done\n"),
+        ("extra-review-final.md", FOUND),
+    ] {
+        write_file(&dir.join(file), text);
+    }
+    w.session(|p| match p.stage.as_str() {
+        "verdict" => (FIX.to_string(), "idle".to_string()),
+        _ => succeed(p),
+    });
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened after 1 round");
+    assert_eq!(stages_run(&w), ["debate", "fix"]);
+}
+
+/// A Round opened unreviewed skips the Extra review before the PR: one Fix
+/// opens the PR and says both were skipped.
+#[test]
+fn before_pr_an_unreviewed_last_round_goes_to_a_fix_that_opens_the_pr() {
+    let (w, mut o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    config(&w, json!({"position": "before_pr"}));
+    set_clock(
+        &mut o.cfg,
+        chrono::Local
+            .with_ymd_and_hms(2026, 9, 25, 14, 0, 0)
+            .unwrap(),
+    );
+    hits(&w, "hx-1", "review", "idle", CODEX);
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    wait_until("the Review's limit Question", || {
+        !limit_questions(&w).is_empty()
+    });
+    o.review("codex", Review::Unreviewed);
+    run.wait();
+
+    w.await_line("hx-1 extra review before the PR skipped: codex was limited until 3:05pm");
+    w.await_line("hx-1 PR #hx-1 opened after 1 round");
+    assert_eq!(stages_run(&w), ["implement", "review", "fix"]);
+    let fix = w.prompt("fix-1.md");
+    assert!(fix.contains("- Open PR: yes\n"), "{fix}");
+    assert!(
+        fix.contains(
+            "- Unreviewed: codex was limited until 3:05pm, the extra review skipped too\n"
+        ),
+        "{fix}"
+    );
+}
