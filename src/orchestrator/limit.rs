@@ -29,6 +29,11 @@ const MENU: &str = "What do you want to do?";
 /// itself at the reset, and a session still idle after this is told to.
 const GRACE: Duration = Duration::minutes(2);
 
+/// Whether the labels carry codex-review; renaming its config.json entry drops the rule.
+pub(super) fn codex_review(labels: &[String]) -> bool {
+    labels.iter().any(|label| label == "codex-review")
+}
+
 /// A usage limit shown in a Stage's pane.
 #[derive(Debug)]
 pub(crate) struct Limit {
@@ -213,8 +218,18 @@ impl Orchestrator {
     /// Review's limit Question, which stands until the reset. Asked once
     /// for the run, by the first Ticket that needs it, which holds, as does
     /// every other, until the answer. None once the limit is over; Park on
-    /// /park, Stopped on /stop-work.
-    fn review_answer(&self, ticket: &str, label: &str, app: &str) -> Result<Option<Review>, Held> {
+    /// /park, Stopped on /stop-work. A codex-review Ticket is asked nothing:
+    /// None, its own row, held by wait_limit.
+    fn review_answer(
+        &self,
+        ticket: &str,
+        label: &str,
+        app: &str,
+        labels: &[String],
+    ) -> Result<Option<Review>, Held> {
+        if codex_review(labels) {
+            return Ok(None);
+        }
         let answered = || self.state.lock().unwrap().reviews.get(app).copied();
         let Some(reset) = self.limited_until(app) else {
             return Ok(None);
@@ -234,8 +249,7 @@ impl Orchestrator {
                 asked = true;
                 // the fallback the asking Ticket would run; the answer
                 // stands for every Ticket, each running its own
-                let labels = self.labels(ticket).unwrap_or_default();
-                let fallback = fallback_row(&self.cfg.repo, &labels).ok().flatten();
+                let fallback = fallback_row(&self.cfg.repo, labels).ok().flatten();
                 let ask = Ask::Limited {
                     app: app.to_string(),
                     fallback: fallback.filter(|f| f.app.name != app).map(|f| f.said()),
@@ -280,7 +294,7 @@ impl Orchestrator {
         let Some(reset) = self.limited_until(app) else {
             return Ok(row);
         };
-        match self.review_answer(ticket, label, app)? {
+        match self.review_answer(ticket, label, app, labels)? {
             Some(Review::Unreviewed) => {
                 let why = format!(
                     "{app} was limited until {}",
@@ -382,13 +396,16 @@ impl Orchestrator {
         );
         // A Review on its own App goes as the user answered: on wait it holds
         // as any Stage; otherwise its session is left, and it starts again.
-        // On its fallback's it holds as any Stage: the answer stands.
-        // Unreadable labels read as none.
-        if st.name == REVIEW.name
-            && stage_row(&self.cfg.repo, st, &self.labels(ticket).unwrap_or_default())
-                .is_ok_and(|row| row.app.name == app)
-        {
-            match self.review_answer(ticket, label, app) {
+        // On its fallback's, on a codex-review Ticket, or with its labels
+        // unread, it holds as any Stage: the answer stands, or none is asked.
+        let labels = (st.name == REVIEW.name)
+            .then(|| self.labels(ticket).ok())
+            .flatten()
+            .filter(|labels| {
+                stage_row(&self.cfg.repo, st, labels).is_ok_and(|row| row.app.name == app)
+            });
+        if let Some(labels) = labels {
+            match self.review_answer(ticket, label, app, &labels) {
                 Err(held) => return held,
                 Ok(Some(Review::Fallback | Review::Unreviewed)) => {
                     let _ = self.herdr(&["pane", "close", pane]);
