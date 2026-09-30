@@ -29,16 +29,9 @@ const MENU: &str = "What do you want to do?";
 /// itself at the reset, and a session still idle after this is told to.
 const GRACE: Duration = Duration::minutes(2);
 
-/// The Modifier label whose Tickets wait out their Review's App's limit as
-/// Implement does: held by wait_limit, resumed at the reset, no Limited
-/// Question, no fallback, never unreviewed. The rule is the entry's name's:
-/// a config.json entry renamed from codex-review drops it, and behaves like
-/// the rows it overrides, as any other label pinning the Review's App does.
-const CODEX_REVIEW: &str = "codex-review";
-
-/// Whether the Ticket's labels carry codex-review.
+/// Whether the labels carry codex-review; renaming its config.json entry drops the rule.
 pub(super) fn codex_review(labels: &[String]) -> bool {
-    labels.iter().any(|label| label == CODEX_REVIEW)
+    labels.iter().any(|label| label == "codex-review")
 }
 
 /// A usage limit shown in a Stage's pane.
