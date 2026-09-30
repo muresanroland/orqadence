@@ -733,16 +733,21 @@ pub(super) fn wrap_spans(
                 let at = match cols(word.trim_end()) > room {
                     true => {
                         // Cut before the character that overflows the row,
-                        // but take at least one so a narrow row still moves on.
-                        let mut w = 0;
+                        // measuring the whole prefix as the renderer does (❤
+                        // takes one column, ❤️ two), and back over zero-width
+                        // marks so ❤ keeps its U+FE0F. Take at least one
+                        // character so a narrow row still moves on.
                         let one = word.chars().next().map_or(0, char::len_utf8);
-                        word.char_indices()
-                            .find(|&(i, c)| {
-                                w += cols(&word[i..i + c.len_utf8()]);
-                                w > room
-                            })
-                            .map_or(word.len(), |(i, _)| i)
-                            .max(one)
+                        let mut at = word
+                            .char_indices()
+                            .find(|&(i, c)| cols(&word[..i + c.len_utf8()]) > room)
+                            .map_or(word.len(), |(i, _)| i);
+                        while word[at..].chars().next().is_some_and(|c| {
+                            at > 0 && cols(c.encode_utf8(&mut [0; 4])) == 0
+                        }) {
+                            at = word[..at].char_indices().last().map_or(0, |(i, _)| i);
+                        }
+                        at.max(one)
                     }
                     false => word.len(),
                 };
