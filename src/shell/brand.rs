@@ -69,6 +69,12 @@ pub(crate) const WORDMARK_ROWS: [&str; 6] = [
 ];
 /// The cursor after the wordmark: a block on its baseline, row 5.
 pub(crate) const CURSOR_ROWS: [&str; 6] = ["", "", "", "", "█████", ""];
+/// "orqa" small, for a header too narrow for the wordmark's: 3×2 letters,
+/// the q's tail on the last row.
+pub(crate) const SMALL_WORDMARK_ROWS: [&str; 3] =
+    ["█▀█ █▀▀ █▀█ ▀▀█", "█▄█ █   ▀▀█ █▄█", "          ▀    "];
+/// The cursor after the small wordmark, on its baseline.
+pub(crate) const SMALL_CURSOR_ROWS: [&str; 3] = ["", "▄▄▄", ""];
 
 /// The 12×12 logo's static frame for a terminal without Unicode or color.
 #[allow(dead_code)] // nothing prints a standalone logo yet

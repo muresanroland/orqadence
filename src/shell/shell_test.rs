@@ -405,14 +405,26 @@ fn the_header_narrows_to_the_name_then_the_mark_and_folds_to_one_line_when_short
     let buf = header(&s, 90, 8);
     assert_eq!(cols(&buf, 2, 19, 25), "▄█▀▀█▄");
     assert_eq!(cols(&buf, 5, 82, 87), "█████");
-    // 87 down to 24: the plain name on the third row, its ▁▁ cursor after
-    for w in [89, 26] {
+    // 87 down to 53: its first four letters, orqa, the cursor after them
+    for w in [89, 55] {
+        let buf = header(&s, w, 8);
+        assert_eq!(cols(&buf, 2, 19, 46), "▄█▀▀█▄ ██▄▀▀▀ ▄█▀▀██  ▀▀▀█▄", "{w}");
+        assert_eq!(cols(&buf, 2, 46, w as usize - 1).trim(), "", "{w}");
+        assert_eq!(cols(&buf, 5, 47, 52), "█████", "{w}");
+    }
+    // 52 down to 39: orqa small, the q's tail on the row under
+    for w in [54, 41] {
+        let buf = header(&s, w, 8);
+        assert_eq!(cols(&buf, 3, 19, 34), "█▀█ █▀▀ █▀█ ▀▀█", "{w}");
+        assert_eq!(cols(&buf, 4, 19, 38), "█▄█ █   ▀▀█ █▄█ ▄▄▄", "{w}");
+        assert_eq!(cols(&buf, 5, 19, 38).trim(), "▀", "{w}");
+        assert_eq!(buf[(19, 3)].fg, WORDMARK);
+    }
+    // 38 down to 24: the plain name on the third row, its ▁▁ cursor after
+    for w in [40, 26] {
         let buf = header(&s, w, 8);
         assert_eq!(cols(&buf, 1, 0, 16), "│  ┌────┐ ┌────┐", "{w}");
-        let name = "Orqadence ▁▁"
-            .chars()
-            .take(w as usize - 20)
-            .collect::<String>();
+        let name = "Orqa ▁▁".chars().take(w as usize - 20).collect::<String>();
         assert_eq!(cols(&buf, 3, 19, w as usize - 1).trim_end(), name, "{w}");
         assert_eq!(buf[(19, 3)].fg, WORDMARK);
         assert!(buf[(19, 3)].modifier.contains(Modifier::BOLD));
@@ -456,7 +468,11 @@ fn a_portrait_or_narrow_shell_keeps_the_status_row_under_the_header_and_folds_it
     );
     // a narrow screen keeps the box
     let buf = render(&s, 60, 24);
-    assert!(row(&buf, 3).contains("Orqadence ▁▁"), "{:?}", row(&buf, 3));
+    assert!(
+        row(&buf, 3).contains("██  ██ ██     ██  ██  ▄▄▄██"),
+        "{:?}",
+        row(&buf, 3)
+    );
     assert!(row(&buf, 8).contains("IDLE"), "{:?}", row(&buf, 8));
     let buf = render(&s, 120, 16);
     assert_eq!(row(&buf, 0).trim_end(), " Orqadence ▁▁");

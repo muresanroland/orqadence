@@ -16,8 +16,8 @@ use ratatui::Frame;
 
 use super::brand::{
     lerp, logo_mark, quantize, BLUE, BORDER, CURSOR_ROWS, CYAN, DARK_ORANGE, FRAME, GREEN, MUTED,
-    ORANGE, PANE_COLORS, PINK, PURPLE, RED, REST, TEXT, TICKET_COLORS, WORDMARK, WORDMARK_ROWS,
-    YELLOW,
+    ORANGE, PANE_COLORS, PINK, PURPLE, RED, REST, SMALL_CURSOR_ROWS, SMALL_WORDMARK_ROWS, TEXT,
+    TICKET_COLORS, WORDMARK, WORDMARK_ROWS, YELLOW,
 };
 use super::{suffix, About, Epic, Screen};
 use crate::orchestrator::limit::{holds, until};
@@ -267,7 +267,8 @@ fn lit(s: &Screen) -> (usize, bool) {
 
 /// A rounded box, the folder on its top edge unless the status box beside
 /// it carries it, the version on its bottom; inside, the pane mark and, as the width allows,
-/// the wordmark or the plain name, then the cursor in the lit pane's color.
+/// the wordmark, "orqa" drawn big or small, or the plain name, then the
+/// cursor in the lit pane's color.
 /// Shorter than the box, one line: the name and the cursor.
 pub(super) fn header(f: &mut Frame, area: Rect, s: &Screen, folder: bool) {
     let (lit, on) = lit(s);
@@ -297,20 +298,32 @@ pub(super) fn header(f: &mut Frame, area: Rect, s: &Screen, folder: bool) {
     f.render_widget(Paragraph::new(logo_mark(lit)), mark);
     let x = inner.x + 18;
     let rest = Rect::new(x, inner.y, inner.right().saturating_sub(x), inner.height);
-    if inner.width >= 88 {
-        let lines: Vec<Line> = WORDMARK_ROWS
-            .iter()
-            .zip(CURSOR_ROWS)
-            .map(|(w, c)| Line::from(vec![Span::styled(*w, fg(WORDMARK)), " ".into(), cursor(c)]))
-            .collect();
-        f.render_widget(Paragraph::new(lines), rest);
-    } else if inner.width >= 24 {
-        let l = Line::from(vec![
-            Span::styled("Orqadence ", bold(WORDMARK)),
-            cursor("▁▁"),
-        ]);
-        f.render_widget(l, Rect::new(x, inner.y + 2, rest.width, 1));
-    }
+    // the whole wordmark, its first four letters "orqa", or those small
+    let (rows, cursors, letters, top): (&[&str], &[&str], usize, u16) = match inner.width {
+        88.. => (&WORDMARK_ROWS, &CURSOR_ROWS, 62, 0),
+        53.. => (&WORDMARK_ROWS, &CURSOR_ROWS, 27, 0),
+        39.. => (&SMALL_WORDMARK_ROWS, &SMALL_CURSOR_ROWS, 15, 2),
+        24.. => {
+            let l = Line::from(vec![Span::styled("Orqa ", bold(WORDMARK)), cursor("▁▁")]);
+            return f.render_widget(l, Rect::new(x, inner.y + 2, rest.width, 1));
+        }
+        _ => return,
+    };
+    let lines: Vec<Line> = rows
+        .iter()
+        .zip(cursors)
+        .map(|(w, c)| {
+            let w: String = w.chars().take(letters).collect();
+            Line::from(vec![Span::styled(w, fg(WORDMARK)), " ".into(), cursor(c)])
+        })
+        .collect();
+    f.render_widget(
+        Paragraph::new(lines),
+        rest.intersection(Rect {
+            y: rest.y + top,
+            ..rest
+        }),
+    );
 }
 
 /// The status of a Ticket: the run's State first (a live snapshot or the
