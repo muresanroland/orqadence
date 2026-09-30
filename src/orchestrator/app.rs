@@ -1,10 +1,12 @@
 //! The App table, compiled in, and .orqadence/config.json: the App, model and
 //! effort each Stage starts on.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::plan::quoted;
@@ -499,13 +501,14 @@ type Inputs = Vec<(&'static str, String)>;
 /// from its row, the two on Apps of different families, and "limited until
 /// <t>" for a side whose App `limited` says is, the audit running on side
 /// A's, and TypeSafe when off. With them side A's App, which runs the
-/// audit's line.
+/// audit's line. The sides are the Ticket's labels' rows over config.json's.
 pub(crate) fn debate_inputs(
     repo: &Path,
     run_dir: &str,
+    labels: &[String],
     limited: impl Fn(&str) -> Option<String>,
 ) -> Result<(Inputs, &'static App), String> {
-    let (a, b) = (row(repo, "side_a")?, row(repo, "side_b")?);
+    let (a, b) = (row(repo, "side_a", labels)?, row(repo, "side_b", labels)?);
     let sides = debate(family_of(a.app, &a.model), family_of(b.app, &b.model));
     if !sides.holds {
         return Err(sides.text);
@@ -526,21 +529,22 @@ pub(crate) fn debate_inputs(
 }
 
 /// The Review's fallback row; None while its model is none, as it is while
-/// config.json has no review_if_limited.
-pub(crate) fn fallback_row(repo: &Path) -> Result<Option<Row>, String> {
-    row(repo, IF_LIMITED).map(|row| Some(row).filter(|row| row.model != "none"))
+/// config.json has no review_if_limited; the Ticket's labels' over it.
+pub(crate) fn fallback_row(repo: &Path, labels: &[String]) -> Result<Option<Row>, String> {
+    row(repo, IF_LIMITED, labels).map(|row| Some(row).filter(|row| row.model != "none"))
 }
 
 /// The Stage's row, read from .orqadence/config.json as the Stage starts, so a
-/// change reaches the Stages that start after it. A missing file, row or
-/// field, or an empty one, is the default; a field not a string refuses.
-pub(crate) fn stage_row(repo: &Path, st: &Stage) -> Result<Row, String> {
+/// change reaches the Stages that start after it, with the Ticket's labels'
+/// rows, read then too, over it. A missing file, row or field, or an empty
+/// one, is the default; a field not a string refuses.
+pub(crate) fn stage_row(repo: &Path, st: &Stage, labels: &[String]) -> Result<Row, String> {
     let key = if st.name == DEBATE.name {
         "moderator"
     } else {
         st.name
     };
-    row(repo, key)
+    row(repo, key, labels)
 }
 
 /// Whether TypeSafe is on: config.json's "typesafe", read at each use so a
@@ -637,8 +641,9 @@ pub(crate) fn set_max_tickets(repo: &Path, value: Option<usize>) -> Result<(), S
     set_top(repo, MAX_TICKETS, value.map(|v| json!(v)))
 }
 
-/// The key of every row of config.json.
-pub(crate) const ROWS: [&str; 8] = [
+/// The key of every row of config.json; static, so a label's Check can
+/// borrow one.
+pub(crate) static ROWS: [&str; 8] = [
     "implement",
     "review",
     IF_LIMITED,
@@ -649,10 +654,134 @@ pub(crate) const ROWS: [&str; 8] = [
     "address",
 ];
 
-/// The row under key: a Stage's, or a Debate side's (side_a, side_b).
-pub(crate) fn row(repo: &Path, key: &str) -> Result<Row, String> {
+/// A Ticket label's entry in config.json's labels, keyed by its name, the
+/// part after orqa:. Only kind is required; the rest may be missing or
+/// empty.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub(crate) struct Label {
+    /// "area" or "modifier".
+    pub(crate) kind: String,
+    #[allow(dead_code)] // read by the label skills Ticket
+    pub(crate) skills: Vec<String>,
+    #[allow(dead_code)] // read by the label guidance Ticket
+    pub(crate) guidance: String,
+    /// Row overrides, shaped as config.json's rows: a non-empty field wins
+    /// over the repo's row.
+    pub(crate) rows: BTreeMap<String, BTreeMap<String, String>>,
+    /// A file name; empty is the default template.
+    #[allow(dead_code)] // read by the PR template Ticket
+    pub(crate) pr_template: String,
+    #[allow(dead_code)] // read by the Extra review Ticket
+    pub(crate) extra_review: ExtraReview,
+}
+
+/// The Extra review a label adds: its skill, when it runs ("every",
+/// "first" or "before_pr"), whether its Findings are debated, and its row.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
+#[allow(dead_code)] // read by the Extra review Ticket
+pub(crate) struct ExtraReview {
+    pub(crate) skill: String,
+    pub(crate) position: String,
+    pub(crate) debate: bool,
+    pub(crate) app: String,
+    pub(crate) model: String,
+    pub(crate) effort: String,
+}
+
+/// config.json's labels, each entry by its name, or why it cannot be read.
+pub(crate) fn labels(doc: &Value) -> BTreeMap<String, Result<Label, String>> {
+    doc["labels"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(name, value)| (name.clone(), entry(name, value)))
+        .collect()
+}
+
+/// The label entry under name: a kind that is neither area nor modifier,
+/// a row config.json has not, or a field of the wrong type refuses.
+fn entry(name: &str, value: &Value) -> Result<Label, String> {
+    let label: Label =
+        serde_json::from_value(value.clone()).map_err(|err| format!("labels {name}: {err}"))?;
+    if !matches!(label.kind.as_str(), "area" | "modifier") {
+        return Err(format!("labels {name} kind is not area or modifier"));
+    }
+    match label.rows.keys().find(|key| !ROWS.contains(&key.as_str())) {
+        Some(key) => Err(format!("labels {name} rows has no row {key}")),
+        None => Ok(label),
+    }
+}
+
+/// The row fields a label sets, as (row, field, value): the non-empty ones.
+fn set(label: &Label) -> impl Iterator<Item = (&String, &String, &String)> {
+    label.rows.iter().flat_map(|(key, fields)| {
+        fields
+            .iter()
+            .filter(|(_, value)| !value.is_empty())
+            .map(move |(name, value)| (key, name, value))
+    })
+}
+
+/// doc with the label's row fields put over its own: each non-empty one
+/// wins, an empty one falls through.
+fn put_rows(doc: &mut Value, label: &Label) {
+    for (key, name, value) in set(label) {
+        if !doc[key].is_object() {
+            doc[key] = json!({});
+        }
+        doc[key][name] = json!(value);
+    }
+}
+
+/// doc with the rows of the Ticket's labels, by name, put over its own, a
+/// Modifier's field over the Area's. Two Area labels, two Modifiers setting
+/// one field, or a label with no entry is refused, not guessed at.
+fn labelled(doc: &Value, names: &[String]) -> Result<Value, String> {
+    let mut picked = Vec::new();
+    for name in names {
+        let label = match &doc["labels"][name.as_str()] {
+            Value::Null => Err(format!("orqa:{name} has no entry in config.json's labels")),
+            value => entry(name, value),
+        }?;
+        picked.push((name, label));
+    }
+    let areas: Vec<String> = picked
+        .iter()
+        .filter(|(_, label)| label.kind == "area")
+        .map(|(name, _)| format!("orqa:{name}"))
+        .collect();
+    if areas.len() > 1 {
+        return Err(format!(
+            "Area labels {}: a Ticket takes one",
+            areas.join(" and ")
+        ));
+    }
+    let mut setters = BTreeMap::new();
+    for (name, label) in picked.iter().filter(|(_, label)| label.kind == "modifier") {
+        for (key, field, _) in set(label) {
+            if let Some(other) = setters.insert((key, field), name) {
+                return Err(format!(
+                    "orqa:{other} and orqa:{name} both set {key} {field}"
+                ));
+            }
+        }
+    }
+    // The Area's first, so a Modifier's field wins.
+    picked.sort_by_key(|(_, label)| label.kind == "modifier");
+    let mut doc = doc.clone();
+    for (_, label) in &picked {
+        put_rows(&mut doc, label);
+    }
+    Ok(doc)
+}
+
+/// The row under key: a Stage's, or a Debate side's (side_a, side_b), with
+/// the Ticket's labels, by name, over config.json's.
+pub(crate) fn row(repo: &Path, key: &str, labels: &[String]) -> Result<Row, String> {
     let (path, doc) = read(repo)?;
-    row_in(&doc, key, &path)
+    row_in(&labelled(&doc, labels)?, key, &path)
 }
 
 /// .orqadence/config.json and its path; a missing file is Null.
@@ -927,6 +1056,50 @@ pub(crate) fn checks(doc: &Value) -> Vec<Check> {
     }
     if let (Some(a), Some(b)) = (row("side_a"), row("side_b")) {
         out.push(debate(family_of(a.0, &a.1), family_of(b.0, &b.1)));
+    }
+    out.extend(label_checks(doc));
+    out
+}
+
+/// Each Ticket label's rows over config.json's, as a Ticket with it alone
+/// runs them: a row it sets that cannot be read, config.json's own being
+/// readable, and a Debate side it sets on the other's family, named
+/// '<label> <row> ...'. Only broken ones; a label that cannot be read is its
+/// Tickets' to refuse.
+fn label_checks(doc: &Value) -> Vec<Check> {
+    let mut out = Vec::new();
+    for (name, label) in labels(doc) {
+        let Ok(label) = label else {
+            continue;
+        };
+        let mut with = doc.clone();
+        put_rows(&mut with, &label);
+        // ponytail: no file to name, so row_in's error starts ": ", trimmed
+        // below; give row_in a prefix of its own if its wording changes
+        let row = |key: &str| row_in(&with, key, Path::new(""));
+        let own = |key: &str| row_in(doc, key, Path::new("")).is_ok();
+        for key in ROWS.iter().filter(|key| label.rows.contains_key(**key)) {
+            if let (Err(err), true) = (row(key), own(key)) {
+                out.push(Check {
+                    rows: std::slice::from_ref(key),
+                    holds: false,
+                    text: format!("{name} {}", err.trim_start_matches(": ")),
+                });
+            }
+        }
+        let sides: Vec<&str> = ["side_a", "side_b"]
+            .into_iter()
+            .filter(|key| label.rows.contains_key(*key))
+            .collect();
+        if let (false, Ok(a), Ok(b)) = (sides.is_empty(), row("side_a"), row("side_b")) {
+            let check = debate(family_of(a.app, &a.model), family_of(b.app, &b.model));
+            if !check.holds {
+                out.push(Check {
+                    text: format!("{name} {}: {}", sides.join(" and "), check.text),
+                    ..check
+                });
+            }
+        }
     }
     out
 }

@@ -441,6 +441,8 @@ impl Orchestrator {
             return Ok(());
         }
         let worktree = self.worktree(ticket);
+        // labels that cannot be read Wake the Stage that reads them
+        let labels = self.labels(ticket).unwrap_or_default();
         let implement = self.run_dir(ticket).join(result_name(&IMPLEMENT, 0));
         let implemented = read_stage_result(&implement, ResultRequirements::default())
             .1
@@ -472,8 +474,8 @@ impl Orchestrator {
         for (name, key) in loaded {
             // a row that cannot be read is its Stage's to refuse
             let row = match key {
-                app::IF_LIMITED => app::fallback_row(repo).ok().flatten(),
-                _ => app::row(repo, key).ok(),
+                app::IF_LIMITED => app::fallback_row(repo, &labels).ok().flatten(),
+                _ => app::row(repo, key, &labels).ok(),
             };
             let Some(row) = row else {
                 continue;

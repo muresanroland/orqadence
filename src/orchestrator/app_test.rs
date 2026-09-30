@@ -1,7 +1,10 @@
 //! The App table and .orqadence/config.json: each Stage's App, model and
 //! effort, read when the Stage starts.
 
-use super::app::{app, canonical, checks, floor_in, Floor, IF_LIMITED};
+use super::app::{
+    app, canonical, checks, debate_inputs, floor_in, labels, row, ExtraReview, Floor, Label,
+    IF_LIMITED,
+};
 use super::world::{new_world, spawn_ticket, succeed, BdTicket, World};
 use super::write_file;
 use crate::skills::manifest::{set_personal, Manifest, NONE};
@@ -502,7 +505,11 @@ fn the_audit_at_none_is_skipped_and_noted() {
 #[test]
 fn the_fallback_is_unset_at_none_and_runs_a_row_with_no_model() {
     let (w, _o) = new_world(vec![BdTicket::new("hx-1")]);
-    let fallback = || super::app::fallback_row(&w.repo).unwrap().map(|r| r.said());
+    let fallback = || {
+        super::app::fallback_row(&w.repo, &[])
+            .unwrap()
+            .map(|r| r.said())
+    };
     assert_eq!(fallback(), None);
     config(
         &w,
@@ -683,4 +690,213 @@ fn a_floor_is_a_number_from_0_to_1_and_missing_or_empty_is_the_default() {
     ] {
         assert_eq!(floor_in(&doc, &FLOOR), want, "{doc}");
     }
+}
+
+/// config.json's labels, each entry by its name: every field read, kind
+/// alone enough; a kind that is neither area nor modifier, missing too, a
+/// row config.json has not, or a field of the wrong type refuses that entry.
+#[test]
+fn a_labels_object_parses_and_an_entry_needs_only_kind() {
+    let doc = json!({"labels": {
+        "be": {
+            "kind": "area",
+            "skills": ["api-design"],
+            "guidance": "You build backends.",
+            "rows": {"implement": {"model": "opus", "effort": ""}},
+            "pr_template": "be.md",
+            "extra_review": {"skill": "security-review", "position": "first", "debate": true,
+                "app": "codex", "model": "gpt-6-sol", "effort": "high"},
+        },
+        "codex-review": {"kind": "modifier"},
+        "loose": {"skills": []},
+        "odd": {"kind": "persona"},
+        "typo": {"kind": "area", "rows": {"reveiw": {"app": "codex"}}},
+        "bad": {"kind": "area", "guidance": 5},
+    }});
+    let labels = labels(&doc);
+    let be = Label {
+        kind: "area".to_string(),
+        skills: vec!["api-design".to_string()],
+        guidance: "You build backends.".to_string(),
+        rows: [(
+            "implement".to_string(),
+            [("model", "opus"), ("effort", "")]
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .into(),
+        )]
+        .into(),
+        pr_template: "be.md".to_string(),
+        extra_review: ExtraReview {
+            skill: "security-review".to_string(),
+            position: "first".to_string(),
+            debate: true,
+            app: "codex".to_string(),
+            model: "gpt-6-sol".to_string(),
+            effort: "high".to_string(),
+        },
+    };
+    assert_eq!(labels["be"], Ok(be));
+    let modifier = Label {
+        kind: "modifier".to_string(),
+        ..Default::default()
+    };
+    assert_eq!(labels["codex-review"], Ok(modifier));
+    for (name, err) in [
+        ("loose", "labels loose kind is not area or modifier"),
+        ("odd", "labels odd kind is not area or modifier"),
+        ("typo", "labels typo rows has no row reveiw"),
+    ] {
+        assert_eq!(labels[name], Err(err.to_string()));
+    }
+    assert!(
+        labels["bad"]
+            .as_ref()
+            .is_err_and(|err| err.starts_with("labels bad: invalid type")),
+        "{:?}",
+        labels["bad"]
+    );
+    assert!(super::app::labels(&json!({})).is_empty());
+}
+
+/// A repo whose config.json is body.
+fn repo_with(body: &Value) -> TempDir {
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        &body.to_string(),
+    );
+    repo
+}
+
+/// The Ticket's labels, by name.
+fn names(labels: &[&str]) -> Vec<String> {
+    labels.iter().map(|l| l.to_string()).collect()
+}
+
+/// A Ticket label's row field wins over config.json's row; an empty one
+/// falls through to it.
+#[test]
+fn an_orqa_be_implement_model_wins_over_the_repos_and_an_empty_field_falls_through() {
+    let repo = repo_with(&json!({
+        "implement": {"model": "sonnet", "effort": "high"},
+        "labels": {"be": {"kind": "area", "rows": {"implement": {"model": "opus", "effort": ""}}}},
+    }));
+    let said = |labels: &[&str]| row(repo.path(), "implement", &names(labels)).map(|r| r.said());
+    assert_eq!(said(&["be"]), Ok("claude opus/high".to_string()));
+    assert_eq!(said(&[]), Ok("claude sonnet/high".to_string()));
+}
+
+/// Labels that clash are not guessed at: two Area labels, two Modifiers
+/// setting one field, or an orqa: label with no entry refuses the row. An
+/// Area and a Modifier on one field is no clash: the Modifier's wins.
+#[test]
+fn labels_that_clash_or_have_no_entry_refuse_the_row() {
+    let review = |app: &str| json!({"review": {"app": app}});
+    let repo = repo_with(&json!({"labels": {
+        "be": {"kind": "area", "rows": {"review": {"app": "claude", "model": "opus"}}},
+        "fe": {"kind": "area"},
+        "codex-review": {"kind": "modifier", "rows": review("codex")},
+        "pi-review": {"kind": "modifier", "rows": review("pi")},
+        "fast": {"kind": "modifier", "rows": {"review": {"effort": "low"}}},
+    }}));
+    let said = |labels: &[&str]| row(repo.path(), "review", &names(labels)).map(|r| r.said());
+    assert_eq!(
+        said(&["be", "fe"]),
+        Err("Area labels orqa:be and orqa:fe: a Ticket takes one".to_string())
+    );
+    assert_eq!(
+        said(&["codex-review", "pi-review"]),
+        Err("orqa:codex-review and orqa:pi-review both set review app".to_string())
+    );
+    assert_eq!(
+        said(&["typo"]),
+        Err("orqa:typo has no entry in config.json's labels".to_string())
+    );
+    assert_eq!(
+        said(&["codex-review", "be", "fast"]),
+        Ok("codex opus/low".to_string())
+    );
+}
+
+/// A label's rows keep the Debate's rule: a label pinning side_b to side
+/// A's family is refused, by /config's checks and as the Debate starts.
+#[test]
+fn a_label_pinning_side_b_to_side_as_family_is_refused() {
+    let doc = json!({"labels": {"be": {"kind": "area", "rows": {"side_b": {"app": "claude"}}}}});
+    let broken = (
+        false,
+        "be side_b: Both sides would be Anthropic: the Debate needs two families".to_string(),
+    );
+    assert!(
+        checks_of(doc.clone()).contains(&broken),
+        "{:?}",
+        checks_of(doc)
+    );
+    let repo = repo_with(&doc);
+    let debate = |labels: &[&str]| debate_inputs(repo.path(), "", &names(labels), |_| None);
+    assert_eq!(
+        debate(&["be"]).err().as_deref(),
+        Some("Both sides would be Anthropic: the Debate needs two families")
+    );
+    assert!(debate(&[]).is_ok());
+}
+
+/// A label's rows keep runs_on: a label row naming codex for fix is
+/// refused, by /config's checks, on the Fix's page, and as the Fix starts.
+#[test]
+fn a_label_row_naming_codex_for_fix_is_refused_by_runs_on() {
+    let doc = json!({"labels": {"be": {"kind": "area", "rows": {"fix": {"app": "codex"}}}}});
+    let broken: Vec<_> = checks(&doc).into_iter().filter(|c| !c.holds).collect();
+    assert_eq!(broken.len(), 1);
+    assert_eq!(broken[0].rows, ["fix"]);
+    assert_eq!(broken[0].text, "be fix does not run on codex");
+    // config.json's own fix on codex is not the label's to answer for
+    let own = json!({"fix": {"app": "codex"},
+        "labels": {"be": {"kind": "area", "rows": {"fix": {"effort": "low"}}}}});
+    assert!(checks(&own).iter().all(|c| c.holds));
+    let repo = repo_with(&doc);
+    assert_eq!(
+        row(repo.path(), "fix", &names(&["be"])).err().as_deref(),
+        Some("fix does not run on codex")
+    );
+}
+
+/// hx-1 with the bd labels given.
+fn labelled_ticket(labels: &[&str]) -> BdTicket {
+    BdTicket {
+        labels: names(labels),
+        ..BdTicket::new("hx-1")
+    }
+}
+
+/// Only the Ticket's orqa: labels count, read from bd as each Stage
+/// starts: its Implement starts on orqa:be's model, and a triage label
+/// changes nothing, though config.json has an entry by its name.
+#[test]
+fn a_tickets_orqa_label_pins_its_implement_and_a_triage_label_changes_nothing() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:be", "ready-for-agent"])]);
+    let area = |model: &str| json!({"kind": "area", "rows": {"implement": {"model": model}}});
+    let doc = json!({
+        "implement": {"model": "sonnet", "effort": "high"},
+        "labels": {"be": area("opus"), "ready-for-agent": area("haiku")},
+    });
+    config(&w, &doc.to_string());
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 implement started: claude opus/high (pane 1-1)");
+    assert!(argv(&w, "implement").ends_with("--model opus --effort high"));
+}
+
+/// Two Area labels on one Ticket are not guessed at: its Stage Wakes with a
+/// reason naming both, before any session starts.
+#[test]
+fn a_ticket_with_two_area_labels_wakes_naming_both() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:be", "orqa:fe"])]);
+    let area = json!({"kind": "area"});
+    config(&w, &json!({"labels": {"be": area, "fe": area}}).to_string());
+    let o = Arc::new(o);
+    let _run = spawn_ticket(o.clone(), "hx-1");
+
+    w.await_line("hx-1 stuck in implement: Area labels orqa:be and orqa:fe: a Ticket takes one");
+    assert!(w.called("herdr agent start").is_empty());
 }
