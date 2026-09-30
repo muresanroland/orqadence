@@ -275,10 +275,7 @@ impl Orchestrator {
             inputs.push(("Unreviewed", unreviewed));
         }
         let fix = self.run_stage(ticket, &FIX, round, &inputs, want)?;
-        match round {
-            FINAL => self.report(ticket, "final fix done"),
-            _ => self.report(ticket, &format!("fix {round} done")),
-        }
+        self.report(ticket, &format!("{} done", stage_label(&FIX, round)));
         Ok(fix)
     }
 
