@@ -1196,3 +1196,29 @@ fn an_open_question_under_an_indented_heading_is_still_found() {
         None
     );
 }
+
+/// A fence too opens only after up to three spaces, and a backtick fence
+/// never with a backtick in its info string: neither hides the heading
+/// after it. Tildes take any info string, and a closer inside four spaces
+/// leaves the block open.
+#[test]
+fn an_indented_or_backticked_fence_opens_nothing() {
+    for plan in [
+        "    ~~~\n\n## Open question\n\nWhich parser stays?\n",
+        "    ```\n\n## Open question\n\nWhich parser stays?\n",
+        "```md `x`\n\n## Open question\n\nWhich parser stays?\n",
+        "   ~~~\n## Open question\n~~~\n\n## Open question\n\nWhich parser stays?\n",
+    ] {
+        assert_eq!(
+            open_question(plan).as_deref(),
+            Some("Which parser stays?"),
+            "{plan:?}"
+        );
+    }
+    for plan in [
+        "~~~md `x`\n## Open question\n~~~\n",
+        "```\n## Open question\n    ```\n",
+    ] {
+        assert_eq!(open_question(plan), None, "{plan:?}");
+    }
+}

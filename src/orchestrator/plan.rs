@@ -674,21 +674,26 @@ impl Orchestrator {
 pub(super) fn open_question(plan: &str) -> Option<String> {
     let mut fence: Option<(char, usize)> = None;
     let mut lines = plan.lines().map(|line| {
-        let trimmed = line.trim_start();
-        if let Some(mark) = trimmed.chars().next().filter(|c| matches!(c, '`' | '~')) {
-            let rest = trimmed.trim_start_matches(mark);
-            let run = trimmed.len() - rest.len();
+        // A fence or heading may sit after up to three spaces, as in
+        // Markdown; four make an indented code block, which is neither.
+        let head = line.trim_start_matches(' ');
+        let indented = line.len() - head.len() > 3;
+        if let Some(mark) = head.chars().next().filter(|c| matches!(c, '`' | '~')) {
+            let rest = head.trim_start_matches(mark);
+            let run = head.len() - rest.len();
             match fence {
-                None if run >= 3 => fence = Some((mark, run)),
+                _ if indented => {}
+                // A backtick fence's info string holds no backtick.
+                None if run >= 3 && (mark == '~' || !rest.contains('`')) => {
+                    fence = Some((mark, run))
+                }
                 Some((c, n)) if c == mark && run >= n && rest.trim().is_empty() => fence = None,
                 _ => {}
             }
         }
-        // A heading may sit after up to three spaces; four make a code block.
-        let head = line.trim_start_matches(' ');
         let level = match fence {
             Some(_) => 0,
-            None if line.len() - head.len() > 3 => 0,
+            None if indented => 0,
             None => head.len() - head.trim_start_matches('#').len(),
         };
         (line, level)
