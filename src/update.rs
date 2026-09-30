@@ -3,7 +3,9 @@
 //! downloaded to `<exe>.new.<pid>` beside the exe, and the rename over the exe
 //! is the caller's act, taken only under the repo lock. A dev build never
 //! checks. The check and the download sit behind `Releases`, with the ureq
-//! `GitHub` behind it and a fake in tests.
+//! `GitHub` behind it and a fake in tests. A done rename leaves
+//! `<exe>.updated` holding the tag, which the next Shell takes for its
+//! update notice.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -15,7 +17,7 @@ use std::time::Duration;
 
 use crate::orchestrator::state::acquire_lock;
 
-const REPO: &str = "muresanroland/orqadence";
+pub(crate) const REPO: &str = "muresanroland/orqadence";
 /// The release asset is orqa-<target>, the target fixed at compile time,
 /// with the magic its binary starts with; any other target never checks.
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -54,12 +56,15 @@ pub(crate) struct Ready {
 
 impl Ready {
     /// The rename over the exe: atomic, and the running image keeps its old
-    /// inode. The temp file goes on a refusal.
+    /// inode. The temp file goes on a refusal. A done rename leaves the
+    /// marker; a marker that cannot be written loses only the notice.
     pub(crate) fn install(self) -> Result<(), String> {
         fs::rename(&self.tmp, &self.exe).map_err(|err| {
             self.discard();
             format!("rename refused: {err}")
-        })
+        })?;
+        let _ = fs::write(marker(&self.exe), &self.tag);
+        Ok(())
     }
 
     pub(crate) fn discard(&self) {
@@ -131,6 +136,23 @@ fn sweep(exe: &Path, name: &str) {
             let _ = fs::remove_file(entry.path());
         }
     }
+}
+
+/// `<exe>.updated`, holding the tag the last install put in place.
+fn marker(exe: &Path) -> PathBuf {
+    let mut path = exe.as_os_str().to_owned();
+    path.push(".updated");
+    path.into()
+}
+
+/// The tag of the install that put `version` in place, once: the marker
+/// beside `exe` is deleted whatever it names. One naming another version
+/// (an install undone since, or a dev build) returns None, as does a
+/// missing or unreadable one.
+pub(crate) fn take_marker(exe: &Path, version: &str) -> Option<String> {
+    let tag = fs::read(marker(exe)).ok()?;
+    let _ = fs::remove_file(marker(exe));
+    (tag == version.as_bytes()).then(|| version.to_string())
 }
 
 /// v1.2.3 as (1, 2, 3); anything else is None.
@@ -317,12 +339,15 @@ mod tests {
         let dir = TempDir::new();
         let exe = exe(&dir);
         fs::write(dir.path().join("orqa.new.1"), b"left by a dead process").unwrap();
+        let marker = dir.path().join("orqa.updated");
+        fs::write(&marker, "v1.0.0").unwrap();
         let releases = FakeReleases::new("v1.1.0", &binary(b"new"));
         let ready = check(&releases, "v1.0.0", &exe)
             .unwrap()
             .expect("no update");
         assert_eq!(ready.tag, "v1.1.0");
         assert_eq!(fs::read(&exe).unwrap(), b"old", "swapped before install");
+        assert_eq!(fs::read(&marker).unwrap(), b"v1.0.0", "the sweep took it");
         assert_eq!(
             temp_files(&dir),
             [format!("orqa.new.{}", std::process::id())]
@@ -332,6 +357,7 @@ mod tests {
         ready.install().unwrap();
         assert_eq!(fs::read(&exe).unwrap(), binary(b"new"));
         assert!(temp_files(&dir).is_empty());
+        assert_eq!(fs::read(&marker).unwrap(), b"v1.1.0");
     }
 
     #[test]
@@ -386,6 +412,23 @@ mod tests {
         let err = ready.install().unwrap_err();
         assert!(err.starts_with("rename refused: "), "{err}");
         assert!(temp_files(&dir).is_empty());
+        assert!(!dir.path().join("orqa.updated").exists());
+    }
+
+    /// The marker goes whatever it names; only the running version's tag
+    /// comes back.
+    #[test]
+    fn taking_the_marker_returns_the_running_version_and_deletes_it() {
+        let dir = TempDir::new();
+        let exe = exe(&dir);
+        let marker = dir.path().join("orqa.updated");
+        fs::write(&marker, "v1.1.0").unwrap();
+        assert_eq!(take_marker(&exe, "v1.1.0").as_deref(), Some("v1.1.0"));
+        assert!(!marker.exists());
+        fs::write(&marker, "v1.1.0").unwrap();
+        assert_eq!(take_marker(&exe, "v1.0.0"), None, "an undone install");
+        assert!(!marker.exists());
+        assert_eq!(take_marker(&exe, "v1.1.0"), None, "no marker");
     }
 
     #[test]

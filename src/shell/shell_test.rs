@@ -2930,6 +2930,10 @@ fn an_update_waits_while_the_lock_is_held_and_installs_at_stop_work() {
         "a deferred install said something:\n{log}"
     );
     assert!(!temp_file(&w).exists());
+    assert_eq!(
+        std::fs::read(w.repo.join("orqa.updated")).unwrap(),
+        b"v1.1.0"
+    );
 }
 
 #[test]
@@ -2950,6 +2954,9 @@ fn an_idle_shell_installs_an_update_at_once_and_reexecs() {
     );
     assert!(!log(&w).contains("downloaded"));
     assert_eq!(s.shown_version(), "v1.0.0");
+    let marker = w.repo.join("orqa.updated");
+    assert_eq!(std::fs::read(&marker).unwrap(), b"v1.1.0");
+    std::fs::remove_file(marker).unwrap();
 
     // A failed check is one log line, the temp file gone, nothing in the header.
     let (mut s, exe) = release_shell(&w);
@@ -3000,6 +3007,10 @@ fn exit_with_a_run_live_installs_the_update_as_its_last_act() {
     assert_eq!(std::fs::read(&exe).unwrap(), binary(b"new"));
     assert!(!s.reexec);
     assert!(!log(&w).contains("updating to"), "log:\n{}", log(&w));
+    assert_eq!(
+        std::fs::read(w.repo.join("orqa.updated")).unwrap(),
+        b"v1.1.0"
+    );
 }
 
 #[test]
@@ -6176,6 +6187,67 @@ fn an_info_notice_counts_down_green_over_config() {
         assert_eq!(buf[(x - 2, y)].symbol(), "╰", "{:#?}", rows(&buf));
         assert!(find(&buf, "/config").is_some(), "/config is gone");
     }
+}
+
+/// The marker an install left, naming the running version: the Shell opens
+/// with a green Notice modal naming it and its release notes, which closes
+/// by itself after 30s; the marker is gone. With no marker nothing shows.
+#[test]
+fn a_shell_opened_after_an_update_shows_the_green_notice_for_30s() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
+    let (mut s, _) = release_shell(&w);
+    let now = chrono::Local::now();
+    let clock = set_clock(&mut s.cfg, now);
+    let marker = w.repo.join("orqa.updated");
+    std::fs::write(&marker, "v1.0.0").unwrap();
+    s.notify_updated();
+    assert_eq!(
+        notice_modal(&s),
+        "Updated to version v1.0.0. See release notes: \
+         https://github.com/muresanroland/orqadence/releases/tag/v1.0.0"
+    );
+    assert!(matches!(s.notices[0].kind, NoticeKind::Info));
+    assert!(!marker.exists(), "the marker stayed");
+    *clock.lock().unwrap() = now + chrono::Duration::seconds(29);
+    s.tick();
+    assert_ne!(notice_modal(&s), "", "closed early");
+    *clock.lock().unwrap() = now + chrono::Duration::seconds(30);
+    s.tick();
+    assert_eq!(notice_modal(&s), "", "did not close by itself");
+
+    s.notify_updated();
+    assert!(s.notices.is_empty(), "a notice with no marker");
+}
+
+/// The update notice over the Shell at 80x24: green, ' NOTICE ', the URL
+/// cut at the box's edge, the countdown at its foot.
+#[test]
+fn the_update_notice_draws_green_with_its_countdown() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
+    let (mut s, _) = release_shell(&w);
+    set_clock(&mut s.cfg, chrono::Local::now());
+    std::fs::write(w.repo.join("orqa.updated"), "v1.0.0").unwrap();
+    s.notify_updated();
+    let buf = render(&s, 80, 24);
+    let at = find(&buf, "╭ NOTICE ─").expect("no NOTICE");
+    assert_eq!(buf[at].fg, GREEN);
+    let (x, y) = (at.0 as usize + 2, at.1 + 1);
+    let text: Vec<String> = (y..y + 3)
+        .map(|y| cols(&buf, y, x, x + 56).trim_end().to_string())
+        .collect();
+    assert_eq!(
+        text,
+        [
+            "Updated to version v1.0.0. See release notes:",
+            "https://github.com/muresanroland/orqadence/releases/tag/",
+            "v1.0.0",
+        ],
+        "{:#?}",
+        rows(&buf)
+    );
+    let (x, y) = find(&buf, "closes in 30s").expect("no countdown");
+    assert_eq!(buf[(x - 2, y)].symbol(), "╰", "{:#?}", rows(&buf));
+    assert_eq!(buf[find(&buf, "[ OK ]").unwrap()].bg, GREEN);
 }
 
 /// A message longer than the screen: the box takes the screen's height and
