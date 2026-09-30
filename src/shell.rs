@@ -669,12 +669,11 @@ impl Screen {
         {
             self.notice = None;
         }
-        let now = (self.cfg.clock)();
         if self
             .notices
             .first()
             .and_then(|n| n.closes)
-            .is_some_and(|at| now >= at)
+            .is_some_and(|at| (self.cfg.clock)() >= at)
         {
             self.close_notice();
         }
