@@ -1,10 +1,13 @@
 //! Silent self-update from GitHub Releases (harness-7bj.10): the check reads
 //! the tag from the /releases/latest redirect, a strictly greater version is
 //! downloaded to `<exe>.new.<pid>` beside the exe, and the rename over the exe
-//! is the caller's act, taken only under the repo lock. A dev build never
-//! checks. The check and the download sit behind `Releases`, with the ureq
+//! is the caller's act, taken only under the repo lock. Each check also
+//! keeps the prices of the models in use from LiteLLM's catalog in
+//! .orqadence-local/prices.json, for the Epic summary. A dev build never
+//! checks. The check and the downloads sit behind `Releases`, with the ureq
 //! `GitHub` behind it and a fake in tests.
 
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -13,9 +16,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use serde_json::Value;
+
+use crate::orchestrator::app::{self, ROWS};
+use crate::orchestrator::cost::{keep_prices, prices_file};
 use crate::orchestrator::state::acquire_lock;
+use crate::tools::Tools;
 
 const REPO: &str = "muresanroland/orqadence";
+/// LiteLLM's price catalog: every model's list prices per token, by the name
+/// its provider's API gives it.
+const CATALOG: &str =
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 /// The release asset is orqa-<target>, the target fixed at compile time,
 /// with the magic its binary starts with; any other target never checks.
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -33,7 +45,8 @@ pub(crate) const TARGET: Option<(&str, [u8; 4])> = None;
 /// The Shell checks again this often while it stays open.
 pub(crate) const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 const TIMEOUT: Duration = Duration::from_secs(5);
-/// A release binary is a few MB; the body gets longer than the handshakes.
+/// A release binary is a few MB, and so is the price catalog; the body gets
+/// longer than the handshakes.
 const BODY_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The releases of Orqadence: the latest tag, and one asset of one release.
@@ -42,6 +55,8 @@ pub(crate) trait Releases: Send + Sync {
     /// Writes the release's orqa-<target> asset to `dest`, whole or not
     /// at all: a body shorter than its Content-Length is an error.
     fn download(&self, tag: &str, target: &str, dest: &Path) -> Result<(), String>;
+    /// LiteLLM's price catalog.
+    fn catalog(&self) -> Result<Value, String>;
 }
 
 /// A downloaded release beside the exe, waiting for the rename.
@@ -131,6 +146,82 @@ fn sweep(exe: &Path, name: &str) {
             let _ = fs::remove_file(entry.path());
         }
     }
+}
+
+/// The Shell's check of the prices: the catalog's for the models the rows
+/// name now, kept over prices.json's, so a model a row changed to is added.
+/// A dev build never asks.
+pub(crate) fn refresh_prices(
+    releases: &dyn Releases,
+    version: &str,
+    repo: &Path,
+) -> Result<(), String> {
+    if semver(version).is_none() {
+        return Ok(());
+    }
+    let catalog = releases.catalog()?;
+    keep_prices(repo, &catalog, &in_use(repo)).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+/// init's prices.json, made once: the prices of the models the rows name,
+/// and of every model their Apps on PATH list, claude its aliases and codex
+/// its catalog, so a row's default is priced too. A failure is one line,
+/// and the next init tries again; a dev build never asks.
+pub(crate) fn seed_prices(
+    repo: &Path,
+    tools: &dyn Tools,
+    releases: &dyn Releases,
+    version: &str,
+    out: &mut dyn Write,
+) {
+    if semver(version).is_none() || prices_file(repo).exists() {
+        return;
+    }
+    let doc = app::read(repo).map(|(_, doc)| doc).unwrap_or_default();
+    let apps: BTreeSet<String> = ROWS
+        .iter()
+        .filter_map(|key| app::field(&doc, key, "app").ok())
+        .collect();
+    let listed = apps
+        .iter()
+        .filter_map(|name| app::app(name))
+        .filter(|app| tools.run(repo, &["which", app.bin]).is_ok())
+        .flat_map(|app| (app.models)(tools, repo).unwrap_or_default())
+        .filter_map(|(model, _)| priced_as(&model));
+    let models = in_use(repo).into_iter().chain(listed).collect();
+    let kept = releases
+        .catalog()
+        .and_then(|catalog| keep_prices(repo, &catalog, &models).map_err(|err| err.to_string()));
+    let _ = match kept {
+        Ok(kept) => writeln!(
+            out,
+            "init: prices of {} models kept in {}",
+            kept.len(),
+            prices_file(repo).strip_prefix(repo).unwrap().display()
+        ),
+        Err(err) => writeln!(
+            out,
+            "init: prices not fetched, so the Epic summary shows its costs unpriced; run orqa init again to retry: {err}"
+        ),
+    };
+}
+
+/// The models config.json's rows name, Implement's plan model too, by the
+/// names the catalog lists them under.
+fn in_use(repo: &Path) -> BTreeSet<String> {
+    let doc = app::read(repo).map(|(_, doc)| doc).unwrap_or_default();
+    ROWS.iter()
+        .flat_map(|key| ["model", "plan_model"].map(|name| app::field(&doc, key, name)))
+        .filter_map(|model| priced_as(&model.ok()?))
+        .collect()
+}
+
+/// A row's model as the catalog names it: a claude alias as its full id,
+/// with no [1m] after it; default and none name no model.
+fn priced_as(model: &str) -> Option<String> {
+    let model = model.split('[').next().unwrap_or_default();
+    (!matches!(model, "" | "default" | "none")).then(|| app::full_id(model))
 }
 
 /// v1.2.3 as (1, 2, 3); anything else is None.
@@ -239,6 +330,17 @@ impl Releases for GitHub {
             Some(_) => Ok(()),
         }
     }
+
+    fn catalog(&self) -> Result<Value, String> {
+        let mut resp = agent().get(CATALOG).call().map_err(|err| err.to_string())?;
+        let raw = resp
+            .body_mut()
+            .with_config()
+            .limit(64 << 20) // 3 MB in 2026; ureq's default stops at 10
+            .read_to_string()
+            .map_err(|err| err.to_string())?;
+        serde_json::from_str(&raw).map_err(|err| format!("price catalog: {err}"))
+    }
 }
 
 /// A fake release: one tag, one asset body, optionally cut short.
@@ -249,6 +351,8 @@ pub(crate) struct FakeReleases {
     /// The download writes half the body and fails, as a short body does.
     pub(crate) truncated: bool,
     pub(crate) calls: std::sync::atomic::AtomicUsize,
+    /// The price catalog; null prices nothing.
+    pub(crate) catalog: Value,
 }
 
 #[cfg(test)]
@@ -259,6 +363,7 @@ impl FakeReleases {
             body: body.to_vec(),
             truncated: false,
             calls: std::sync::atomic::AtomicUsize::new(0),
+            catalog: Value::Null,
         }
     }
 }
@@ -289,12 +394,19 @@ impl Releases for FakeReleases {
         }
         fs::write(dest, &self.body).map_err(|err| err.to_string())
     }
+
+    fn catalog(&self) -> Result<Value, String> {
+        Ok(self.catalog.clone())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::orchestrator::write_file;
     use crate::tempdir::TempDir;
+    use crate::tools::fake::Fake;
+    use serde_json::json;
     use std::sync::atomic::Ordering;
 
     /// A scratch exe standing in for the running binary; never the test binary.
@@ -415,5 +527,106 @@ mod tests {
             "a dev build asked"
         );
         assert!(temp_files(&dir).is_empty());
+    }
+
+    /// A catalog entry at $1 in and $5 out per million tokens.
+    fn priced() -> Value {
+        json!({"input_cost_per_token": 1e-06, "output_cost_per_token": 5e-06})
+    }
+
+    fn kept(repo: &Path) -> Vec<String> {
+        let raw = fs::read_to_string(prices_file(repo)).unwrap_or_default();
+        let doc: serde_json::Map<String, Value> = serde_json::from_str(&raw).unwrap_or_default();
+        doc.keys().cloned().collect()
+    }
+
+    /// init's prices.json: the rows' models and every model their Apps on
+    /// PATH list, the ones the catalog prices, made once. A dev build asks
+    /// nothing.
+    #[test]
+    fn init_keeps_the_prices_of_the_models_its_apps_list_once() {
+        let repo = TempDir::new();
+        let config = json!({
+            "implement": {"model": "claude-opus-5-5[1m]"},
+            "review": {"model": "gpt-6.1-sol"},
+        });
+        write_file(
+            &repo.path().join(".orqadence/config.json"),
+            &config.to_string(),
+        );
+        let tools = Fake::new(|_, argv| match argv {
+            ["which", "claude" | "codex"] => Ok(String::new()),
+            ["codex", "debug", "models", "--bundled"] => Ok(json!({"models": [
+                {"slug": "gpt-6-sol", "visibility": "list"},
+                {"slug": "gpt-6-hidden", "visibility": "hide"},
+            ]})
+            .to_string()),
+            _ => Err(format!("unexpected {argv:?}")),
+        });
+        let mut releases = FakeReleases::new("v1.0.0", b"");
+        let names = [
+            "claude-opus-5-5",
+            "claude-haiku-4-5",
+            "gpt-6.1-sol",
+            "gpt-6-sol",
+            "gpt-6-hidden",
+            "gpt-6-astra",
+        ];
+        releases.catalog = names.iter().map(|n| (n.to_string(), priced())).collect();
+        let mut out = Vec::new();
+        seed_prices(repo.path(), &*tools, &releases, "v1.0.0-dev", &mut out);
+        assert!(out.is_empty() && !prices_file(repo.path()).exists());
+
+        seed_prices(repo.path(), &*tools, &releases, "v1.0.0", &mut out);
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "init: prices of 4 models kept in .orqadence-local/prices.json\n"
+        );
+        let four = [
+            "claude-haiku-4-5",
+            "claude-opus-5-5",
+            "gpt-6-sol",
+            "gpt-6.1-sol",
+        ];
+        assert_eq!(kept(repo.path()), four);
+
+        releases.catalog = json!({"gpt-6-astra": priced()});
+        let mut out = Vec::new();
+        write_file(
+            &repo.path().join(".orqadence/config.json"),
+            r#"{"review": {"model": "gpt-6-astra"}}"#,
+        );
+        seed_prices(repo.path(), &*tools, &releases, "v1.0.0", &mut out);
+        assert!(out.is_empty(), "made twice");
+        assert_eq!(kept(repo.path()), four);
+    }
+
+    /// A check keeps the price of a model a row changed to, and the models
+    /// kept before stay. A dev build asks nothing.
+    #[test]
+    fn a_check_adds_the_price_of_a_model_a_row_changed_to() {
+        let repo = TempDir::new();
+        let config = repo.path().join(".orqadence/config.json");
+        let mut releases = FakeReleases::new("v1.0.0", b"");
+        releases.catalog = json!({
+            "claude-fable-5-1": priced(),
+            "gpt-6-sol": priced(),
+            "gpt-6.1-sol": priced(),
+        });
+        write_file(
+            &config,
+            r#"{"review": {"model": "gpt-6-sol"}, "fix": {"model": "fable"}}"#,
+        );
+        refresh_prices(&releases, "v1.0.0", repo.path()).unwrap();
+        assert_eq!(kept(repo.path()), ["claude-fable-5-1", "gpt-6-sol"]);
+
+        write_file(&config, r#"{"review": {"model": "gpt-6.1-sol"}}"#);
+        refresh_prices(&releases, "v1.0.0-dev", repo.path()).unwrap();
+        assert_eq!(kept(repo.path()), ["claude-fable-5-1", "gpt-6-sol"]);
+        refresh_prices(&releases, "v1.0.0", repo.path()).unwrap();
+        assert_eq!(
+            kept(repo.path()),
+            ["claude-fable-5-1", "gpt-6-sol", "gpt-6.1-sol"]
+        );
     }
 }

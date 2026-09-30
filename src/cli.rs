@@ -94,6 +94,8 @@ pub fn run(
                 let _ = writeln!(out, "init: {err}");
                 return 1;
             }
+            let version = crate::version::version();
+            crate::update::seed_prices(repo, &*tools, &crate::update::GitHub, &version, out);
             preflight(out, repo, &*tools, env)
         }
         // Claude Code's hooks, which Implement's settings name: PreToolUse

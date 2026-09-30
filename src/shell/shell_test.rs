@@ -5065,6 +5065,7 @@ fn summary_world() -> (Arc<World>, Screen) {
         let path = path.replace("{slug}", &claude_slug(&cwd));
         write_file(&w.home.join(path), &body);
     }
+    write_file(&w.repo.join(".orqadence-local/prices.json"), COST_PRICES);
     // Its time: hx-1 1h 32m and hx-2 2h to their PRs, hx-3 30m Parked;
     // 2h 10m on the wall clock.
     let log = [
@@ -5103,6 +5104,7 @@ fn summary_world() -> (Arc<World>, Screen) {
 
 const COST_CLAUDE: &str = include_str!("../orchestrator/testdata/cost/claude-session.jsonl");
 const COST_CODEX: &str = include_str!("../orchestrator/testdata/cost/codex-rollout.jsonl");
+const COST_PRICES: &str = include_str!("../orchestrator/testdata/cost/prices.json");
 
 /// /summary builds the Epic summary from bd, the State and each Ticket's
 /// Run directory: Rounds from the Verdicts, fixed and skipped from their

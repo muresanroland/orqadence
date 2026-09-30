@@ -1,9 +1,10 @@
-use super::cost::{costs, logged, wall_clock, Cost};
+use super::cost::{costs, keep_prices, logged, prices_file, wall_clock, Cost};
 use super::stage::{run_dir, worktree};
 use super::trust::claude_slug;
 use super::write_file;
 use crate::tempdir::TempDir;
 use chrono::{NaiveDateTime, TimeDelta};
+use serde_json::{json, Value};
 use std::path::Path;
 
 const CLAUDE: &str = include_str!("testdata/cost/claude-session.jsonl");
@@ -11,6 +12,14 @@ const CLAUDE_SUBAGENT: &str = include_str!("testdata/cost/claude-subagent.jsonl"
 const CODEX: &str = include_str!("testdata/cost/codex-rollout.jsonl");
 const PI: &str = include_str!("testdata/cost/pi-session.jsonl");
 const LOG: &str = include_str!("testdata/cost/orchestrator.log");
+const PRICES: &str = include_str!("testdata/cost/prices.json");
+
+/// A repo whose prices.json prices opus-5-5, haiku-4-5 and gpt-6-sol.
+fn priced_repo() -> TempDir {
+    let repo = TempDir::new();
+    write_file(&prices_file(repo.path()), PRICES);
+    repo
+}
 
 /// A fixture transcript at path under home, its session started in cwd.
 fn place(home: &Path, path: &str, fixture: &str, cwd: &Path, model: &str) {
@@ -43,7 +52,7 @@ fn spent(cost: &Cost) -> (u64, f64, bool) {
 /// on <synthetic> leaves it priced.
 #[test]
 fn claude_counts_a_message_written_on_several_lines_once() {
-    let (home, repo) = (TempDir::new(), TempDir::new());
+    let (home, repo) = (TempDir::new(), priced_repo());
     claude(
         home.path(),
         &worktree(repo.path(), "hx.1"),
@@ -60,7 +69,7 @@ fn claude_counts_a_message_written_on_several_lines_once() {
 /// its model priced with its date after it.
 #[test]
 fn claude_subagent_transcripts_count_too() {
-    let (home, repo) = (TempDir::new(), TempDir::new());
+    let (home, repo) = (TempDir::new(), priced_repo());
     let dir = worktree(repo.path(), "hx.1");
     claude(home.path(), &dir, "claude-opus-5-5");
     let path = format!(
@@ -106,7 +115,7 @@ fn a_session_is_a_tickets_only_in_exactly_its_folder() {
 /// of output, so neither counts twice.
 #[test]
 fn codex_takes_its_last_running_total() {
-    let (home, repo) = (TempDir::new(), TempDir::new());
+    let (home, repo) = (TempDir::new(), priced_repo());
     let dir = worktree(repo.path(), "hx.1");
     place(
         home.path(),
@@ -120,8 +129,8 @@ fn codex_takes_its_last_running_total() {
     assert_eq!(spent(&cost), (2_200_000, 3.3, false));
 }
 
-/// pi logs each message's cost: that is used, not the price table, which
-/// has no row for its model.
+/// pi logs each message's cost: that is used, not prices.json, which has
+/// no row for its model.
 #[test]
 fn pi_uses_the_cost_it_logged() {
     let (home, repo) = (TempDir::new(), TempDir::new());
@@ -142,7 +151,7 @@ fn pi_uses_the_cost_it_logged() {
 /// cost unpriced; the priced ones still count.
 #[test]
 fn a_model_with_no_price_counts_its_tokens_but_no_dollars() {
-    let (home, repo) = (TempDir::new(), TempDir::new());
+    let (home, repo) = (TempDir::new(), priced_repo());
     let dir = worktree(repo.path(), "hx.1");
     claude(home.path(), &dir, "claude-nope-9");
     let path = format!(
@@ -152,6 +161,53 @@ fn a_model_with_no_price_counts_its_tokens_but_no_dollars() {
     place(home.path(), &path, CLAUDE_SUBAGENT, &dir, "");
     let cost = cost_of(home.path(), repo.path(), "hx.1");
     assert_eq!(spent(&cost), (4_200_000, 2.0, true));
+}
+
+/// The catalog's per-token prices are kept per million for the models asked
+/// for alone: one it lacks, or lists with no output price, is left out, a
+/// missing cache price is the input's, and a model kept before stays.
+#[test]
+fn prices_are_kept_per_million_for_the_models_asked_for() {
+    let repo = TempDir::new();
+    let catalog = json!({
+        "claude-opus-5-5": {
+            "input_cost_per_token": 4e-06,
+            "cache_creation_input_token_cost": 5e-06,
+            "cache_creation_input_token_cost_above_1hr": 8e-06,
+            "cache_read_input_token_cost": 2e-07,
+            "output_cost_per_token": 2e-05,
+        },
+        "gpt-6.1-sol": {
+            "input_cost_per_token": 2e-06,
+            "cache_read_input_token_cost": 1e-07,
+            "output_cost_per_token": 1e-05,
+        },
+        "gpt-embed": {"input_cost_per_token": 1e-07},
+        "gpt-6-astra": {"input_cost_per_token": 1e-05, "output_cost_per_token": 5e-05},
+    });
+    let asked = |names: &[&str]| names.iter().map(|n| n.to_string()).collect();
+    let kept = keep_prices(
+        repo.path(),
+        &catalog,
+        &asked(&["claude-opus-5-5", "gpt-embed", "gpt-nope"]),
+    );
+    assert_eq!(kept.unwrap(), ["claude-opus-5-5"]);
+    keep_prices(repo.path(), &catalog, &asked(&["gpt-6.1-sol"])).unwrap();
+    let raw = std::fs::read_to_string(prices_file(repo.path())).unwrap();
+    let doc: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(
+        doc,
+        json!({
+            "claude-opus-5-5": {
+                "input": 4.0, "cache_write_5m": 5.0, "cache_write_1h": 8.0,
+                "cache_read": 0.2, "output": 20.0,
+            },
+            "gpt-6.1-sol": {
+                "input": 2.0, "cache_write_5m": 2.0, "cache_write_1h": 2.0,
+                "cache_read": 0.1, "output": 10.0,
+            },
+        })
+    );
 }
 
 fn at(time: &str) -> NaiveDateTime {
