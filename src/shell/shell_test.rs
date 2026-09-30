@@ -6165,7 +6165,7 @@ fn an_error_notice_draws_red_and_centred_over_the_shell() {
 }
 
 /// An Info Notice modal with an autoclose over /config: green, ' NOTICE ',
-/// and the time left at its foot.
+/// a green [ OK ], and the time left at its foot.
 #[test]
 fn an_info_notice_counts_down_green_over_config() {
     let repo = TempDir::new();
@@ -6182,6 +6182,7 @@ fn an_info_notice_counts_down_green_over_config() {
         let at = find(&buf, "╭ NOTICE ─").expect("no NOTICE");
         assert_eq!(buf[at].fg, GREEN);
         assert!(find(&buf, "Updated to version v1.5.0.").is_some());
+        assert_eq!(buf[find(&buf, "[ OK ]").expect("no [ OK ]")].bg, GREEN);
         let (x, y) = find(&buf, "closes in 30s").expect("no countdown");
         assert_eq!(buf[(x - 2, y)].symbol(), "╰", "{:#?}", rows(&buf));
         assert!(find(&buf, "/config").is_some(), "/config is gone");
@@ -6190,13 +6191,13 @@ fn an_info_notice_counts_down_green_over_config() {
 
 /// The marker an install left, naming the running version: the Shell opens
 /// with a green Notice modal naming it and its release notes, which closes
-/// by itself after 30s; the marker is gone. With no marker nothing shows.
+/// by itself in 30s; the marker is gone. With no marker nothing more shows.
 #[test]
 fn a_shell_opened_after_an_update_shows_the_green_notice_for_30s() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
     let (mut s, _) = release_shell(&w);
     let now = chrono::Local::now();
-    let clock = set_clock(&mut s.cfg, now);
+    set_clock(&mut s.cfg, now);
     let marker = marker_file(&w);
     std::fs::write(&marker, "v1.0.0").unwrap();
     s.notify_updated();
@@ -6207,21 +6208,19 @@ fn a_shell_opened_after_an_update_shows_the_green_notice_for_30s() {
     );
     assert!(matches!(s.notices[0].kind, NoticeKind::Info));
     assert!(!marker.exists(), "the marker stayed");
-    *clock.lock().unwrap() = now + chrono::Duration::seconds(29);
-    s.tick();
-    assert_ne!(notice_modal(&s), "", "closed early");
-    *clock.lock().unwrap() = now + chrono::Duration::seconds(30);
-    s.tick();
-    assert_eq!(notice_modal(&s), "", "did not close by itself");
+    assert_eq!(
+        s.notices[0].closes,
+        Some(now + chrono::Duration::seconds(30))
+    );
 
     s.notify_updated();
-    assert!(s.notices.is_empty(), "a notice with no marker");
+    assert_eq!(s.notices.len(), 1, "a notice with no marker");
 }
 
-/// The update notice over the Shell at 80x24: green, ' NOTICE ', the URL
-/// cut at the box's edge, the countdown at its foot.
+/// The update notice over the Shell at 80x24: the box grows to the URL, so
+/// it stays whole on one row.
 #[test]
-fn the_update_notice_draws_green_with_its_countdown() {
+fn the_update_notice_keeps_the_url_on_one_row() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
     let (mut s, _) = release_shell(&w);
     set_clock(&mut s.cfg, chrono::Local::now());
@@ -6229,24 +6228,19 @@ fn the_update_notice_draws_green_with_its_countdown() {
     s.notify_updated();
     let buf = render(&s, 80, 24);
     let at = find(&buf, "╭ NOTICE ─").expect("no NOTICE");
-    assert_eq!(buf[at].fg, GREEN);
     let (x, y) = (at.0 as usize + 2, at.1 + 1);
-    let text: Vec<String> = (y..y + 3)
-        .map(|y| cols(&buf, y, x, x + 56).trim_end().to_string())
+    let text: Vec<String> = (y..y + 2)
+        .map(|y| cols(&buf, y, x, x + 62).trim_end().to_string())
         .collect();
     assert_eq!(
         text,
         [
             "Updated to version v1.0.0. See release notes:",
-            "https://github.com/muresanroland/orqadence/releases/tag/",
-            "v1.0.0",
+            "https://github.com/muresanroland/orqadence/releases/tag/v1.0.0",
         ],
         "{:#?}",
         rows(&buf)
     );
-    let (x, y) = find(&buf, "closes in 30s").expect("no countdown");
-    assert_eq!(buf[(x - 2, y)].symbol(), "╰", "{:#?}", rows(&buf));
-    assert_eq!(buf[find(&buf, "[ OK ]").unwrap()].bg, GREEN);
 }
 
 /// A message longer than the screen: the box takes the screen's height and

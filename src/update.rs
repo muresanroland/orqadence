@@ -145,15 +145,16 @@ fn marker(exe: &Path) -> PathBuf {
     path.into()
 }
 
-/// The tag of the install that put `version` in place, once: the marker
-/// beside `exe` is deleted whatever it names. One naming another version
-/// (an install undone since, or a dev build) returns None, as does a
-/// missing or unreadable one.
-pub(crate) fn take_marker(exe: &Path, version: &str) -> Option<String> {
+/// Whether an install put `version` in place, once: the marker beside `exe`
+/// is deleted whatever it names. One naming another version (an install
+/// undone since, or a dev build) is false, as is a missing or unreadable one.
+pub(crate) fn take_marker(exe: &Path, version: &str) -> bool {
     let marker = marker(exe);
-    let tag = fs::read(&marker).ok()?;
+    let Ok(tag) = fs::read(&marker) else {
+        return false;
+    };
     let _ = fs::remove_file(marker);
-    (tag == version.as_bytes()).then(|| version.to_string())
+    tag == version.as_bytes()
 }
 
 /// The release's page on github.com.
@@ -421,20 +422,20 @@ mod tests {
         assert!(!dir.path().join("orqa.updated").exists());
     }
 
-    /// The marker goes whatever it names; only the running version's tag
-    /// comes back.
+    /// The marker goes whatever it names; only the running version's
+    /// counts.
     #[test]
     fn taking_the_marker_returns_the_running_version_and_deletes_it() {
         let dir = TempDir::new();
         let exe = exe(&dir);
         let marker = dir.path().join("orqa.updated");
         fs::write(&marker, "v1.1.0").unwrap();
-        assert_eq!(take_marker(&exe, "v1.1.0").as_deref(), Some("v1.1.0"));
+        assert!(take_marker(&exe, "v1.1.0"));
         assert!(!marker.exists());
         fs::write(&marker, "v1.1.0").unwrap();
-        assert_eq!(take_marker(&exe, "v1.0.0"), None, "an undone install");
+        assert!(!take_marker(&exe, "v1.0.0"), "an undone install");
         assert!(!marker.exists());
-        assert_eq!(take_marker(&exe, "v1.1.0"), None, "no marker");
+        assert!(!take_marker(&exe, "v1.1.0"), "no marker");
     }
 
     #[test]

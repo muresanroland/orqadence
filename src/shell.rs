@@ -427,10 +427,11 @@ impl Screen {
     /// The update notice: an install that put this version in place, the
     /// last Shell's or init's, left its marker beside the exe.
     pub(crate) fn notify_updated(&mut self) {
-        if let Some(tag) = update::take_marker(&self.cfg.exe, &self.version) {
+        if update::take_marker(&self.cfg.exe, &self.version) {
             let text = format!(
-                "Updated to version {tag}. See release notes: {}",
-                update::release_notes(&tag)
+                "Updated to version {}. See release notes: {}",
+                self.version,
+                update::release_notes(&self.version)
             );
             self.notify(NoticeKind::Info, &text, Some(Duration::from_secs(30)));
         }

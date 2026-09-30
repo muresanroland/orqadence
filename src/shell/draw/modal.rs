@@ -77,7 +77,8 @@ pub(super) fn dock(f: &mut Frame, s: &Screen) -> (Rect, Block<'static>) {
     (rect, block)
 }
 
-/// A Notice modal is this many columns wide at most: it fits 80.
+/// A Notice modal is this many columns wide, wider only for a longer word
+/// (a URL) so it stays on one row: it fits 80.
 const NOTICE_W: u16 = 60;
 
 /// The front Notice modal over whatever else shows: a box centred over a
@@ -92,7 +93,10 @@ pub(super) fn notice(f: &mut Frame, s: &Screen) {
         NoticeKind::Info => (" NOTICE ", GREEN),
     };
     let area = f.area();
-    let width = NOTICE_W.min(area.width);
+    let longest = n.text.split_whitespace().map(|w| w.chars().count()).max();
+    let width = NOTICE_W
+        .max(longest.unwrap_or(0) as u16 + 4)
+        .min(area.width);
     // The border and padding take 4 columns; the border, a blank row and
     // the button 4 rows.
     let rows: Vec<Line> = n
