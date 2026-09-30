@@ -365,12 +365,14 @@ impl Orchestrator {
         })
     }
 
-    /// A job's pick the checkout's Skill manifest records as installed but
-    /// the Ticket's worktree, a checkout of its base, lacks was added in
-    /// /config and not yet merged: a Question before any Stage, one per
-    /// pick. Run without it, its line is left out, as a pick not installed
-    /// is, even with a personal skill of its name (attempt's have). Personal,
-    /// plugin and built-in picks are not the manifest's.
+    /// A skill the checkout's Skill manifest records as installed but the
+    /// Ticket's worktree, a checkout of its base, lacks was added in /config
+    /// and not yet merged: a Question before any Stage, one per skill. A
+    /// job's pick, or a skill of the Ticket's labels (its label skills and
+    /// its Extra review's). Run without it, it is left out, as a skill not
+    /// installed is, even with a personal skill of its name (attempt's
+    /// have): a pick's line, a label skill's place under Label skills.
+    /// Personal, plugin and built-in picks are not the manifest's.
     /// Asked at the start alone: once a Stage has run, the branch holds the
     /// Ticket's work and no longer takes the base as it moves.
     fn ask_unmerged_picks(&self, ticket: &str) -> Result<(), StageError> {
@@ -382,8 +384,41 @@ impl Orchestrator {
             return Ok(());
         };
         let worktree = self.worktree(ticket);
-        let missing = |pick: &str| manifest.unmerged(&worktree, pick);
-        if !JOBS.iter().any(|(job, _)| missing(manifest.pick(job))) {
+        // (skill, the Question, what run without leaves out)
+        let mut missing: Vec<(String, String, String)> = Vec::new();
+        for (job, _) in JOBS {
+            let pick = manifest.pick(job);
+            if manifest.unmerged(&worktree, pick) {
+                missing.push((
+                    pick.to_string(),
+                    format!(
+                        "{pick}, picked for {job}, is not on this Ticket's base branch: \
+                         added in /config and not yet merged"
+                    ),
+                    format!("the {job} line is left out"),
+                ));
+            }
+        }
+        // labels that cannot be read Wake the Stage that reads them
+        let labels = self.labels(ticket).unwrap_or_default();
+        let entries = app::ticket_labels(&self.cfg.repo, &labels).unwrap_or_default();
+        for (_, label) in &entries {
+            let extra = Some(&label.extra_review.skill).filter(|s| !s.is_empty());
+            for skill in label.skills.iter().chain(extra) {
+                let asked = missing.iter().any(|(name, ..)| name == skill);
+                if !asked && manifest.unmerged(&worktree, skill) {
+                    missing.push((
+                        skill.clone(),
+                        format!(
+                            "{skill} is not committed on {ticket}'s base: commit and merge it \
+                             first, or run without it"
+                        ),
+                        String::new(),
+                    ));
+                }
+            }
+        }
+        if missing.is_empty() {
             return Ok(());
         }
         // Merged since a park, say: the branch, still the base's, is
@@ -395,28 +430,24 @@ impl Orchestrator {
                 "branch not brought up to origin's default branch: {err}"
             )));
         }
-        for (job, _) in JOBS {
-            let pick = manifest.pick(job);
-            if !missing(pick) {
+        for (skill, text, left_out) in missing {
+            if !manifest.unmerged(&worktree, &skill) {
                 continue;
             }
-            let text = format!(
-                "{pick}, picked for {job}, is not on this Ticket's base branch: \
-                 added in /config and not yet merged"
-            );
+            let left_out = match left_out.is_empty() {
+                true => left_out,
+                false => format!(": {left_out}"),
+            };
             let options = vec![
-                format!("park: commit and merge {pick}, then /continue @{ticket}"),
-                format!("run without it: the {job} line is left out"),
+                format!("park: commit and merge {skill}, then /continue @{ticket}"),
+                format!("run without it{left_out}"),
             ];
             if self.ask_at_start(ticket, &text, options)? == 0 {
                 return Err(StageError::Parked(format!(
-                    "{pick} not merged: commit and merge it, then /continue @{ticket}"
+                    "{skill} not merged: commit and merge it, then /continue @{ticket}"
                 )));
             }
-            self.report(
-                ticket,
-                &format!("running without {pick}: the {job} line is left out"),
-            );
+            self.report(ticket, &format!("running without {skill}{left_out}"));
         }
         Ok(())
     }

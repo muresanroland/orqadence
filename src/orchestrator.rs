@@ -32,6 +32,8 @@ mod cost_test;
 #[cfg(test)]
 mod judgment_test;
 #[cfg(test)]
+mod label_test;
+#[cfg(test)]
 pub(crate) mod limit_test;
 #[cfg(test)]
 mod panes_test;
