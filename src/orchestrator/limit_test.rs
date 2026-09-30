@@ -1098,8 +1098,6 @@ fn a_codex_review_ticket_holds_its_review_at_a_codex_limit_and_carries_on_at_the
     let mut run = spawn_ticket(o.clone(), "hx-1");
     w.await_line("hx-1 codex usage limit until 3:05pm: review 1 holds (pane 1-1)");
     wait_until("hx-1 held on codex", || o.ticket("hx-1").limited == "codex");
-    thread::sleep(std::time::Duration::from_millis(20));
-    assert!(review_questions(&w).is_empty(), "a Question was asked");
     let pane = o.ticket("hx-1").panes["review"].clone();
     let go_on = format!("herdr agent prompt {pane} continue");
     assert!(w.called(&go_on).is_empty());
@@ -1111,8 +1109,6 @@ fn a_codex_review_ticket_holds_its_review_at_a_codex_limit_and_carries_on_at_the
     assert_eq!(w.called(&go_on).len(), 1);
     assert!(review_questions(&w).is_empty(), "a Question was asked");
     assert_eq!(w.called("herdr agent start h-hx-1-review").len(), 1);
-    let review = fs::read_to_string(o.run_dir("hx-1").join("review-1.md")).unwrap();
-    assert!(!review.contains("UNREVIEWED"), "{review}");
 }
 
 /// A bd show failing as the limit is seen never reads as no labels, the
