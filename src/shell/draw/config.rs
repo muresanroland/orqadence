@@ -247,10 +247,9 @@ fn labels_page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
     for (i, (name, label)) in labels.iter().enumerate() {
         let value = match label {
             Ok(label) => {
-                let (kind, summary) = label_line(label);
                 vec![
-                    Span::styled(pad(&kind, 9), fg(TEXT)),
-                    Span::styled(cut(&summary, width.saturating_sub(31)), fg(MUTED)),
+                    Span::styled(pad(&label.kind, 9), fg(TEXT)),
+                    Span::styled(cut(&label_line(label), width.saturating_sub(31)), fg(MUTED)),
                 ]
             }
             Err(err) => vec![Span::styled(cut(err, width.saturating_sub(22)), fg(RED))],
@@ -283,15 +282,15 @@ fn label_page(st: &Settings, name: &str, width: usize) -> (Vec<Line<'static>>, u
             return (lines, 0);
         }
     };
-    let or_none = |text: String, room: usize| match text.is_empty() {
+    let room = width.saturating_sub(15);
+    let or_none = |text: String| match text.is_empty() {
         true => vec![Span::styled("none", fg(MUTED))],
         false => vec![Span::styled(cut(&text, room), fg(TEXT))],
     };
-    let room = width.saturating_sub(15);
     let values = [
         vec![Span::styled(label.kind, bold(TEXT))],
-        or_none(label.skills.join(", "), room),
-        or_none(label.guidance, room),
+        or_none(label.skills.join(", ")),
+        or_none(label.guidance),
     ];
     let mut at = 0;
     for (i, (field, value)) in LABEL_FIELDS.iter().zip(values).enumerate() {
@@ -517,14 +516,9 @@ fn hint(st: &Settings) -> &'static str {
         } => "Enter probes and saves · Esc cancels",
         _ if st.typing.is_some() => "Enter saves · Esc cancels",
         _ if st.listing.is_some() => "↑↓ move · Space ticks · Enter installs · Esc back",
-        Settings {
-            pick:
-                Some(Pick {
-                    field: Field::Skills,
-                    ..
-                }),
-            ..
-        } => "↑↓ move · type to filter · Enter toggles · Esc back",
+        _ if st.pick.as_ref().is_some_and(|p| p.field == Field::Skills) => {
+            "↑↓ move · type to filter · Enter toggles · Esc back"
+        }
         _ if st.pick.is_some() => "↑↓ move · type to filter · Enter picks · Esc back",
         _ if st.open && st.section == APPS_PAGE => "↑↓ App · ← or Esc back",
         _ if st.open && st.section == SKILLS_PAGE => {

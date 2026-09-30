@@ -2347,3 +2347,50 @@ fn a_name_that_is_not_a_valid_label_is_refused() {
         serde_json::from_str::<Value>(LABELS).unwrap()
     );
 }
+
+/// A label added to config.json since /config opened clashes as well: the
+/// fresh read refuses it, the entry already there kept whole.
+#[test]
+fn a_label_added_meanwhile_is_not_overwritten() {
+    let repo = TempDir::new();
+    let path = repo.path().join(".orqadence/config.json");
+    write_file(&path, LABELS);
+    let mut s = labels_page(clones(), repo.path());
+    let meanwhile = r#"{"labels": {"mobile": {"kind": "modifier", "guidance": "Mine."}}}"#;
+    write_file(&path, meanwhile);
+    s.key(key(KeyCode::Char('a')));
+    type_in(&mut s, "mobile");
+    s.key(key(KeyCode::Enter));
+    assert!(
+        note(&s).contains("orqa:mobile is there already"),
+        "{}",
+        note(&s)
+    );
+    assert_eq!(
+        config_json(repo.path()),
+        serde_json::from_str::<Value>(meanwhile).unwrap()
+    );
+}
+
+/// A label whose skills is not a list of strings refuses a pick: its
+/// entries are not dropped for the one picked.
+#[test]
+fn a_malformed_skills_list_refuses_a_pick() {
+    let repo = TempDir::new();
+    let tools = clones();
+    add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
+    let odd = r#"{"labels": {"fe": {"kind": "area", "skills": ["orqa-a11y", 7]}}}"#;
+    write_file(&repo.path().join(".orqadence/config.json"), odd);
+    let mut s = labels_page(tools, repo.path());
+    keys(&mut s, &[KeyCode::Enter, KeyCode::Down, KeyCode::Enter]);
+    s.key(key(KeyCode::Enter));
+    assert!(
+        note(&s).contains("labels fe skills in config.json is not a list of strings"),
+        "{}",
+        note(&s)
+    );
+    assert_eq!(
+        config_json(repo.path())["labels"]["fe"]["skills"],
+        json!(["orqa-a11y", 7])
+    );
+}

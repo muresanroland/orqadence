@@ -1034,9 +1034,9 @@ fn label_name(typed: &str) -> &str {
     name.strip_prefix("orqa:").unwrap_or(name)
 }
 
-/// A label's line on the page: area or modifier, and its skills, whether
-/// it has guidance and an Extra review.
-pub(crate) fn label_line(label: &Label) -> (String, String) {
+/// A label's summary on the page: its skills, whether it has guidance and
+/// an Extra review.
+pub(crate) fn label_line(label: &Label) -> String {
     let mut parts = Vec::new();
     if !label.skills.is_empty() {
         parts.push(format!("skills: {}", label.skills.join(", ")));
@@ -1047,7 +1047,7 @@ pub(crate) fn label_line(label: &Label) -> (String, String) {
     if !label.extra_review.skill.is_empty() {
         parts.push("extra review".to_string());
     }
-    (label.kind.clone(), parts.join(" · "))
+    parts.join(" · ")
 }
 
 /// The entry under name in labels, to change; a missing one, or one that
@@ -1063,16 +1063,19 @@ fn label_entry<'a>(
     }
 }
 
-/// A label's skills changed in place; a skills that is not a list of
-/// strings starts empty.
+/// A label's skills changed in place; a missing or null skills starts
+/// empty, one that is not a list of strings refuses.
 fn put_skills(
     labels: &mut serde_json::Map<String, Value>,
     name: &str,
     change: impl FnOnce(&mut Vec<String>),
 ) -> Result<(), String> {
     let entry = label_entry(labels, name)?;
-    let mut skills: Vec<String> =
-        serde_json::from_value(entry["skills"].take()).unwrap_or_default();
+    let mut skills: Vec<String> = match &entry["skills"] {
+        Value::Null => Vec::new(),
+        value => serde_json::from_value(value.clone())
+            .map_err(|_| format!("labels {name} skills in config.json is not a list of strings"))?,
+    };
     change(&mut skills);
     entry["skills"] = json!(skills);
     Ok(())
@@ -2216,6 +2219,9 @@ impl Screen {
         let added = name.clone();
         let saved = self.save_label(
             move |labels| {
+                if labels.contains_key(&added) {
+                    return Err(format!("orqa:{added} is there already"));
+                }
                 labels.insert(added, json!({"kind": "area"}));
                 Ok(())
             },
@@ -2248,6 +2254,9 @@ impl Screen {
         let new = name.clone();
         self.save_label(
             move |labels| {
+                if labels.contains_key(&new) {
+                    return Err(format!("orqa:{new} is there already"));
+                }
                 let entry = labels
                     .remove(&old)
                     .ok_or_else(|| format!("config.json has no label orqa:{old}"))?;
@@ -2290,20 +2299,18 @@ impl Screen {
             Ok("area") => "modifier",
             _ => "area",
         };
+        let a = if kind == "area" {
+            "an area"
+        } else {
+            "a modifier"
+        };
         let label = name.to_string();
         self.save_label(
             move |labels| {
                 label_entry(labels, &label)?["kind"] = json!(kind);
                 Ok(())
             },
-            format!(
-                "orqa:{name} is {} label",
-                if kind == "area" {
-                    "an area"
-                } else {
-                    "a modifier"
-                }
-            ),
+            format!("orqa:{name} is {a} label"),
         );
     }
 
@@ -2353,21 +2360,15 @@ impl Screen {
 
     /// The guidance line typed: saved as it is, nothing clearing it.
     fn keep_guidance(&mut self, text: String) {
-        let name = self
-            .settings
-            .as_ref()
-            .unwrap()
-            .label
-            .clone()
-            .unwrap_or_default();
+        let st = self.settings.as_ref().unwrap();
+        let name = st.label.clone().unwrap_or_default();
         let said = match text.is_empty() {
             true => format!("orqa:{name} guidance cleared"),
             false => format!("orqa:{name} guidance set"),
         };
-        let label = name.clone();
         self.save_label(
             move |labels| {
-                label_entry(labels, &label)?["guidance"] = json!(text);
+                label_entry(labels, &name)?["guidance"] = json!(text);
                 Ok(())
             },
             said,
