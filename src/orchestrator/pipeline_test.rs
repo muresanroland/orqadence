@@ -198,6 +198,7 @@ fn open_pr_prunes_build_scratch_and_keeps_evidence() {
             write_file(&dir.join(".review-cache/ab/obj-a"), "go object data");
             write_file(&dir.join("check-testharness"), "a compiled test binary");
             write_file(&dir.join("diff-1.patch"), "the diff it reviewed");
+            write_file(&dir.join("pr/home.png"), "a screenshot");
         }
         succeed(p)
     });
@@ -205,7 +206,7 @@ fn open_pr_prunes_build_scratch_and_keeps_evidence() {
     o.run_ticket("hx-1");
 
     w.await_line("hx-1 PR #hx-1 opened after 1 round");
-    for gone in [".review-cache", "check-testharness"] {
+    for gone in [".review-cache", "check-testharness", "pr"] {
         assert!(
             !run_dir.join(gone).exists(),
             "{gone} still in the run directory after the PR opened"
@@ -220,28 +221,6 @@ fn open_pr_prunes_build_scratch_and_keeps_evidence() {
     ] {
         assert!(run_dir.join(kept).exists(), "evidence pruned: {kept}");
     }
-}
-
-/// The last Fix's screenshots wait in the Run directory's pr/ folder for
-/// create-pr to attach them, and go once the PR is open.
-#[test]
-fn open_pr_prunes_the_screenshots_folder() {
-    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    let run_dir = o.run_dir("hx-1");
-    let dir = run_dir.clone();
-    w.session(move |p| {
-        if p.stage == "fix" && p.open_pr {
-            write_file(&dir.join("pr/home.png"), "a screenshot");
-            write_file(&dir.join("pr/home-dark.png"), "a dark one");
-        }
-        succeed(p)
-    });
-
-    o.run_ticket("hx-1");
-
-    w.await_line("hx-1 PR #hx-1 opened after 1 round");
-    assert!(!run_dir.join("pr").exists(), "pr/ outlived the PR opening");
-    assert!(run_dir.join("fix-1.md").exists(), "evidence pruned");
 }
 
 /// A Ticket runs the Stage skill committed on its base, as its worktree

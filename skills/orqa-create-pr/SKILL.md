@@ -52,9 +52,10 @@ Write the body to a file and pass `--body-file`, so markdown and quotes survive 
 Files you are told to attach (the Orqadence Fix Stage's screenshots) go on the same
 `gh pr create` call, one `--attach <file>` each. Reference each from its section as
 `![what it shows](<file>)`, the path exactly as passed, so gh puts the uploaded file there;
-gh appends the ones not referenced. If an upload fails, gh still creates the PR, prints its
-URL and exits non-zero: keep that PR, do not create it again, and say in the body which file
-did not attach.
+gh appends the ones not referenced. If an upload fails and gh exits non-zero, the PR may or
+may not exist (gh creates none when every upload fails). Keep it only if gh printed its URL or
+`gh pr view` finds one for the branch; otherwise run `gh pr create` again without `--attach`.
+Either way, say in the body which files did not attach and why.
 
 A template you are given comes before any you find yourself (the Orqadence Fix Stage gives
 one as **PR template**). Without one, use the repo's template (`.github/pull_request_template.md`,
