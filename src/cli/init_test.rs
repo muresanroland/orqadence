@@ -997,19 +997,6 @@ fn init_lists_the_shipped_labels_checked_and_writes_all_seven_unanswered() {
         assert!(list.contains(&row), "{row:?} not listed:\n{list}");
     }
     let labels = labels_in(repo.path());
-    let names: Vec<&str> = labels.keys().map(String::as_str).collect();
-    assert_eq!(
-        names,
-        [
-            "architecture",
-            "be",
-            "codex-review",
-            "db",
-            "fe",
-            "infra",
-            "security"
-        ]
-    );
     // The Ticket's list: each label's kind and its skills' sources, which
     // the entry names as installed and the manifest holds pinned.
     let manifest = Manifest::load(repo.path()).unwrap();
@@ -1071,6 +1058,7 @@ fn init_lists_the_shipped_labels_checked_and_writes_all_seven_unanswered() {
             .collect();
         assert_eq!(installed, sources, "{name}");
     }
+    assert_eq!(labels.len(), shipped.len());
     for (name, said) in [
         ("fe", "screenshots of every changed screen"),
         ("be", "status codes"),

@@ -788,10 +788,8 @@ fn ask_labels(
     let question = "Which Ticket labels will this repo use?";
     let checked = raw(tty, || checklist(out, input, question, &rows))?;
     let (path, mut doc) = app::read_object(repo).map_err(io::Error::other)?;
-    match &doc["labels"] {
-        Value::Null => doc["labels"] = json!({}),
-        Value::Object(_) => {}
-        _ => return Err(io::Error::other("config.json's labels is not an object")),
+    if !matches!(doc["labels"], Value::Null | Value::Object(_)) {
+        return Err(io::Error::other("config.json's labels is not an object"));
     }
     let picked = || LABELS.iter().zip(&checked).filter(|(_, on)| **on);
     for (label, _) in picked() {
@@ -1247,18 +1245,18 @@ fn checklist(
         write!(out, "\x1b[{}A", options.len())?; // back over the list and redraw it
         draw(out, sel, &on)?;
     }
-    let names: Vec<&str> = options
+    let said = options
         .iter()
         .zip(&on)
         .filter(|(_, on)| **on)
         .map(|((name, _), _)| *name)
-        .collect();
-    let said = if names.is_empty() {
-        "none".to_string()
-    } else {
-        names.join(", ")
-    };
-    fold(out, options.len(), &said)?;
+        .collect::<Vec<_>>()
+        .join(", ");
+    fold(
+        out,
+        options.len(),
+        if said.is_empty() { "none" } else { &said },
+    )?;
     Ok(on)
 }
 
