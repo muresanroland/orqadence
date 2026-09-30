@@ -1062,3 +1062,161 @@ fn continue_with_the_question_unanswered_asks_it_again_rather_than_wait() {
     o.review("codex", Review::Unreviewed);
     w.await_line("hx-1 PR #hx-1 opened");
 }
+
+/// A Ticket carrying orqa:codex-review, its entry pinning the Review to
+/// codex, with `tickets` beside it.
+fn codex_review_world(
+    mut tickets: Vec<BdTicket>,
+) -> (Arc<World>, Orchestrator, Arc<Mutex<DateTime<Local>>>) {
+    tickets.insert(
+        0,
+        BdTicket {
+            labels: vec!["orqa:codex-review".to_string()],
+            ..BdTicket::new("hx-1")
+        },
+    );
+    let (w, mut o) = new_world(tickets);
+    let clock = clock(&mut o);
+    write_file(
+        &w.repo.join(".orqadence/config.json"),
+        r#"{"labels": {
+            "codex-review": {"kind": "modifier", "rows": {"review": {"app": "codex"}}},
+            "pin": {"kind": "modifier", "rows": {"review": {"app": "codex"}}}}}"#,
+    );
+    (w, o, clock)
+}
+
+/// Its rule is codex-review's alone: the Ticket is Limited as at Implement,
+/// with no Question, no fallback and no unreviewed PR.
+#[test]
+fn a_codex_review_ticket_holds_its_review_at_a_codex_limit_and_carries_on_at_the_reset_with_no_question(
+) {
+    let (w, o, clock) = codex_review_world(vec![]);
+    write_file(&o.run_dir("hx-1").join("implement.md"), "STATUS: done\n");
+    hits(&w, "hx-1", "review", "idle", CODEX);
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    w.await_line("hx-1 codex usage limit until 3:05pm: review 1 holds (pane 1-1)");
+    wait_until("hx-1 held on codex", || o.ticket("hx-1").limited == "codex");
+    thread::sleep(std::time::Duration::from_millis(20));
+    assert!(review_questions(&w).is_empty(), "a Question was asked");
+    let pane = o.ticket("hx-1").panes["review"].clone();
+    let go_on = format!("herdr agent prompt {pane} continue");
+    assert!(w.called(&go_on).is_empty());
+
+    *clock.lock().unwrap() = at(25, 15, 7);
+    run.wait();
+    w.await_line("hx-1 codex usage limit over: review 1 carries on (pane 1-1)");
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(w.called(&go_on).len(), 1);
+    assert!(review_questions(&w).is_empty(), "a Question was asked");
+    assert_eq!(w.called("herdr agent start h-hx-1-review").len(), 1);
+    let review = fs::read_to_string(o.run_dir("hx-1").join("review-1.md")).unwrap();
+    assert!(!review.contains("UNREVIEWED"), "{review}");
+}
+
+/// Other Tickets keep the Question and the fallback, one whose other
+/// Modifier pins the Review to codex too; their answer never reaches the
+/// codex-review Ticket.
+#[test]
+fn a_codex_review_ticket_waits_out_the_limit_while_the_others_get_the_question() {
+    let pin = BdTicket {
+        labels: vec!["orqa:pin".to_string()],
+        ..BdTicket::new("hx-3")
+    };
+    let (w, o, clock) = codex_review_world(vec![BdTicket::new("hx-2"), pin]);
+    o.state
+        .lock()
+        .unwrap()
+        .limits
+        .insert("codex".to_string(), at(25, 15, 5));
+    for ticket in ["hx-1", "hx-2", "hx-3"] {
+        write_file(&o.run_dir(ticket).join("implement.md"), "STATUS: done\n");
+    }
+    let o = Arc::new(o);
+    let _one = spawn_ticket(o.clone(), "hx-1");
+    wait_until("hx-1 held before its Review", || {
+        o.ticket("hx-1").limited == "codex"
+    });
+    thread::sleep(std::time::Duration::from_millis(20));
+    assert!(review_questions(&w).is_empty(), "codex-review asked");
+    assert!(w.called("herdr agent start h-hx-1-review").is_empty());
+
+    // the Ticket whose other Modifier pins the Review to codex asks
+    let _three = spawn_ticket(o.clone(), "hx-3");
+    wait_until("hx-3's Question", || !review_questions(&w).is_empty());
+    let asked = w
+        .events()
+        .into_iter()
+        .filter(|e| matches!(e.ask, Some(Ask::Limited { .. })))
+        .map(|e| e.ticket)
+        .collect::<Vec<_>>();
+    assert_eq!(asked, [Some("hx-3".to_string())]);
+    let _two = spawn_ticket(o.clone(), "hx-2");
+    wait_until("hx-2 held before its Review", || {
+        o.ticket("hx-2").limited == "codex"
+    });
+
+    o.review("codex", Review::Unreviewed);
+    w.await_line("hx-2 PR #hx-2 opened");
+    w.await_line("hx-3 PR #hx-3 opened");
+    for ticket in ["hx-2", "hx-3"] {
+        let review = fs::read_to_string(o.run_dir(ticket).join("review-1.md")).unwrap();
+        assert!(review.contains("UNREVIEWED"), "{ticket}: {review}");
+    }
+    assert_eq!(o.ticket("hx-1").limited, "codex", "the answer reached hx-1");
+    assert!(w.called("herdr agent start h-hx-1-review").is_empty());
+    assert!(!o.run_dir("hx-1").join("review-1.md").exists());
+
+    *clock.lock().unwrap() = at(25, 15, 7);
+    w.await_line("hx-1 review 1 started: codex");
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(review_questions(&w).len(), 1);
+}
+
+#[test]
+fn a_long_codex_limit_on_a_codex_review_ticket_ends_the_run_with_its_session_saved() {
+    let (w, o, clock) = codex_review_world(vec![]);
+    w.lock().integration = true;
+    write_file(&o.run_dir("hx-1").join("implement.md"), "STATUS: done\n");
+    hits(
+        &w,
+        "hx-1",
+        "review",
+        "idle",
+        "■ You’ve hit your usage limit. Try again at Sep 27th, 2026 3:05 PM.",
+    );
+    let o = Arc::new(o);
+    spawn_ticket(o.clone(), "hx-1").wait(); // it ends by itself
+    w.await_line(
+        "codex usage limit until Sun 3:05pm: sessions saved, panes closed, /continue after the reset",
+    );
+    assert!(o.stopping(), "the run did not end");
+    assert!(review_questions(&w).is_empty(), "a Question was asked");
+    let ts = o.ticket("hx-1");
+    let id = ts.sessions["review"].id.clone();
+    assert!(
+        ts.tab.is_empty() && ts.panes.is_empty() && !id.is_empty(),
+        "{ts:?}"
+    );
+
+    // /continue before the reset holds, asking nothing; after it, the
+    // Review resumes by id
+    let o = restarted(&w, &o);
+    let before = w.calls().len();
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    wait_until("hx-1 held", || o.ticket("hx-1").limited == "codex");
+    thread::sleep(std::time::Duration::from_millis(20));
+    assert!(w.since(before, "herdr agent start ").is_empty());
+    assert!(review_questions(&w).is_empty(), "a Question was asked");
+    *clock.lock().unwrap() = at(27, 15, 7);
+    run.wait();
+    w.await_line("hx-1 review 1 resumed: codex (pane");
+    w.await_line("hx-1 PR #hx-1 opened");
+    let starts = w.since(before, "herdr agent start h-hx-1-review ");
+    assert!(
+        starts.len() == 1 && starts[0].contains(&format!(" {id} ")),
+        "{starts:?}"
+    );
+    assert!(review_questions(&w).is_empty(), "a Question was asked");
+}

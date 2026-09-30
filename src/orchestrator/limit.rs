@@ -29,6 +29,18 @@ const MENU: &str = "What do you want to do?";
 /// itself at the reset, and a session still idle after this is told to.
 const GRACE: Duration = Duration::minutes(2);
 
+/// The Modifier label whose Tickets wait out their Review's App's limit as
+/// Implement does: held by wait_limit, resumed at the reset, no Limited
+/// Question, no fallback, never unreviewed. The rule is the entry's name's:
+/// a config.json entry renamed from codex-review drops it, and behaves like
+/// the rows it overrides, as any other label pinning the Review's App does.
+const CODEX_REVIEW: &str = "codex-review";
+
+/// Whether the Ticket's labels carry codex-review.
+pub(super) fn codex_review(labels: &[String]) -> bool {
+    labels.iter().any(|label| label == CODEX_REVIEW)
+}
+
 /// A usage limit shown in a Stage's pane.
 #[derive(Debug)]
 pub(crate) struct Limit {
@@ -214,7 +226,13 @@ impl Orchestrator {
     /// for the run, by the first Ticket that needs it, which holds, as does
     /// every other, until the answer. None once the limit is over; Park on
     /// /park, Stopped on /stop-work.
-    fn review_answer(&self, ticket: &str, label: &str, app: &str) -> Result<Option<Review>, Held> {
+    fn review_answer(
+        &self,
+        ticket: &str,
+        label: &str,
+        app: &str,
+        labels: &[String],
+    ) -> Result<Option<Review>, Held> {
         let answered = || self.state.lock().unwrap().reviews.get(app).copied();
         let Some(reset) = self.limited_until(app) else {
             return Ok(None);
@@ -234,8 +252,7 @@ impl Orchestrator {
                 asked = true;
                 // the fallback the asking Ticket would run; the answer
                 // stands for every Ticket, each running its own
-                let labels = self.labels(ticket).unwrap_or_default();
-                let fallback = fallback_row(&self.cfg.repo, &labels).ok().flatten();
+                let fallback = fallback_row(&self.cfg.repo, labels).ok().flatten();
                 let ask = Ask::Limited {
                     app: app.to_string(),
                     fallback: fallback.filter(|f| f.app.name != app).map(|f| f.said()),
@@ -267,7 +284,8 @@ impl Orchestrator {
     /// the user answered: its own once the limit is over (wait), the
     /// fallback's, or none, the Review skipped (unreviewed): its result
     /// written to `file` as any Stage's, so a resumed run skips it too. The
-    /// fallback is the Ticket's labels' over config.json's.
+    /// fallback is the Ticket's labels' over config.json's. A codex-review
+    /// Ticket is asked nothing: its own row, held by wait_limit.
     pub(super) fn review_row(
         &self,
         ticket: &str,
@@ -277,10 +295,13 @@ impl Orchestrator {
         labels: &[String],
     ) -> Result<Row, Held> {
         let app = row.app.name;
+        if codex_review(labels) {
+            return Ok(row);
+        }
         let Some(reset) = self.limited_until(app) else {
             return Ok(row);
         };
-        match self.review_answer(ticket, label, app)? {
+        match self.review_answer(ticket, label, app, labels)? {
             Some(Review::Unreviewed) => {
                 let why = format!(
                     "{app} was limited until {}",
@@ -382,13 +403,18 @@ impl Orchestrator {
         );
         // A Review on its own App goes as the user answered: on wait it holds
         // as any Stage; otherwise its session is left, and it starts again.
-        // On its fallback's it holds as any Stage: the answer stands.
-        // Unreadable labels read as none.
+        // On its fallback's, or on a codex-review Ticket, it holds as any
+        // Stage: the answer stands, or none is asked. Unreadable labels read
+        // as none.
+        let labels = match st.name == REVIEW.name {
+            true => self.labels(ticket).unwrap_or_default(),
+            false => Vec::new(),
+        };
         if st.name == REVIEW.name
-            && stage_row(&self.cfg.repo, st, &self.labels(ticket).unwrap_or_default())
-                .is_ok_and(|row| row.app.name == app)
+            && !codex_review(&labels)
+            && stage_row(&self.cfg.repo, st, &labels).is_ok_and(|row| row.app.name == app)
         {
-            match self.review_answer(ticket, label, app) {
+            match self.review_answer(ticket, label, app, &labels) {
                 Err(held) => return held,
                 Ok(Some(Review::Fallback | Review::Unreviewed)) => {
                     let _ = self.herdr(&["pane", "close", pane]);

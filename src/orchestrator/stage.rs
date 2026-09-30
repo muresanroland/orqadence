@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use super::app::{check, debate_inputs, fallback_row, stage_row, App, Row};
 use super::herdr::{agent_name, split_target};
 use super::judgment::{offered, Action, Judged, PlanJudged, TypeSafe, WAKE_FLOOR};
-use super::limit::{until, Limit, LAST_LINES};
+use super::limit::{codex_review, until, Limit, LAST_LINES};
 use super::result::{
     read_question, read_stage_result, stage_prompt, ResultRequirements, StageResult, ASKED, PLANNED,
 };
@@ -631,8 +631,13 @@ impl Orchestrator {
         });
         // Its pane gone, it is resumed by its saved session id instead, and
         // watched as a live one; failing that it starts fresh. A Review on a
-        // Limited App starts fresh, as the user answers.
-        let asked = |s: &Session| st.name == REVIEW.name && self.limited_until(&s.app).is_some();
+        // Limited App starts fresh, as the user answers; a codex-review
+        // Ticket's is asked nothing, and resumes at the reset.
+        let asked = |s: &Session| {
+            st.name == REVIEW.name
+                && self.limited_until(&s.app).is_some()
+                && !codex_review(&self.labels(ticket).unwrap_or_default())
+        };
         if let Some(session) = saved
             .sessions
             .get(st.name)
