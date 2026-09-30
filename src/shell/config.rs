@@ -142,8 +142,8 @@ pub(crate) const LABELS_PAGE: usize = APPS_PAGE + 2;
 pub(crate) const TYPESAFE_PAGE: usize = APPS_PAGE + 3;
 pub(crate) const RUN_PAGE: usize = APPS_PAGE + 4;
 pub(crate) const ON_CALL_PAGE: usize = APPS_PAGE + 5;
-/// A label's own page's rows, in its order.
-pub(crate) const LABEL_FIELDS: [&str; 3] = ["kind", "skills", "guidance"];
+/// The row the Extra review runs on: the Review's.
+pub(crate) const REVIEW_ROW: usize = 1;
 /// The Skills page's rows before its skills: the location and your
 /// personal skills' switch.
 pub(crate) const SKILL_ROWS: usize = 2;
@@ -172,9 +172,53 @@ pub(crate) enum Field {
     /// A job's Delegate skill, of JOBS, kept in the Skill manifest.
     Job(usize),
     /// The open label's skills, on the Labels page.
-    // ponytail: rides Pick with row 0, which it never reads; a list of its
-    // own when a second pick outside the rows comes.
+    // ponytail: this and Template and ExtraSkill ride Pick with row 0, which
+    // they never read; a list of its own when a fourth pick outside the rows
+    // comes.
     Skills,
+    /// The open label's PR template, on the Labels page.
+    Template,
+    /// The open label's Extra review skill.
+    ExtraSkill,
+}
+
+/// Where a pick's row lives: config.json's (the Stage pages), the open
+/// label's override of it, or the open label's Extra review, which runs on
+/// the Review's row.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Scope {
+    Repo,
+    Label,
+    Extra,
+}
+
+/// A row of the open label's page, in its order; the Extra review's for an
+/// Area label only.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum LabelItem {
+    Kind,
+    Skills,
+    Guidance,
+    Template,
+    ExtraSkill,
+    Position,
+    Debate,
+    /// The Extra review's App, model or effort.
+    Extra(Field),
+    /// A Stage row's App, model or effort this label overrides.
+    Row(usize, Field),
+}
+
+/// The fields of a row a label overrides.
+const FIELDS: [Field; 3] = [Field::App, Field::Model, Field::Effort];
+
+/// When an Extra review runs, as its position in config.json says.
+pub(crate) fn position_name(position: &str) -> &'static str {
+    match position {
+        "first" => "first Round only",
+        "before_pr" => "before the PR",
+        _ => "every Round",
+    }
 }
 
 impl Field {
@@ -196,6 +240,8 @@ impl Field {
             Field::Same => "same",
             Field::Job(j) => JOBS[j].0,
             Field::Skills => "skills",
+            Field::Template => "pr_template",
+            Field::ExtraSkill => "skill",
         }
     }
 }
@@ -253,6 +299,7 @@ fn found(repo: &Path, home: &Path, tools: &dyn Tools) -> Vec<(String, PathBuf)> 
 
 /// An open pick list, which replaces the section's page.
 pub(crate) struct Pick {
+    pub(crate) scope: Scope,
     pub(crate) row: usize,
     pub(crate) field: Field,
     /// A model list for a new App, picked just before: the pair saves together.
@@ -289,6 +336,7 @@ pub(crate) struct Entry {
 /// A named model being tried before its change saves.
 pub(crate) struct Probe {
     result: Receiver<Result<String, RunError>>,
+    scope: Scope,
     row: usize,
     fields: Vec<(Field, String)>,
     pub(crate) app: &'static str,
@@ -313,6 +361,8 @@ pub(crate) enum Typing {
     Minutes,
     /// A new label's name, on the Labels page.
     LabelName,
+    /// A new PR template's section heading.
+    Heading,
     /// A label's new name, the old one held.
     Rename(String),
     /// The open label's guidance line.
@@ -388,6 +438,9 @@ pub(crate) struct Settings {
     pub(crate) confirm: Option<(String, Confirm)>,
     /// The label whose own page is open, on the Labels page.
     pub(crate) label: Option<String>,
+    /// The files of .github/PULL_REQUEST_TEMPLATE, read when /config opened
+    /// and when the PR template list opens.
+    pub(crate) templates: Vec<String>,
     /// The foot's line in place of the row's note: saved, refused, failed.
     pub(crate) note: Option<(String, Color)>,
     /// When this /config last saved.
@@ -560,6 +613,7 @@ impl Settings {
             if let Err(err) = app::floor_in(&self.doc, floor) {
                 checks.push(Check {
                     rows: std::slice::from_ref(&floor.key),
+                    label: None,
                     holds: false,
                     text: format!("{err}: its Judgments are not acted on"),
                 });
@@ -568,6 +622,7 @@ impl Settings {
         if let Err(err) = app::max_tickets_in(&self.doc) {
             checks.push(Check {
                 rows: &[MAX_TICKETS],
+                label: None,
                 holds: false,
                 text: format!("{err}: a run takes {DEFAULT_MAX_TICKETS}"),
             });
@@ -611,9 +666,59 @@ impl Settings {
         items
     }
 
+    /// The doc a scope's rows are read from: config.json's, or as a Ticket
+    /// with the open label runs them.
+    fn view(&self, scope: Scope) -> Value {
+        let name = self.label.as_deref().unwrap_or_default();
+        match scope {
+            Scope::Repo => self.doc.clone(),
+            Scope::Label => app::with_label(&self.doc, name),
+            Scope::Extra => app::with_extra(&self.doc, name),
+        }
+    }
+
+    /// A pick's row setting as its scope runs it.
+    fn row_value(&self, pick: &Pick, field: Field) -> String {
+        value(&self.view(pick.scope), pick.row, field)
+    }
+
+    /// What the open label sets on a row field, or its Extra review's: empty
+    /// falls through. The repo row's own value for Repo scope.
+    pub(crate) fn own(&self, scope: Scope, row: usize, field: Field) -> String {
+        if scope == Scope::Repo {
+            return self.value(row, field);
+        }
+        let label = self.label.as_deref().map(|name| self.label_of(name));
+        let Some(Ok(label)) = label else {
+            return String::new();
+        };
+        let extra = label.extra_review;
+        match (scope, field) {
+            (Scope::Extra, Field::App) => extra.app,
+            (Scope::Extra, Field::Model) => extra.model,
+            (Scope::Extra, _) => extra.effort,
+            _ => label
+                .rows
+                .get(ROWS[row].key)
+                .and_then(|fields| fields.get(field.key()))
+                .cloned()
+                .unwrap_or_default(),
+        }
+    }
+
+    /// What an empty field falls through to: the repo's row, the Review's
+    /// for the Extra review.
+    pub(crate) fn fallback(&self, scope: Scope, row: usize, field: Field) -> String {
+        let name = self.label.as_deref().unwrap_or_default();
+        match scope {
+            Scope::Extra => value(&app::with_label(&self.doc, name), row, field),
+            _ => value(&self.doc, row, field),
+        }
+    }
+
     /// The App a pick's models and efforts are for.
     pub(crate) fn pick_app(&self, pick: &Pick) -> Option<&'static App> {
-        pick.app.or_else(|| self.app(pick.row))
+        pick.app.or_else(|| app(&self.row_value(pick, Field::App)))
     }
 
     /// What app listed when /config opened.
@@ -641,12 +746,15 @@ impl Settings {
         if let Field::Job(j) = pick.field {
             return self.job_entries(pick, j);
         }
-        if pick.field == Field::Skills {
-            return self.skill_entries(pick);
+        match pick.field {
+            Field::Skills => return self.skill_entries(pick),
+            Field::Template => return self.template_entries(pick),
+            Field::ExtraSkill => return self.extra_skill_entries(pick),
+            _ => {}
         }
         let current = match pick.app {
             Some(_) => String::new(),
-            None => self.value(pick.row, pick.field),
+            None => self.own(pick.scope, pick.row, pick.field),
         };
         let filter = pick.filter.to_lowercase();
         let mut out = Vec::new();
@@ -659,6 +767,7 @@ impl Settings {
             let model = matches!(pick.field, Field::Model | Field::Plan);
             let current = match &picks {
                 None => false,
+                Some(Picked::Value(v)) if v.is_empty() => current.is_empty(),
                 Some(_) if model => app::canonical(name) == app::canonical(&current),
                 Some(_) => name == current,
             };
@@ -678,6 +787,16 @@ impl Settings {
                 });
             }
         };
+        // A label's own field may fall through; a model after a new App may not.
+        if pick.scope != Scope::Repo && pick.app.is_none() {
+            let (name, whose) = match pick.scope {
+                Scope::Extra => ("the Review's row", "the Review's"),
+                _ => ("repo's row", "the repo's"),
+            };
+            let fell = self.fallback(pick.scope, pick.row, pick.field);
+            let detail = format!("empty: {whose} {fell}");
+            entry(name, detail, Some(Picked::Value(String::new())));
+        }
         // A row on an App no longer in the table still lists the Apps.
         match (pick.field, self.pick_app(pick)) {
             (Field::App, _) => {
@@ -691,7 +810,11 @@ impl Settings {
                     entry(a.name, detail.into(), Some(Picked::App(a)));
                 }
             }
-            (_, None) | (Field::Same | Field::Job(_) | Field::Skills, _) => {}
+            (_, None)
+            | (
+                Field::Same | Field::Job(_) | Field::Skills | Field::Template | Field::ExtraSkill,
+                _,
+            ) => {}
             (Field::Plan, Some(app)) => {
                 for (id, _) in self.listed(app) {
                     entry(
@@ -710,7 +833,11 @@ impl Settings {
                     entry("none", detail, value("none"));
                 }
                 // A split needs a named model for each half.
-                if pick.row != 0 || pick.app.is_some() || self.split().is_none() {
+                if pick.scope != Scope::Repo
+                    || pick.row != 0
+                    || pick.app.is_some()
+                    || self.split().is_none()
+                {
                     let detail = format!("{}'s own · {}", app.name, family_label(app, "default"));
                     entry("default", detail, value("default"));
                 }
@@ -721,7 +848,7 @@ impl Settings {
                 entry("type an id…", detail, Some(Picked::Typed));
             }
             (Field::Effort, Some(app)) => {
-                let model = self.value(pick.row, Field::Model);
+                let model = self.row_value(pick, Field::Model);
                 let levels =
                     std::iter::once("default".to_string()).chain(self.efforts(app, &model));
                 for level in levels {
@@ -819,7 +946,16 @@ impl Settings {
             fields.insert(0, (Field::App, app.name.to_string()));
         }
         let mut doc = self.doc.clone();
-        put(&mut doc, key, &fields);
+        match pick.scope {
+            Scope::Repo => put(&mut doc, key, &fields),
+            // no rule reads an Extra review's row
+            Scope::Extra => return None,
+            Scope::Label => {
+                let name = self.label.as_deref().unwrap_or_default();
+                let labels = doc["labels"].as_object_mut()?;
+                put_override(labels, name, Scope::Label, key, &fields).ok()?;
+            }
+        }
         let broken = broken_by(&self.doc, &doc)?;
         let mark = match (broken.rows, key) {
             // Only the rules' unknown-family texts say "cannot".
@@ -842,12 +978,15 @@ impl Settings {
 
     /// The foot's note on a setting, or on its open pick list.
     pub(crate) fn note_of(&self, row: usize, field: Field) -> String {
+        if self.label.is_some() {
+            return self.labels_note();
+        }
         let tail = match field {
             Field::Job(j) => return format!(
                 "The skill the Stage uses for {}: one not installed is installed first, as orqa-<name>; none leaves the Stage skill's own instructions. Your personal skills are listed once turned on, on the Skills page.",
                 job_name(j)
             ),
-            Field::Skills => return self.labels_note(),
+            Field::Skills | Field::Template | Field::ExtraSkill => return self.labels_note(),
             Field::App => "Changing the App leads into its model list; the pair saves together.",
             Field::Same => match self.split() {
                 Some(plan) => {
@@ -963,12 +1102,37 @@ impl Settings {
         if self.label.is_none() {
             return "a adds a label, e or Enter opens it, r renames it (its PR template mapping follows), d deletes it (its PR template file stays). Every change saves at once, uncommitted, to .orqadence/config.json.".to_string();
         }
-        match LABEL_FIELDS[self.setting] {
-            "kind" => "area: the one type of work a Ticket does, one per Ticket; modifier: only changes rows, and combines with an area. Enter or Space toggles.",
-            "skills" => "The skills its code-editing Stages load, from the ones installed: Enter picks them, or types a source to install one first.",
-            _ => "One line given to its code-editing Stages as an Input. Enter types it; nothing clears it.",
+        match self.label_items().get(self.setting) {
+            Some(LabelItem::Kind) => "area: the one type of work a Ticket does, one per Ticket; modifier: only changes rows, and combines with an area. Enter or Space toggles.".to_string(),
+            Some(LabelItem::Skills) => "The skills its code-editing Stages load, from the ones installed: Enter picks them, or types a source to install one first.".to_string(),
+            Some(LabelItem::Template) => "The PR template Fix writes from: default, a file of .github/PULL_REQUEST_TEMPLATE, or new, a copy of the default with a section for this label.".to_string(),
+            Some(LabelItem::ExtraSkill) => "The review skill of this label's Extra review, from the ones installed; none: no Extra review. It runs the Review's Stage skill with it.".to_string(),
+            Some(LabelItem::Position) => "When the Extra review runs: every Round, after the Review; the first Round only; or before the PR, after the last Round. Enter or Space cycles.".to_string(),
+            Some(LabelItem::Debate) => "on: its Findings join the Debate; off: they go straight to the Fix as fix items, not debated. Enter or Space toggles.".to_string(),
+            Some(LabelItem::Extra(_)) => "The Extra review's App, model and effort: an empty field falls back to the Review's row. Enter picks.".to_string(),
+            Some(LabelItem::Row(r, _)) => format!("Overrides the repo's {} row for a Ticket with this label: an empty field falls through to the repo's. Enter picks; 'repo's row' empties it.", ROWS[*r].name),
+            _ => "One line given to its code-editing Stages as an Input. Enter types it; nothing clears it.".to_string(),
         }
-        .to_string()
+    }
+
+    /// The open label's page, row by row: kind, skills, guidance and PR
+    /// template; an Area label's Extra review; then the Stage rows it
+    /// overrides. A label that cannot be read has the first three only.
+    pub(crate) fn label_items(&self) -> Vec<LabelItem> {
+        use LabelItem::{
+            Debate, Extra, ExtraSkill, Guidance, Kind, Position, Row, Skills, Template,
+        };
+        let mut items = vec![Kind, Skills, Guidance];
+        let Some(Ok(label)) = self.label.as_deref().map(|name| self.label_of(name)) else {
+            return items;
+        };
+        items.push(Template);
+        if label.kind == "area" {
+            items.extend([ExtraSkill, Position, Debate]);
+            items.extend(FIELDS.map(Extra));
+        }
+        items.extend((0..ROWS.len()).flat_map(|r| FIELDS.map(|f| Row(r, f))));
+        items
     }
 
     /// A label name as typed, as bd takes a label: not empty, no whitespace,
@@ -989,6 +1153,99 @@ impl Settings {
             ));
         }
         Ok(name.to_string())
+    }
+
+    /// The open label's Extra review skill list: none, then each skill
+    /// installed but the Stage skills. Filtered as entries are.
+    fn extra_skill_entries(&self, pick: &Pick) -> Vec<Entry> {
+        let name = self.label.as_deref().unwrap_or_default();
+        let on = self
+            .label_of(name)
+            .map(|l| l.extra_review.skill)
+            .unwrap_or_default();
+        let filter = pick.filter.to_lowercase();
+        let skills = self.manifest.skills.iter();
+        // The Stage skills and create-pr are not reviews.
+        let listed = skills.filter(|(name, _)| {
+            !name.starts_with("orqa-stage-") && *name != crate::skills::CREATE_PR
+        });
+        let mut out = Vec::new();
+        if NONE.contains(&filter) {
+            out.push(Entry {
+                name: NONE.to_string(),
+                detail: "no Extra review".to_string(),
+                current: on.is_empty(),
+                mark: None,
+                dim: false,
+                picks: Some(Picked::Value(String::new())),
+            });
+        }
+        out.extend(
+            listed
+                .filter(|(name, _)| name.to_lowercase().contains(&filter))
+                .map(|(name, skill)| Entry {
+                    name: name.clone(),
+                    detail: match skill.shipped {
+                        true => "shipped with Orqadence".to_string(),
+                        false => short(&skill.repo).to_string(),
+                    },
+                    current: *name == on,
+                    mark: None,
+                    dim: false,
+                    picks: Some(Picked::Value(name.clone())),
+                }),
+        );
+        out
+    }
+
+    /// The open label's PR template list: default, each file of the
+    /// template directory, then new. Filtered as entries are.
+    fn template_entries(&self, pick: &Pick) -> Vec<Entry> {
+        let name = self.label.as_deref().unwrap_or_default();
+        let on = self
+            .label_of(name)
+            .map(|l| l.pr_template)
+            .unwrap_or_default();
+        let filter = pick.filter.to_lowercase();
+        let entry = |name: &str, detail: &str, mark, current, picks| Entry {
+            name: name.to_string(),
+            detail: detail.to_string(),
+            current,
+            mark,
+            dim: false,
+            picks: Some(picks),
+        };
+        let mut out = Vec::new();
+        if "default".contains(&filter) {
+            let default = Picked::Value(String::new());
+            out.push(entry(
+                "default",
+                "the repo's default template",
+                None,
+                on.is_empty(),
+                default,
+            ));
+        }
+        let mut files = self.templates.clone();
+        // a mapped file that has gone falls back to the default at PR time
+        if !on.is_empty() && !files.contains(&on) {
+            files.push(on.clone());
+        }
+        for file in files.iter().filter(|f| f.to_lowercase().contains(&filter)) {
+            let gone = !self.templates.contains(file);
+            let mark = gone.then_some(("not found", ORANGE));
+            let picked = Picked::Value(file.clone());
+            out.push(entry(file, setup::TEMPLATE_DIR, mark, *file == on, picked));
+        }
+        let shipped = setup::LABELS
+            .iter()
+            .any(|l| l.name == name && !l.pr_section.is_empty());
+        let detail = match shipped {
+            true => "the default plus its shipped section",
+            false => "the default plus a section, its heading typed",
+        };
+        out.push(entry("new…", detail, None, false, Picked::Typed));
+        out
     }
 
     /// The open label's skills pick list: each skill installed but the
@@ -1081,6 +1338,66 @@ fn put_skills(
     Ok(())
 }
 
+/// A label's Extra review entry, made with the new-label defaults when it
+/// has none.
+fn extra_mut(entry: &mut Value) -> &mut Value {
+    if !entry["extra_review"].is_object() {
+        entry["extra_review"] = json!({"position": "every", "debate": true});
+    }
+    &mut entry["extra_review"]
+}
+
+/// A label's override of a row's fields, or its Extra review's: each
+/// non-empty value put in, an empty one removed, and a row or rows left
+/// empty with them.
+fn put_override(
+    labels: &mut serde_json::Map<String, Value>,
+    name: &str,
+    scope: Scope,
+    key: &str,
+    fields: &[(Field, String)],
+) -> Result<(), String> {
+    let entry = label_entry(labels, name)?;
+    let holder = match scope {
+        Scope::Extra => extra_mut(entry),
+        _ => {
+            if !entry["rows"].is_object() {
+                entry["rows"] = json!({});
+            }
+            &mut entry["rows"][key]
+        }
+    };
+    if !holder.is_object() {
+        *holder = json!({});
+    }
+    for (field, value) in fields {
+        match value.is_empty() {
+            true => _ = holder.as_object_mut().unwrap().remove(field.key()),
+            false => holder[field.key()] = json!(value),
+        }
+    }
+    // An App or model of its own plans on one model, as put's new App
+    // does: the repo's split may not fit it.
+    let moved = fields
+        .iter()
+        .any(|(field, _)| matches!(field, Field::App | Field::Model));
+    if scope == Scope::Label && key == "implement" && moved {
+        let row = holder.as_object_mut().unwrap();
+        match row.contains_key("app") || row.contains_key("model") {
+            true => _ = row.insert(Field::Plan.key().into(), json!("default")),
+            false => _ = row.remove(Field::Plan.key()),
+        }
+    }
+    if scope != Scope::Extra {
+        let rows = entry["rows"].as_object_mut().unwrap();
+        rows.retain(|_, row| row.as_object().is_none_or(|fields| !fields.is_empty()));
+        if rows.is_empty() {
+            entry.as_object_mut().unwrap().remove("rows");
+        }
+    }
+    Ok(())
+}
+
 /// What an App said as it refused a probe: the last line it printed,
 /// stdout first (claude -p prints its error there, under a warning on
 /// stderr), a JSON error line's message (codex exec's) pulled out.
@@ -1123,12 +1440,42 @@ fn staged(
     Ok((path, read, doc, row))
 }
 
+/// config.json read afresh with a label's override put in, as
+/// put_override, and the row as the Stage that starts on it will read it;
+/// a change that breaks a rule refuses.
+fn staged_override(
+    repo: &Path,
+    name: &str,
+    scope: Scope,
+    key: &str,
+    fields: &[(Field, String)],
+) -> Result<(PathBuf, Value, Row), String> {
+    let (path, read) = app::read_object(repo)?;
+    let mut doc = read.clone();
+    let labels = doc["labels"]
+        .as_object_mut()
+        .ok_or_else(|| "labels in config.json is not an object".to_string())?;
+    put_override(labels, name, scope, key, fields)?;
+    if let Some(broken) = broken_by(&read, &doc).filter(|_| scope == Scope::Label) {
+        return Err(broken.text);
+    }
+    let view = match scope {
+        Scope::Extra => app::with_extra(&doc, name),
+        _ => app::with_label(&doc, name),
+    };
+    let row = app::row_in(&view, key, &path)?;
+    Ok((path, doc, row))
+}
+
 /// The first rule the change from before to after breaks: one broken after
 /// that held before, or was not checked, so a config.json broken by hand
 /// mends one rule at a time.
 fn broken_by(before: &Value, after: &Value) -> Option<Check> {
     let was = app::checks(before);
-    let was_broken = |c: &Check| was.iter().any(|w| w.rows == c.rows && !w.holds);
+    let was_broken = |c: &Check| {
+        was.iter()
+            .any(|w| w.rows == c.rows && w.label == c.label && !w.holds)
+    };
     app::checks(after)
         .into_iter()
         .find(|c| !c.holds && !was_broken(c))
@@ -1216,6 +1563,7 @@ impl Screen {
             listing: None,
             confirm: None,
             label: None,
+            templates: setup::template_files(&repo.join(setup::TEMPLATE_DIR)),
             note,
             saved: None,
         });
@@ -1276,6 +1624,7 @@ impl Screen {
                         (Typing::Source, source) => self.add_source(source.to_string()),
                         (Typing::Key, key) => self.keep_key(key.to_string()),
                         (Typing::LabelName, name) => self.add_label(name.to_string()),
+                        (Typing::Heading, heading) => self.keep_heading(heading),
                         (Typing::Rename(old), name) => self.rename_label(old, name.to_string()),
                     }
                 }
@@ -1377,7 +1726,7 @@ impl Screen {
                     st.setting = (st.setting + 1).min(names.len().saturating_sub(1))
                 }
                 (Some(_), _, KeyCode::Down) => {
-                    st.setting = (st.setting + 1).min(LABEL_FIELDS.len() - 1)
+                    st.setting = (st.setting + 1).min(st.label_items().len() - 1)
                 }
                 (None, _, KeyCode::Left | KeyCode::Esc) => st.open = false,
                 (Some(label), _, KeyCode::Left | KeyCode::Esc) => {
@@ -1398,17 +1747,10 @@ impl Screen {
                     let text = format!("Delete orqa:{name}? A Ticket still carrying it wakes its next Stage; its PR template file stays.");
                     st.confirm = Some((text, Confirm::DeleteLabel(name)));
                 }
-                (Some(label), _, KeyCode::Enter | KeyCode::Char(' '))
-                    if LABEL_FIELDS[st.setting] == "kind" =>
-                {
-                    self.toggle_kind(&label)
-                }
-                (Some(_), _, KeyCode::Enter) if LABEL_FIELDS[st.setting] == "skills" => {
-                    self.open_pick(0, Field::Skills, None)
-                }
-                (Some(label), _, KeyCode::Enter) => {
-                    let text = st.label_of(&label).map(|l| l.guidance).unwrap_or_default();
-                    st.typing = Some((Typing::Guidance, text));
+                (Some(label), _, KeyCode::Enter | KeyCode::Char(' ')) => {
+                    if let Some(&item) = st.label_items().get(st.setting) {
+                        self.label_item(&label, item, code == KeyCode::Enter);
+                    }
                 }
                 _ => {}
             }
@@ -1472,7 +1814,7 @@ impl Screen {
                         let text = format!("{} has no effort flag.", app.name);
                         st.note = Some((text, MUTED));
                     }
-                    _ => self.open_pick(row, field, None),
+                    _ => self.open_pick(row, field, None, Scope::Repo),
                 }
             }
             _ => {}
@@ -1496,7 +1838,7 @@ impl Screen {
                 "Pick Implement's model first: the split needs a named model for each half."
                     .to_string()
             }
-            _ => return self.open_pick(0, Field::Plan, None),
+            _ => return self.open_pick(0, Field::Plan, None, Scope::Repo),
         };
         st.note = Some((refused, RED));
     }
@@ -1504,9 +1846,13 @@ impl Screen {
     /// Opens the pick list for a row's setting, the cursor on its value. A
     /// model list whose App could not list its models raises a red Notice
     /// modal with the App's error over it.
-    fn open_pick(&mut self, row: usize, field: Field, app: Option<&'static App>) {
+    fn open_pick(&mut self, row: usize, field: Field, app: Option<&'static App>, scope: Scope) {
         let st = self.settings.as_mut().unwrap();
+        if field == Field::Template {
+            st.templates = setup::template_files(&self.cfg.repo.join(setup::TEMPLATE_DIR));
+        }
         let mut pick = Pick {
+            scope,
             row,
             field,
             app,
@@ -1540,14 +1886,15 @@ impl Screen {
         let st = self.settings.as_mut().unwrap();
         match picked {
             Picked::App(a) if !st.is_installed(a) => st.note = Some((not_on_path(a), MUTED)),
-            Picked::App(a) if st.app(pick.row).is_some_and(|now| now.name == a.name) => {}
+            Picked::App(a) if st.own(pick.scope, pick.row, Field::App) == a.name => {}
             Picked::App(a) => match app::runs_on(ROWS[pick.row].key, a) {
-                Ok(()) => self.open_pick(pick.row, Field::Model, Some(a)),
+                Ok(()) => self.open_pick(pick.row, Field::Model, Some(a), pick.scope),
                 Err(err) => st.note = Some((format!("Refused: {err}. Nothing changed."), RED)),
             },
             Picked::Typed if pick.field == Field::Skills => {
                 st.typing = Some((Typing::Source, String::new()))
             }
+            Picked::Typed if pick.field == Field::Template => self.new_template(),
             Picked::Typed => st.typing = Some((Typing::Model(pick), String::new())),
             Picked::Install(name, source) => {
                 if let Field::Job(j) = pick.field {
@@ -1559,8 +1906,10 @@ impl Screen {
                     self.set_pick(j, &value);
                 }
                 Field::Skills => self.toggle_skill(pick, &value),
+                Field::Template => self.pick_template(&value),
+                Field::ExtraSkill => self.pick_extra_skill(&value),
                 Field::Model | Field::Plan => self.pick_model(&pick, &value),
-                _ => self.change(pick.row, vec![(Field::Effort, value)]),
+                field => self.change_in(pick.scope, pick.row, vec![(field, value)]),
             },
         }
     }
@@ -1575,14 +1924,14 @@ impl Screen {
             if pick.app.is_some() {
                 fields.insert(0, (Field::App, app.name.to_string()));
             }
-            let effort = st.value(pick.row, Field::Effort);
+            let effort = st.row_value(pick, Field::Effort);
             if effort != "default"
                 && (pick.app.is_some() || !st.efforts(app, model).contains(&effort))
             {
                 fields.push((Field::Effort, "default".to_string()));
             }
         }
-        self.change(pick.row, fields);
+        self.change_in(pick.scope, pick.row, fields);
     }
 
     /// A change to a row: refused if the Stage could not start on it; one
@@ -1592,7 +1941,6 @@ impl Screen {
     // process running on to its end (it has no stdin to wait on).
     fn change(&mut self, row: usize, fields: Vec<(Field, String)>) {
         let repo = self.cfg.repo.clone();
-        let tools = self.cfg.tools.clone();
         let st = self.settings.as_mut().unwrap();
         let key = ROWS[row].key;
         let (now, doc, staged) = match staged(&repo, key, &fields) {
@@ -1621,19 +1969,77 @@ impl Screen {
         if st.probed.contains(&(app.name, model.clone())) {
             return self.save(row, &fields);
         }
+        self.start_probe(Scope::Repo, row, fields, app, model);
+    }
+
+    /// The one-line prompt that tries model on app, off the screen thread:
+    /// probed() takes its answer.
+    fn start_probe(
+        &mut self,
+        scope: Scope,
+        row: usize,
+        fields: Vec<(Field, String)>,
+        app: &'static App,
+        model: String,
+    ) {
+        let repo = self.cfg.repo.clone();
+        let tools = self.cfg.tools.clone();
         let argv = app::probe(app, &repo, &model);
         let (tx, result) = mpsc::channel();
         thread::spawn(move || {
             let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
             let _ = tx.send(tools.run(&repo, &argv));
         });
-        st.probe = Some(Probe {
+        self.settings.as_mut().unwrap().probe = Some(Probe {
             result,
+            scope,
             row,
             fields,
             app: app.name,
             model,
         });
+    }
+
+    /// change for a scope: a label's override or its Extra review's saves
+    /// into the label's entry.
+    fn change_in(&mut self, scope: Scope, row: usize, fields: Vec<(Field, String)>) {
+        match scope {
+            Scope::Repo => self.change(row, fields),
+            scope => self.change_override(scope, row, fields),
+        }
+    }
+
+    /// A change to the open label's row field, or its Extra review's: staged
+    /// over config.json read afresh and refused as the Stage pages refuse
+    /// (a rule it breaks, a row a Stage could not start on); one that
+    /// changes nothing is dropped; a named model is probed first.
+    fn change_override(&mut self, scope: Scope, row: usize, fields: Vec<(Field, String)>) {
+        let repo = self.cfg.repo.clone();
+        let st = self.settings.as_mut().unwrap();
+        let name = st.label.clone().unwrap_or_default();
+        let key = ROWS[row].key;
+        if fields.iter().all(|(f, v)| st.own(scope, row, *f) == *v) {
+            return;
+        }
+        let row_now = match staged_override(&repo, &name, scope, key, &fields) {
+            Ok((_, _, row_now)) => row_now,
+            Err(err) => {
+                st.note = Some((format!("Refused: {err}. Nothing changed."), RED));
+                return;
+            }
+        };
+        let named = fields
+            .iter()
+            .any(|(f, v)| *f == Field::Model && !v.is_empty());
+        let model = row_now.model;
+        if !named
+            || model == "default"
+            || model == "none"
+            || st.probed.contains(&(row_now.app.name, model.clone()))
+        {
+            return self.save_override(scope, row, &fields);
+        }
+        self.start_probe(scope, row, fields, row_now.app, model);
     }
 
     /// The probe's answer, taken in poll(): the change saves, or the App's
@@ -1649,7 +2055,10 @@ impl Screen {
         match result {
             Ok(_) => {
                 st.probed.push((probe.app, probe.model));
-                self.save(probe.row, &probe.fields);
+                match probe.scope {
+                    Scope::Repo => self.save(probe.row, &probe.fields),
+                    scope => self.save_override(scope, probe.row, &probe.fields),
+                }
             }
             Err(err) => {
                 let why = refusal(&err);
@@ -2189,6 +2598,11 @@ impl Screen {
             change(labels)?;
             app::write(&path, &doc).map(|()| doc)
         });
+        self.label_saved(saved, text)
+    }
+
+    /// config.json as a label change wrote it, or why it did not.
+    fn label_saved(&mut self, saved: Result<Value, String>, text: String) -> bool {
         match saved {
             Ok(doc) => {
                 self.settings.as_mut().unwrap().doc = doc;
@@ -2368,6 +2782,209 @@ impl Screen {
             },
             said,
         );
+    }
+
+    /// The change into the open label's entry: "orqa:be implement model
+    /// opus", or "is the repo's" for an emptied field.
+    fn save_override(&mut self, scope: Scope, row: usize, fields: &[(Field, String)]) {
+        let name = self.open_label();
+        let (what, falls) = match scope {
+            Scope::Extra => ("extra review".to_string(), "the Review's"),
+            _ => (ROWS[row].key.replace('_', " "), "the repo's"),
+        };
+        let parts: Vec<String> = fields
+            .iter()
+            .map(|(f, v)| match v.is_empty() {
+                true => format!("{} is {falls}", f.name()),
+                false => format!("{} {v}", f.name()),
+            })
+            .collect();
+        let text = format!("orqa:{name} {what} {}", parts.join(", "));
+        // staged again: config.json may have changed during a probe
+        let saved = staged_override(&self.cfg.repo, &name, scope, ROWS[row].key, fields)
+            .and_then(|(path, doc, _)| app::write(&path, &doc).map(|()| doc));
+        self.label_saved(saved, text);
+    }
+
+    /// The name of the label open on the Labels page; empty with none.
+    fn open_label(&self) -> String {
+        self.settings
+            .as_ref()
+            .unwrap()
+            .label
+            .clone()
+            .unwrap_or_default()
+    }
+
+    /// Enter (or Space, when it toggles) on an item of the open label's
+    /// page.
+    fn label_item(&mut self, name: &str, item: LabelItem, enter: bool) {
+        let st = self.settings.as_mut().unwrap();
+        let (scope, row, field) = match item {
+            LabelItem::Kind => return self.toggle_kind(name),
+            LabelItem::Position => return self.cycle_position(name),
+            LabelItem::Debate => return self.toggle_debate(name),
+            // the rest are Enter's alone
+            _ if !enter => return,
+            LabelItem::Skills => (Scope::Repo, 0, Field::Skills),
+            LabelItem::Template => (Scope::Repo, 0, Field::Template),
+            LabelItem::ExtraSkill => (Scope::Repo, 0, Field::ExtraSkill),
+            LabelItem::Extra(field) => (Scope::Extra, REVIEW_ROW, field),
+            LabelItem::Row(row, field) => (Scope::Label, row, field),
+            LabelItem::Guidance => {
+                let text = st.label_of(name).map(|l| l.guidance).unwrap_or_default();
+                st.typing = Some((Typing::Guidance, text));
+                return;
+            }
+        };
+        let app = app(&value(&st.view(scope), row, Field::App));
+        match app {
+            Some(app) if field == Field::Effort && app.effort.is_empty() => {
+                let text = format!("{} has no effort flag.", app.name);
+                st.note = Some((text, MUTED));
+            }
+            _ => self.open_pick(row, field, None, scope),
+        }
+    }
+
+    /// Enter or Space on position: every Round, the first Round only,
+    /// before the PR, and round again.
+    fn cycle_position(&mut self, name: &str) {
+        let st = self.settings.as_ref().unwrap();
+        let now = st
+            .label_of(name)
+            .map(|l| l.extra_review.position)
+            .unwrap_or_default();
+        let next = match now.as_str() {
+            "first" => "before_pr",
+            "before_pr" => "every",
+            _ => "first",
+        };
+        let text = format!("orqa:{name} Extra review runs {}", position_name(next));
+        self.put_extra(name, text, |extra| extra["position"] = json!(next));
+    }
+
+    /// Enter or Space on Debate: its Findings join it, or go straight to
+    /// the Fix.
+    fn toggle_debate(&mut self, name: &str) {
+        let st = self.settings.as_ref().unwrap();
+        let on = !st.label_of(name).is_ok_and(|l| l.extra_review.debate);
+        let text = match on {
+            true => format!("orqa:{name} Extra review Findings join the Debate"),
+            false => {
+                format!("orqa:{name} Extra review Findings go straight to the Fix, not debated")
+            }
+        };
+        self.put_extra(name, text, |extra| extra["debate"] = json!(on));
+    }
+
+    /// An Extra review skill picked: none clears it, and with it the Extra
+    /// review.
+    fn pick_extra_skill(&mut self, skill: &str) {
+        let name = self.open_label();
+        let text = match skill.is_empty() {
+            true => format!("orqa:{name} has no Extra review"),
+            false => format!("orqa:{name} Extra review is {skill}"),
+        };
+        let skill = skill.to_string();
+        self.put_extra(&name, text, move |extra| match skill.is_empty() {
+            true => _ = extra.as_object_mut().unwrap().remove("skill"),
+            false => extra["skill"] = json!(skill),
+        });
+    }
+
+    /// A change to the label's Extra review entry, saved at once.
+    fn put_extra(&mut self, name: &str, text: String, change: impl FnOnce(&mut Value)) {
+        let name = name.to_string();
+        self.save_label(
+            move |labels| {
+                change(extra_mut(label_entry(labels, &name)?));
+                Ok(())
+            },
+            text,
+        );
+    }
+
+    /// A PR template picked: a file of the directory, or default, which
+    /// takes the mapping off the entry.
+    fn pick_template(&mut self, file: &str) {
+        let name = self.open_label();
+        let text = match file.is_empty() {
+            true => format!("orqa:{name} uses the default PR template"),
+            false => format!("orqa:{name} uses the PR template {file}"),
+        };
+        self.map_template(file, text);
+    }
+
+    /// The entry's pr_template set to file; empty removes it.
+    fn map_template(&mut self, file: &str, text: String) {
+        let name = self.open_label();
+        let file = file.to_string();
+        self.save_label(
+            move |labels| {
+                let entry = label_entry(labels, &name)?;
+                match file.is_empty() {
+                    true => _ = entry.as_object_mut().unwrap().remove("pr_template"),
+                    false => entry["pr_template"] = json!(file),
+                }
+                Ok(())
+            },
+            text,
+        );
+    }
+
+    /// 'new…' on the PR template list: a shipped label's gets its shipped
+    /// section at once, any other's asks for a heading. Never over a file
+    /// that is there.
+    fn new_template(&mut self) {
+        let st = self.settings.as_mut().unwrap();
+        let name = st.label.clone().unwrap_or_default();
+        let at = format!("{}/{name}.md", setup::TEMPLATE_DIR);
+        if name.contains(['/', '\\']) {
+            return self.refused(&format!("orqa:{name} cannot name a file: rename it first"));
+        }
+        if self.cfg.repo.join(&at).exists() {
+            return self.refused(&format!("{at} is there already: pick it from the list"));
+        }
+        let shipped = setup::LABELS.iter().find(|l| l.name == name);
+        match shipped.filter(|l| !l.pr_section.is_empty()) {
+            Some(label) => self.write_template(label.pr_section),
+            None => st.typing = Some((Typing::Heading, String::new())),
+        }
+    }
+
+    /// The heading typed: a section of it after the default template.
+    fn keep_heading(&mut self, typed: &str) {
+        match typed.trim_start_matches('#').trim() {
+            "" => self.refused("No heading"),
+            heading => self.write_template(&format!("## {heading}\n")),
+        }
+    }
+
+    /// <label>.md in the template directory: the default template (the
+    /// repo's, else Orqadence's) and the section, mapped on the label.
+    fn write_template(&mut self, section: &str) {
+        let repo = &self.cfg.repo;
+        let name = self.open_label();
+        let file = format!("{name}.md");
+        let frame = setup::default_template(repo)
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .unwrap_or_else(|| setup::PR_TEMPLATE.to_string());
+        let dir = repo.join(setup::TEMPLATE_DIR);
+        // create_new: a file made since the check in new_template is not overwritten
+        let written = std::fs::create_dir_all(&dir).and_then(|()| {
+            let mut out = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dir.join(&file))?;
+            std::io::Write::write_all(&mut out, setup::with_section(&frame, section).as_bytes())
+        });
+        if let Err(err) = written {
+            return self.refused(&format!("{}/{file}: {err}", setup::TEMPLATE_DIR));
+        }
+        self.settings.as_mut().unwrap().templates = setup::template_files(&dir);
+        let text = format!("wrote {}/{file}; orqa:{name} uses it", setup::TEMPLATE_DIR);
+        self.map_template(&file, text);
     }
 
     /// Writes the change into config.json, read afresh; during a run RECENT

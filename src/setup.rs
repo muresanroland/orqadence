@@ -796,7 +796,7 @@ pub(crate) const DEFAULT_TEMPLATE: &str = ".github/pull_request_template.md";
 
 /// The repo's default PR template, where GitHub reads one: .github, the
 /// root or docs, named pull_request_template.md in any case.
-fn default_template(repo: &Path) -> Option<PathBuf> {
+pub(crate) fn default_template(repo: &Path) -> Option<PathBuf> {
     [".github", "", "docs"].into_iter().find_map(|dir| {
         fs::read_dir(repo.join(dir))
             .into_iter()
@@ -810,6 +810,25 @@ fn default_template(repo: &Path) -> Option<PathBuf> {
                 })
             })
     })
+}
+
+/// The .md files of a template directory, sorted; none for a missing one.
+pub(crate) fn template_files(dir: &Path) -> Vec<String> {
+    let mut files: Vec<String> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".md"))
+        .collect();
+    files.sort();
+    files
+}
+
+/// A label's template: the default frame, a blank line, the label's section.
+pub(crate) fn with_section(frame: &str, section: &str) -> String {
+    let gap = if frame.ends_with('\n') { "\n" } else { "\n\n" };
+    format!("{frame}{gap}{section}")
 }
 
 /// Writes the PR templates for the checked Area labels: the default at
@@ -850,14 +869,7 @@ fn write_pr_templates(
             fs::read_to_string(&path)?
         }
         None => {
-            let mut files: Vec<String> = fs::read_dir(&dir)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                .filter(|name| name.ends_with(".md"))
-                .collect();
-            files.sort();
+            let files = template_files(&dir);
             let picked = if files.is_empty() {
                 None
             } else {
@@ -879,11 +891,10 @@ fn write_pr_templates(
             frame
         }
     };
-    let gap = if frame.ends_with('\n') { "\n" } else { "\n\n" };
     for label in missing {
         let name = label.template_file();
         fs::create_dir_all(&dir)?;
-        fs::write(dir.join(&name), format!("{frame}{gap}{}", label.pr_section))?;
+        fs::write(dir.join(&name), with_section(&frame, label.pr_section))?;
         write!(out, "init: wrote {TEMPLATE_DIR}/{name}\r\n")?;
     }
     Ok(())
