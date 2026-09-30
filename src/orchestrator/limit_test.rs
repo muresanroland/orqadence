@@ -784,6 +784,36 @@ fn a_codex_limit_on_a_review_asks_once_and_unreviewed_skips_review_and_debate_un
     w.await_line("hx-3 review 1 started: codex");
 }
 
+/// The limit Question offers the fallback the asking Ticket would run: a
+/// review_if_limited its label alone sets.
+#[test]
+fn the_limit_question_offers_the_asking_tickets_labelled_fallback() {
+    let ticket = BdTicket {
+        labels: vec!["orqa:be".to_string()],
+        ..BdTicket::new("hx-1")
+    };
+    let (w, mut o) = new_world(vec![ticket]);
+    clock(&mut o);
+    write_file(
+        &w.repo.join(".orqadence/config.json"),
+        r#"{"labels": {"be": {"kind": "area",
+            "rows": {"review_if_limited": {"app": "claude", "model": "opus"}}}}}"#,
+    );
+    write_file(&o.run_dir("hx-1").join("implement.md"), "STATUS: done\n");
+    hits(&w, "hx-1", "review", "idle", CODEX);
+    let o = Arc::new(o);
+    let _one = spawn_ticket(o.clone(), "hx-1");
+    wait_until("the Review's limit Question", || {
+        !review_questions(&w).is_empty()
+    });
+    assert_eq!(
+        review_questions(&w),
+        [("codex".to_string(), Some("claude opus".to_string()))]
+    );
+    o.review("codex", Review::Fallback);
+    w.await_line("hx-1 review 1 started: claude opus (pane");
+}
+
 #[test]
 fn review_with_the_fallback_starts_stage_review_on_its_app_and_model() {
     let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
