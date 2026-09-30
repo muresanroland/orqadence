@@ -1,8 +1,8 @@
 //! The palette, the 256-color fallback, and the Orqadence brand: the 2×2
-//! pane mark, the pixel wordmark and its cursor, and the 12×12 logo
-//! (assets/brand/orqadence-logo-12x12.txt).
+//! pane mark, the pixel wordmark and its cursor, the 12×12 logo
+//! (assets/brand/orqadence-logo-12x12.txt), and the providers' chips.
 
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 pub(crate) const PURPLE: Color = Color::Rgb(210, 90, 255);
@@ -143,4 +143,62 @@ fn pane_row(i: usize, lit: bool, (w, h): (usize, usize), y: usize) -> Vec<Span<'
     }
     row.push(Span::styled(r, c));
     row
+}
+
+/// Each provider init names: (name, glyph, label, color). Its brand's
+/// color where that is distinct, else one from the palette, so no two
+/// chips read alike: a terminal draws no logos.
+const PROVIDERS: [(&str, &str, &str, Color); 12] = [
+    ("claude", "✻", "Claude Code", Color::Rgb(0xd7, 0x77, 0x57)),
+    ("codex", "⬡", "Codex", TEXT),
+    ("pi", "π", "pi", YELLOW),
+    ("opencode", "▣", "opencode", MUTED),
+    ("copilot", "◉", "Copilot", PURPLE),
+    ("cursor", "⬢", "Cursor", BLUE),
+    ("typesafe", "◈", "TypeSafe", CYAN),
+    ("moshi", "☎", "Moshi", PINK),
+    ("beads", "●", "beads", Color::Rgb(0x25, 0xc2, 0xa0)),
+    ("herdr", "⧉", "herdr", ORANGE),
+    (
+        "coderabbit",
+        "◗",
+        "CodeRabbit",
+        Color::Rgb(0xff, 0x57, 0x0a),
+    ),
+    ("greptile", "∿", "Greptile", Color::Rgb(0x28, 0xe9, 0x9f)),
+];
+
+/// A provider's chip, its glyph and name on its color, so it is known at a
+/// glance; a name not in PROVIDERS is itself, plain.
+pub(crate) fn chip(name: &str) -> Span<'static> {
+    match PROVIDERS.iter().find(|p| p.0 == name) {
+        Some(&(_, glyph, label, color)) => Span::styled(
+            format!(" {glyph} {label} "),
+            Style::new().bg(color).fg(INK).bold(),
+        ),
+        None => Span::raw(name.to_string()),
+    }
+}
+
+/// A line as ANSI text, for output ratatui does not draw (orqa init): each
+/// span's colors and bold, folded to the 256 cube unless `truecolor`.
+pub(crate) fn ansi(line: &Line, truecolor: bool) -> String {
+    let color = |c: Color, base: u8| match if truecolor { c } else { quantize(c) } {
+        Color::Rgb(r, g, b) => format!(";{base};2;{r};{g};{b}"),
+        Color::Indexed(i) => format!(";{base};5;{i}"),
+        _ => String::new(),
+    };
+    let mut text = String::new();
+    for span in &line.spans {
+        let s = span.style;
+        let bold = if s.add_modifier.contains(Modifier::BOLD) {
+            ";1"
+        } else {
+            ""
+        };
+        let fg = s.fg.map(|c| color(c, 38)).unwrap_or_default();
+        let bg = s.bg.map(|c| color(c, 48)).unwrap_or_default();
+        text += &format!("\x1b[0{bold}{fg}{bg}m{}", span.content);
+    }
+    text + "\x1b[0m"
 }

@@ -297,7 +297,7 @@ fn init_deletes_the_old_run_files_on_yes_keeping_the_branches() {
     let (code, out) = init_with(repo.path(), home.path(), tools.clone(), &["y\n"], "");
     assert_eq!(code, 0, "init exit {code}:\n{out}");
     let old = repo.path().join(".orqadence");
-    let question = &out[..out.find("[y/N]").expect("not asked")];
+    let question = &out[..out.find("Delete them?").expect("not asked")];
     assert!(
         question.contains(".orqadence/worktrees/t1 has uncommitted changes"),
         "t1 not named:\n{question}"
@@ -629,7 +629,10 @@ fn with_no_beads_yes_runs_bd_init_and_non_interactive_skips() {
     fs::remove_dir_all(repo.path().join(".beads")).unwrap();
     let tools = ok_tools();
     let (_, out) = init_with(repo.path(), home.path(), tools.clone(), &["\n"], "");
-    assert!(out.contains("Run bd init now? [Y/n]"), "{out}");
+    assert!(
+        out.contains("Run bd init now?") && out.contains("› 1. Yes"),
+        "{out}"
+    );
     assert!(
         tools
             .calls()
@@ -738,7 +741,8 @@ codex: outdated (v7) (/h/.codex/herdr-agent-state.sh)
         "{out}"
     );
     assert!(
-        out.contains("  codex: outdated (v7) (/h/.codex/herdr-agent-state.sh)\r\n"),
+        out.contains(" ⬡ Codex ")
+            && out.contains("  outdated (v7) (/h/.codex/herdr-agent-state.sh)"),
         "{out}"
     );
     assert!(
@@ -856,7 +860,10 @@ fn cancel_at_the_gate_on_a_committed_checkout_goes_on_to_this_machines_steps() {
     fs::write(&skill, "edited").unwrap();
     fs::remove_dir_all(repo.path().join(".beads")).unwrap();
     let (_, out) = init_with(repo.path(), home.path(), committed_tools(), &["1"], "");
-    assert!(out.contains("init: cancel"), "not cancelled:\n{out}");
+    assert!(
+        out.contains("✓ cancel, leave their text as it is"),
+        "not cancelled:\n{out}"
+    );
     assert!(out.contains("Run bd init now?"), "{out}");
     assert!(out.contains("Install herdr's integration"), "{out}");
     assert_eq!(fs::read_to_string(&skill).unwrap(), "edited");
@@ -897,7 +904,11 @@ fn init_asks_on_call_and_keeps_the_moshi_token_readable_only_by_you() {
     let keys = ["\n", "n\n", "y\n", "moshi-tok\n"];
     let (code, out) = init_keys(repo.path(), home.path(), &keys);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains(&format!("{ON_CALL} (see https://github.com/muresanroland/orqadence/blob/main/docs/on-call.md) [y/N]")), "{out}");
+    assert!(out.contains(ON_CALL) && out.contains("› 2. No"), "{out}");
+    assert!(
+        out.contains("see https://github.com/muresanroland/orqadence/blob/main/docs/on-call.md"),
+        "{out}"
+    );
     assert!(!out.contains("moshi-tok"), "the token echoed:\n{out}");
     assert!(
         out.contains("Moshi token kept in .orqadence-local/config.json"),

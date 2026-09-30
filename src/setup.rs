@@ -9,9 +9,13 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
+use ratatui::style::{Style, Stylize};
+use ratatui::text::{Line as Row, Span};
+
 use crate::on_call;
 use crate::orchestrator::app::{self, APPS};
 use crate::orchestrator::state::{self, local_dir};
+use crate::shell::brand::{self, BORDER, FRAME, GREEN, MUTED, PURPLE, TEXT, YELLOW};
 use crate::skills::manifest::{self, Installed, Manifest, FILES, JOBS, LINKS};
 use crate::skills::{stage_skill, CREATE_PR, SKILLS};
 use crate::tools::Tools;
@@ -73,6 +77,7 @@ pub(crate) fn clean_old_checkout(
             .map(|entry| entry.path())
             .filter(|path| path.is_dir())
             .collect();
+        step(out, named("OLD RUN FILES"))?;
         write!(
             out,
             "init: an older Orqadence left its run files in .orqadence:\r\n"
@@ -218,18 +223,18 @@ pub(crate) fn install_skills(
     let mode = if force {
         Mode::Overwrite
     } else if installed(&repo.join(FILES)) {
-        write!(
-            out,
-            "init: the shipped skills are already installed here.\r\n"
-        )?;
+        step(out, named("SKILLS"))?;
+        let question = "The shipped skills are already installed here.";
         let options = [
             "cancel, leave their text as it is",
             "refresh only the skills not edited since install",
             "overwrite everything with the shipped skills",
         ];
-        match raw(tty, || choose(out, &mut *input, &options, 0))? {
-            0 => return Ok(false),
-            1 => Mode::Refresh,
+        match raw(tty, || {
+            choose(out, &mut *input, question, &options, (0, 0), "")
+        })? {
+            None | Some(0) => return Ok(false),
+            Some(1) => Mode::Refresh,
             _ => Mode::Overwrite,
         }
     } else {
@@ -361,23 +366,14 @@ fn ask_on_call(
     if kept.token.is_some() || !env_token.trim().is_empty() {
         return write!(out, "init: On call on\r\n");
     }
-    let question = format!(
-        "Ring your phone through Moshi when a Question waits? (see {})",
-        on_call::DOC
-    );
-    if yes(out, input, tty, &question, false)? != Some(true) {
+    step(out, brand::chip("moshi"))?;
+    note(out, &format!("see {}", on_call::DOC))?;
+    let question = "Ring your phone through Moshi when a Question waits?";
+    if yes(out, input, tty, question, false)? != Some(true) {
         return Ok(());
     }
-    write!(
-        out,
-        "init: Moshi token, from the Moshi app's Settings > Notifications (enter to skip): "
-    )?;
-    out.flush()?;
-    let token = match raw(tty, || read_line(out, input, false))? {
-        Line::Text(token) => token,
-        Line::Cancel | Line::End => String::new(),
-    };
-    write!(out, "\r\n")?;
+    let what = "Moshi token, from the Moshi app's Settings > Notifications";
+    let token = secret(out, input, tty, "token", what)?;
     if token.is_empty() {
         return Ok(());
     }
@@ -430,12 +426,18 @@ fn install_integrations(
     if stale.is_empty() {
         return Ok(());
     }
+    step(out, brand::chip("herdr"))?;
     write!(
         out,
         "init: herdr's integration tells herdr each session's id, so /continue can resume a Stage; it writes a hook script and registers it in the App's settings:\r\n"
     )?;
     for (name, state) in &stale {
-        write!(out, "  {name}: {state}\r\n")?;
+        let row = vec![
+            "    ".into(),
+            brand::chip(name),
+            Span::styled(format!("  {state}"), MUTED),
+        ];
+        write!(out, "{}\r\n", paint(row))?;
     }
     let question = "Install herdr's integration for these?";
     if yes(out, input, tty, question, true)? == Some(true) {
@@ -468,8 +470,18 @@ fn bd_init(
     input: &mut dyn Read,
     tty: bool,
 ) -> io::Result<()> {
-    let question = "No bd workspace here. Run bd init now?";
-    if repo.join(".beads").exists() || yes(out, input, tty, question, true)? != Some(true) {
+    if repo.join(".beads").exists() {
+        return Ok(());
+    }
+    step(out, brand::chip("beads"))?;
+    if yes(
+        out,
+        input,
+        tty,
+        "No bd workspace here. Run bd init now?",
+        true,
+    )? != Some(true)
+    {
         return Ok(());
     }
     match tools.run(repo, &["bd", "init", "--non-interactive"]) {
@@ -529,6 +541,7 @@ fn write_agent_docs(
     if docs.is_empty() && has_block {
         return Ok(());
     }
+    step(out, named("DOCS"))?;
     let question = "Write the beads docs/agents setup (issue tracker, triage labels, domain, Agent skills block)?";
     if yes(out, input, tty, question, true)? == Some(false) {
         return Ok(());
@@ -609,6 +622,7 @@ pub(crate) fn ask_typesafe(
     let on = if !env_key.trim().is_empty() {
         true
     } else {
+        step(out, brand::chip("typesafe"))?;
         match yes(out, input, tty, question, true)? {
             Some(true) => kept || ask_typesafe_key(repo, out, input, tty)?,
             Some(false) => false,
@@ -629,16 +643,8 @@ fn ask_typesafe_key(
     input: &mut dyn Read,
     tty: bool,
 ) -> io::Result<bool> {
-    write!(
-        out,
-        "init: TypeSafe API key, kept in {KEY_FILE} (enter to skip): "
-    )?;
-    out.flush()?;
-    let key = match raw(tty, || read_line(out, input, false))? {
-        Line::Text(key) => key,
-        Line::Cancel | Line::End => String::new(),
-    };
-    write!(out, "\r\n")?;
+    let what = format!("TypeSafe API key, kept in {KEY_FILE}");
+    let key = secret(out, input, tty, "key", &what)?;
     if key.is_empty() {
         return Ok(false);
     }
@@ -659,10 +665,10 @@ pub(crate) fn keep_key(repo: &Path, key: &str) -> io::Result<()> {
         .write_all(format!("{key}\n").as_bytes())
 }
 
-/// Puts a [Y/n] question, or [y/N] when not `default`: enter is the
-/// default, y is yes, Ctrl-C, Ctrl-D or any other answer no. None when the
-/// input ends unanswered: a non-interactive init. A line, not a key, so the
-/// enter after a y never answers the next one.
+/// Puts a yes/no question as a menu, `default` selected: y or n selects,
+/// enter answers, Ctrl-C or Ctrl-D is no. None when the input ends
+/// unanswered: a non-interactive init. A key selects, never answers, so the
+/// enter typed after a y never answers the next question.
 fn yes(
     out: &mut dyn Write,
     input: &mut dyn Read,
@@ -670,17 +676,40 @@ fn yes(
     question: &str,
     default: bool,
 ) -> io::Result<Option<bool>> {
-    let hint = if default { "[Y/n]" } else { "[y/N]" };
-    write!(out, "init: {question} {hint} ")?;
+    let options = ["Yes", "No"];
+    let picked = raw(tty, || {
+        choose(
+            out,
+            input,
+            question,
+            &options,
+            (usize::from(!default), 1),
+            "yn",
+        )
+    })?;
+    Ok(picked.map(|i| i == 0))
+}
+
+/// Asks for a secret, `what` above a `prompt ›` line that shows a bullet
+/// per character, so a paste shows it landed: the text, or "" on enter
+/// alone, Ctrl-C, Ctrl-D or a silent stdin.
+fn secret(
+    out: &mut dyn Write,
+    input: &mut dyn Read,
+    tty: bool,
+    prompt: &str,
+    what: &str,
+) -> io::Result<String> {
+    note(out, &format!("{what} · enter to skip"))?;
+    let prompt = Span::styled(format!("  {prompt} › "), PURPLE).bold();
+    write!(out, "{}", paint(vec![prompt]))?;
     out.flush()?;
-    let answer = raw(tty, || read_line(out, input, true))?;
+    let text = match raw(tty, || read_line(out, input))? {
+        Line::Text(text) => text,
+        Line::Cancel | Line::End => String::new(),
+    };
     write!(out, "\r\n")?;
-    Ok(match answer {
-        Line::Text(a) if a.is_empty() => Some(default),
-        Line::Text(a) => Some(a.starts_with(['y', 'Y'])),
-        Line::Cancel => Some(false),
-        Line::End => None,
-    })
+    Ok(text)
 }
 
 /// What read_line read.
@@ -692,8 +721,8 @@ enum Line {
     End,
 }
 
-/// Reads a line, echoing it when `echo`.
-fn read_line(out: &mut dyn Write, input: &mut dyn Read, echo: bool) -> io::Result<Line> {
+/// Reads a line, echoing a bullet for each character.
+fn read_line(out: &mut dyn Write, input: &mut dyn Read) -> io::Result<Line> {
     let text = |line: &[u8]| Line::Text(String::from_utf8_lossy(line).trim().to_string());
     let mut line = Vec::new();
     let mut byte = [0u8; 1];
@@ -702,7 +731,7 @@ fn read_line(out: &mut dyn Write, input: &mut dyn Read, echo: bool) -> io::Resul
             b'\r' | b'\n' => return Ok(text(&line)),
             3 | 4 => return Ok(Line::Cancel),
             0x7f | 0x08 => {
-                if line.pop().is_some() && echo {
+                if line.pop().is_some() {
                     write!(out, "\x08 \x08")?;
                 }
             }
@@ -721,9 +750,7 @@ fn read_line(out: &mut dyn Write, input: &mut dyn Read, echo: bool) -> io::Resul
             b if b < 0x20 => {}
             b => {
                 line.push(b);
-                if echo {
-                    out.write_all(&[b])?;
-                }
+                write!(out, "{}", paint(vec![Span::styled("•", TEXT)]))?;
             }
         }
         out.flush()?;
@@ -733,6 +760,101 @@ fn read_line(out: &mut dyn Write, input: &mut dyn Read, echo: bool) -> io::Resul
     } else {
         text(&line)
     })
+}
+
+/// Colors 24-bit when COLORTERM says so, else the 256 cube, as the Shell does.
+fn truecolor() -> bool {
+    matches!(
+        std::env::var("COLORTERM").as_deref(),
+        Ok("truecolor" | "24bit")
+    )
+}
+
+/// Spans as ANSI text, in the Shell's palette.
+fn paint(spans: Vec<Span<'_>>) -> String {
+    brand::ansi(&Row::from(spans), truecolor())
+}
+
+/// The width init draws its rules and banner to: the terminal's, up to 100.
+fn width() -> usize {
+    match crossterm::terminal::size() {
+        Ok((w, _)) if w > 0 => usize::from(w).min(100),
+        _ => 80, // not a terminal, or one that reports no size
+    }
+}
+
+/// A step's own name in its rule, where no provider's chip stands for it.
+pub(crate) fn named(name: &str) -> Span<'static> {
+    Span::styled(name.to_string(), MUTED)
+}
+
+/// Opens a step with a rule, as the Shell's RECENT has: `── label ────`.
+pub(crate) fn step(out: &mut dyn Write, label: Span<'static>) -> io::Result<()> {
+    let fill = width().saturating_sub(label.content.chars().count() + 4);
+    let rule = vec![
+        Span::styled("── ", BORDER),
+        label,
+        Span::styled(format!(" {}", "─".repeat(fill)), BORDER),
+    ];
+    write!(out, "\r\n{}\r\n", paint(rule))
+}
+
+/// A muted line under a step's rule.
+fn note(out: &mut dyn Write, text: &str) -> io::Result<()> {
+    write!(
+        out,
+        "{}\r\n",
+        paint(vec![Span::styled(format!("  {text}"), MUTED)])
+    )
+}
+
+/// Orqadence's header, as the Shell draws it: the pane mark and the
+/// wordmark (the name, where it does not fit) in a rounded box with the
+/// version on its border, then the folder being set up. Nothing on a
+/// terminal too narrow for the name.
+pub(crate) fn banner(out: &mut dyn Write, folder: &str) -> io::Result<()> {
+    let w = width();
+    if w < 40 {
+        return Ok(());
+    }
+    let lit = brand::PANE_COLORS[brand::REST];
+    let mut rows = vec![vec![Span::styled(
+        format!("╭{}╮", "─".repeat(w - 2)),
+        FRAME,
+    )]];
+    for (i, mark) in brand::logo_mark(brand::REST).into_iter().enumerate() {
+        let mut row = vec![Span::styled("│  ", FRAME)];
+        row.extend(mark.spans);
+        row.push("   ".into());
+        if w >= 88 {
+            row.push(Span::styled(brand::WORDMARK_ROWS[i], brand::WORDMARK));
+            row.push(" ".into());
+            row.push(Span::styled(brand::CURSOR_ROWS[i], lit));
+        } else if i == 2 {
+            row.push(Span::styled("Orqadence ", brand::WORDMARK).bold());
+            row.push(Span::styled("▁▁", lit));
+        }
+        let used: usize = row.iter().map(|s| s.content.chars().count()).sum();
+        let pad = " ".repeat(w.saturating_sub(used + 1));
+        row.push(Span::styled(format!("{pad}│"), FRAME));
+        rows.push(row);
+    }
+    let version = format!(" {} ", crate::version::version());
+    let fill = "─".repeat(w.saturating_sub(version.chars().count() + 3));
+    rows.push(vec![
+        Span::styled(format!("╰{fill}"), FRAME),
+        Span::styled(version, brand::PANE_COLORS[3]),
+        Span::styled("─╯", FRAME),
+    ]);
+    rows.push(vec![
+        Span::styled("  orqa init", TEXT),
+        Span::styled(" · setting up ", MUTED),
+        Span::styled(folder.to_string(), YELLOW),
+    ]);
+    for row in rows {
+        write!(out, "{}\r\n", paint(row))?;
+    }
+    Ok(())
 }
 
 /// The TypeSafe key for a Judgment: TYPESAFE_API_KEY when set, else the key
@@ -759,58 +881,101 @@ fn raw<T>(tty: bool, f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
     result
 }
 
-/// Draws a menu, the default selected, moves the selection on the arrow keys
-/// (or j/k), and returns the index the user submits with enter. A digit
-/// picks its option outright. A closed stdin leaves the selection; Ctrl-C
-/// and q take the default.
+/// Puts `question` over a numbered menu as the Shell's QUESTION box does,
+/// `default` of `(default, cancel)` under the cursor: the arrow keys (or
+/// j/k) move it, the nth of `hotkeys` moves it to the nth option, enter
+/// submits, a digit picks its option outright, and Ctrl-C, Ctrl-D or q pick
+/// `cancel`. Answered, the menu folds into a line naming the choice. None
+/// when the input ends before any key: nobody is there to answer; a key and
+/// then the end leaves the cursor's. Reads a byte at a time, so a scripted
+/// "y\n" is two keys.
 fn choose(
     out: &mut dyn Write,
     input: &mut dyn Read,
+    question: &str,
     options: &[&str],
-    default: usize,
-) -> io::Result<usize> {
-    let mut sel = default;
+    (default, cancel): (usize, usize),
+    hotkeys: &str,
+) -> io::Result<Option<usize>> {
+    write!(
+        out,
+        "{}\r\n",
+        paint(vec![Span::styled(format!("  {question}"), TEXT).bold()])
+    )?;
+    let hint = format!("  ↑↓ move · 1-{} pick · enter choose", options.len());
     let draw = |out: &mut dyn Write, sel: usize| -> io::Result<()> {
         for (i, option) in options.iter().enumerate() {
-            // Reverse video, so the selected line reads at a glance.
-            let marker = if i == sel { "\x1b[7m>" } else { "  " };
-            write!(out, "{marker} {option}\x1b[0m\x1b[K\r\n")?;
+            let (mark, style) = if i == sel {
+                ("›", Style::new().fg(PURPLE).bold())
+            } else {
+                (" ", Style::new().fg(TEXT))
+            };
+            let row = Span::styled(format!("  {mark} {}. {option}", i + 1), style);
+            write!(out, "{}\x1b[K\r\n", paint(vec![row]))?;
         }
-        write!(out, "  ↑/↓ to move, enter to choose\x1b[K\r")?;
+        write!(
+            out,
+            "{}\x1b[K\r",
+            paint(vec![Span::styled(hint.as_str(), MUTED)])
+        )?;
         out.flush()
     };
+    let (mut sel, mut pressed) = (default, false);
     draw(out, sel)?;
-    let mut key = [0u8; 3];
-    loop {
-        let n = match input.read(&mut key) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => n,
+    while let Some(key) = next_byte(input) {
+        pressed = true;
+        let key = match key {
+            // An arrow key: ESC [ A to D, flagged 0x80; others skipped whole.
+            0x1b if next_byte(input) == Some(b'[') => loop {
+                match next_byte(input) {
+                    Some(b @ 0x40..=0x7e) => break b | 0x80,
+                    Some(_) => {}
+                    None => break 0,
+                }
+            },
+            key => key,
         };
-        let arrow = |code: u8| n >= 3 && key[0] == 0x1b && key[1] == b'[' && key[2] == code;
-        match key[0] {
-            _ if arrow(b'A') => sel = sel.saturating_sub(1),
-            b'k' => sel = sel.saturating_sub(1),
-            _ if arrow(b'B') => sel += 1,
-            b'j' => sel += 1,
+        match key {
+            0xc1 | 0xc4 | b'k' => sel = sel.saturating_sub(1), // up, left
+            0xc2 | 0xc3 | b'j' => sel = (sel + 1).min(options.len() - 1), // down, right
             b'\r' | b'\n' => return done(out, options, sel),
+            3 | 4 | b'q' => return done(out, options, cancel),
             digit if digit > b'0' && usize::from(digit - b'0') <= options.len() => {
                 return done(out, options, usize::from(digit - b'0') - 1)
             }
-            // Ctrl-C in raw mode: take the safe option.
-            3 | b'q' => return done(out, options, default),
-            _ => {}
+            key => {
+                let key = char::from(key).to_ascii_lowercase();
+                if let Some(i) = hotkeys.chars().position(|hot| hot == key) {
+                    sel = i;
+                }
+            }
         }
-        sel = sel.min(options.len() - 1);
         write!(out, "\x1b[{}A", options.len())?; // back over the menu and redraw it
         draw(out, sel)?;
     }
-    done(out, options, sel)
+    if pressed {
+        return done(out, options, sel);
+    }
+    write!(out, "\r\n")?;
+    Ok(None)
 }
 
-fn done(out: &mut dyn Write, options: &[&str], sel: usize) -> io::Result<usize> {
-    write!(out, "\x1b[K\r\ninit: {}\r\n", options[sel])?;
+fn next_byte(input: &mut dyn Read) -> Option<u8> {
+    let mut byte = [0u8; 1];
+    matches!(input.read(&mut byte), Ok(1)).then_some(byte[0])
+}
+
+/// Folds the menu into one line naming the choice.
+fn done(out: &mut dyn Write, options: &[&str], sel: usize) -> io::Result<Option<usize>> {
+    let answer = Span::styled(format!("  ✓ {}", options[sel]), GREEN);
+    write!(
+        out,
+        "\x1b[{}A\r\x1b[J{}\r\n",
+        options.len(),
+        paint(vec![answer])
+    )?;
     out.flush()?;
-    Ok(sel)
+    Ok(Some(sel))
 }
 
 /// Takes out of the file at path each line that is one of lines, trimmed,
@@ -946,6 +1111,10 @@ pub(crate) fn warnings(repo: &Path, tools: &dyn Tools) -> Vec<String> {
 pub(crate) fn report_missing(out: &mut dyn Write, missing: &[String]) -> i32 {
     for m in missing {
         let _ = writeln!(out, "preflight: {m}");
+    }
+    if missing.is_empty() {
+        let ready = Span::styled("  ✓ ready: run orqa to open the Shell", GREEN);
+        let _ = writeln!(out, "{}", paint(vec![ready]));
     }
     i32::from(!missing.is_empty())
 }
