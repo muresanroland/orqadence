@@ -290,25 +290,33 @@ fn park_on_a_failed_fetch_parks_the_ticket_with_its_error() {
     assert!(w.called("herdr agent start h-hx-1-extra-review").is_empty());
 }
 
-/// An Extra review a stopped run had started is resumed, not fetched for
-/// again: its session may be reading the cache. It still gets the Cache.
+/// An Extra review a stopped run had started, its pane kept, is resumed,
+/// not fetched for again: its session may be reading the cache. It still
+/// gets the Cache. One parked or retried, its Stage and Round kept but its
+/// pane and session gone, starts fresh and is fetched for.
 #[test]
 fn a_resumed_extra_review_is_not_fetched_for_again() {
-    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
-    config(&w, json!({}));
-    let fetches = fetch_sh(&w);
-    for file in ["implement.md", "review-1.md"] {
-        write_file(&o.run_dir("hx-1").join(file), "STATUS: done\n");
-    }
-    o.update("hx-1", |ts| {
-        ts.stage = "extra-review".to_string();
-        ts.round = 1;
-    });
-    o.run_ticket("hx-1");
+    for (pane, fetched) in [(true, 0), (false, 1)] {
+        let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+        config(&w, json!({}));
+        let fetches = fetch_sh(&w);
+        for file in ["implement.md", "review-1.md"] {
+            write_file(&o.run_dir("hx-1").join(file), "STATUS: done\n");
+        }
+        o.update("hx-1", |ts| {
+            ts.stage = "extra-review".to_string();
+            ts.round = 1;
+            if pane {
+                ts.panes
+                    .insert("extra-review".to_string(), "1-9".to_string());
+            }
+        });
+        o.run_ticket("hx-1");
 
-    w.await_line("hx-1 PR #hx-1 opened after 1 round");
-    assert!(fetches.lock().unwrap().is_empty());
-    assert!(w.prompt("extra-review-1.md").contains("- Cache: "));
+        w.await_line("hx-1 PR #hx-1 opened after 1 round");
+        assert_eq!(fetches.lock().unwrap().len(), fetched, "pane kept: {pane}");
+        assert!(w.prompt("extra-review-1.md").contains("- Cache: "));
+    }
 }
 
 /// Away, a failing fetch parks the Ticket with a bd comment, like every

@@ -232,7 +232,9 @@ impl Orchestrator {
     /// The Extra review in `round`. When its skill's folder in the worktree
     /// has a fetch.sh, that runs first and the review gets its cache as the
     /// Cache Input; not for a review already done, nor again for one a
-    /// stopped run started, whose session may be reading the cache.
+    /// stopped run started whose pane or saved session is resumed: it may
+    /// be reading the cache. One parked or retried keeps its Stage and
+    /// Round but not its session, so it starts fresh and is fetched for.
     fn run_extra_review(
         &self,
         ticket: &str,
@@ -246,7 +248,11 @@ impl Orchestrator {
         let cache = self.cfg.repo.join(LOCAL).join("cache").join(&extra.label);
         let cache_input = cache.display().to_string();
         let ts = self.ticket(ticket);
-        let resumed = ts.stage == EXTRA_REVIEW.name && ts.round == round;
+        let name = EXTRA_REVIEW.name;
+        let resumed = ts.stage == name
+            && ts.round == round
+            && (ts.panes.contains_key(name)
+                || ts.sessions.get(name).is_some_and(|s| !s.id.is_empty()));
         let mut inputs = Vec::new();
         let not_run;
         if script.exists() && !read_stage_result(&file, want).1.is_empty() {
