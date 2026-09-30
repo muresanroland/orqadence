@@ -232,7 +232,10 @@ impl Orchestrator {
         let answer = loop {
             if !asked && self.asked.lock().unwrap().insert(app.to_string()) {
                 asked = true;
-                let fallback = fallback_row(&self.cfg.repo).ok().flatten();
+                // the fallback the asking Ticket would run; the answer
+                // stands for every Ticket, each running its own
+                let labels = self.labels(ticket).unwrap_or_default();
+                let fallback = fallback_row(&self.cfg.repo, &labels).ok().flatten();
                 let ask = Ask::Limited {
                     app: app.to_string(),
                     fallback: fallback.filter(|f| f.app.name != app).map(|f| f.said()),
@@ -263,13 +266,15 @@ impl Orchestrator {
     /// The row a Review starts on: its own, or while its App is Limited, as
     /// the user answered: its own once the limit is over (wait), the
     /// fallback's, or none, the Review skipped (unreviewed): its result
-    /// written to `file` as any Stage's, so a resumed run skips it too.
+    /// written to `file` as any Stage's, so a resumed run skips it too. The
+    /// fallback is the Ticket's labels' over config.json's.
     pub(super) fn review_row(
         &self,
         ticket: &str,
         label: &str,
         file: &Path,
         row: Row,
+        labels: &[String],
     ) -> Result<Row, Held> {
         let app = row.app.name;
         let Some(reset) = self.limited_until(app) else {
@@ -289,7 +294,7 @@ impl Orchestrator {
                 }))
             }
             // A fallback unset since waits for the reset.
-            Some(Review::Fallback) => fallback_row(&self.cfg.repo)
+            Some(Review::Fallback) => fallback_row(&self.cfg.repo, labels)
                 .map(|fallback| fallback.unwrap_or(row))
                 .map_err(Held::Woke),
             _ => Ok(row),
@@ -378,8 +383,10 @@ impl Orchestrator {
         // A Review on its own App goes as the user answered: on wait it holds
         // as any Stage; otherwise its session is left, and it starts again.
         // On its fallback's it holds as any Stage: the answer stands.
+        // Unreadable labels read as none.
         if st.name == REVIEW.name
-            && stage_row(&self.cfg.repo, st).is_ok_and(|row| row.app.name == app)
+            && stage_row(&self.cfg.repo, st, &self.labels(ticket).unwrap_or_default())
+                .is_ok_and(|row| row.app.name == app)
         {
             match self.review_answer(ticket, label, app) {
                 Err(held) => return held,

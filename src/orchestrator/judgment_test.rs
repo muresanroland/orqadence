@@ -317,8 +317,14 @@ fn no_key_means_no_request_and_a_question() {
         fake.requests().is_empty(),
         "a request went out without a key"
     );
+    // the Stage read its labels before its prompt; the Wake's state, after
+    let prompted = w
+        .calls()
+        .iter()
+        .rposition(|c| c.starts_with("herdr agent prompt"))
+        .unwrap();
     assert!(
-        w.called("bd show hx-1 --json").is_empty(),
+        w.since(prompted, "bd show hx-1 --json").is_empty(),
         "the state was built without a key"
     );
 }
