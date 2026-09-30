@@ -198,6 +198,7 @@ fn open_pr_prunes_build_scratch_and_keeps_evidence() {
             write_file(&dir.join(".review-cache/ab/obj-a"), "go object data");
             write_file(&dir.join("check-testharness"), "a compiled test binary");
             write_file(&dir.join("diff-1.patch"), "the diff it reviewed");
+            write_file(&dir.join("pr/home.png"), "a screenshot");
         }
         succeed(p)
     });
@@ -205,7 +206,7 @@ fn open_pr_prunes_build_scratch_and_keeps_evidence() {
     o.run_ticket("hx-1");
 
     w.await_line("hx-1 PR #hx-1 opened after 1 round");
-    for gone in [".review-cache", "check-testharness"] {
+    for gone in [".review-cache", "check-testharness", "pr"] {
         assert!(
             !run_dir.join(gone).exists(),
             "{gone} still in the run directory after the PR opened"

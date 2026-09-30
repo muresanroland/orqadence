@@ -244,6 +244,36 @@ fn create_pr_prefers_a_given_template() {
     assert!(create_pr.contains("replace each section's HTML comment"));
 }
 
+/// create-pr passes the files it is told to attach on its gh pr create call.
+#[test]
+fn create_pr_passes_attachments() {
+    assert!(skill("orqa-create-pr").contains("`--attach <file>`"));
+}
+
+/// stage-fix takes screenshots when the PR template has a Screenshots
+/// section, before create-pr, into the Run directory's pr/ folder, and hands
+/// them to --attach; they are never committed.
+#[test]
+fn stage_fix_takes_screenshots_for_a_screenshots_section() {
+    let fix = skill("orqa-stage-fix");
+    for text in [
+        "has a `## Screenshots` section",
+        "`<Run directory>/pr/`",
+        "`--attach`",
+        "never committed",
+        "skip `gh pr edit --attach`",
+        "not retried if it fails",
+    ] {
+        assert!(fix.contains(text), "stage-fix lacks {text:?}");
+    }
+    let at = |part: &str| fix.find(part).unwrap_or_else(|| panic!("no {part:?}"));
+    assert!(at("**Screenshots**") < at("Run the orqa-create-pr skill"));
+    // The "not attached and why" note follows the --attach recheck, so a
+    // retry that succeeds cannot leave it false; create-pr writes none.
+    assert!(at("`gh pr edit --attach`") < at("names each file still missing"));
+    assert!(!skill("orqa-create-pr").contains("did not attach"));
+}
+
 /// stage-fix fills the PR template, then puts Orqadence's run parts under
 /// one heading after the template's own, in order; Unreviewed stays first.
 #[test]
