@@ -954,7 +954,7 @@ impl Settings {
 
     /// The Labels line on the left: "2 labels".
     pub(crate) fn labels_summary(&self) -> String {
-        plural(self.label_names().len(), "label")
+        plural(self.labels().len(), "label")
     }
 
     /// The foot's note on the Labels page: the list's keys, or the open
@@ -963,7 +963,7 @@ impl Settings {
         if self.label.is_none() {
             return "a adds a label, e or Enter opens it, r renames it (its PR template mapping follows), d deletes it (its PR template file stays). Every change saves at once, uncommitted, to .orqadence/config.json.".to_string();
         }
-        match LABEL_FIELDS[self.setting.min(LABEL_FIELDS.len() - 1)] {
+        match LABEL_FIELDS[self.setting] {
             "kind" => "area: the one type of work a Ticket does, one per Ticket; modifier: only changes rows, and combines with an area. Enter or Space toggles.",
             "skills" => "The skills its code-editing Stages load, from the ones installed: Enter picks them, or types a source to install one first.",
             _ => "One line given to its code-editing Stages as an Input. Enter types it; nothing clears it.",
@@ -1371,42 +1371,42 @@ impl Screen {
             let names = st.label_names();
             let label = st.label.clone();
             let under = names.get(st.setting).cloned();
-            match (label, code) {
-                (_, KeyCode::Up) => st.setting = st.setting.saturating_sub(1),
-                (None, KeyCode::Down) => {
+            match (label, under, code) {
+                (_, _, KeyCode::Up) => st.setting = st.setting.saturating_sub(1),
+                (None, _, KeyCode::Down) => {
                     st.setting = (st.setting + 1).min(names.len().saturating_sub(1))
                 }
-                (Some(_), KeyCode::Down) => {
+                (Some(_), _, KeyCode::Down) => {
                     st.setting = (st.setting + 1).min(LABEL_FIELDS.len() - 1)
                 }
-                (None, KeyCode::Left | KeyCode::Esc) => st.open = false,
-                (Some(label), KeyCode::Left | KeyCode::Esc) => {
+                (None, _, KeyCode::Left | KeyCode::Esc) => st.open = false,
+                (Some(label), _, KeyCode::Left | KeyCode::Esc) => {
                     st.label = None;
                     st.setting = names.iter().position(|n| *n == label).unwrap_or(0);
                 }
-                (None, KeyCode::Char('a')) => st.typing = Some((Typing::LabelName, String::new())),
-                (None, KeyCode::Enter | KeyCode::Char('e')) if under.is_some() => {
-                    st.label = under;
+                (None, _, KeyCode::Char('a')) => {
+                    st.typing = Some((Typing::LabelName, String::new()))
+                }
+                (None, Some(name), KeyCode::Enter | KeyCode::Char('e')) => {
+                    st.label = Some(name);
                     st.setting = 0;
                 }
-                (None, KeyCode::Char('r')) if under.is_some() => {
-                    let name = under.unwrap();
+                (None, Some(name), KeyCode::Char('r')) => {
                     st.typing = Some((Typing::Rename(name.clone()), name));
                 }
-                (None, KeyCode::Char('d') | KeyCode::Delete) if under.is_some() => {
-                    let name = under.unwrap();
+                (None, Some(name), KeyCode::Char('d') | KeyCode::Delete) => {
                     let text = format!("Delete orqa:{name}? A Ticket still carrying it wakes its next Stage; its PR template file stays.");
                     st.confirm = Some((text, Confirm::DeleteLabel(name)));
                 }
-                (Some(label), KeyCode::Enter | KeyCode::Char(' '))
+                (Some(label), _, KeyCode::Enter | KeyCode::Char(' '))
                     if LABEL_FIELDS[st.setting] == "kind" =>
                 {
                     self.toggle_kind(&label)
                 }
-                (Some(_), KeyCode::Enter) if LABEL_FIELDS[st.setting] == "skills" => {
+                (Some(_), _, KeyCode::Enter) if LABEL_FIELDS[st.setting] == "skills" => {
                     self.open_pick(0, Field::Skills, None)
                 }
-                (Some(label), KeyCode::Enter) => {
+                (Some(label), _, KeyCode::Enter) => {
                     let text = st.label_of(&label).map(|l| l.guidance).unwrap_or_default();
                     st.typing = Some((Typing::Guidance, text));
                 }
@@ -2295,14 +2295,9 @@ impl Screen {
     /// Enter or Space on the kind row: area to modifier and back.
     fn toggle_kind(&mut self, name: &str) {
         let st = self.settings.as_ref().unwrap();
-        let kind = match st.label_of(name).map(|l| l.kind).as_deref() {
-            Ok("area") => "modifier",
-            _ => "area",
-        };
-        let a = if kind == "area" {
-            "an area"
-        } else {
-            "a modifier"
+        let (kind, a) = match st.label_of(name).map(|l| l.kind).as_deref() {
+            Ok("area") => ("modifier", "a modifier"),
+            _ => ("area", "an area"),
         };
         let label = name.to_string();
         self.save_label(
