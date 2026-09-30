@@ -10,7 +10,6 @@
   "contexts": {
    "nodes": [
     {
-     "__typename": "CheckRun",
      "name": "Greptile Review",
      "status": "COMPLETED",
      "conclusion": "SUCCESS",
@@ -28,7 +27,6 @@
    {
     "id": "PRRT_kwDOUiwtFs6lz7JY",
     "isResolved": false,
-    "isOutdated": false,
     "path": "src/setup.rs",
     "line": 406,
     "comments": {
@@ -47,7 +45,6 @@
    {
     "id": "PRRT_kwDOUiwtFs6lz7Jj",
     "isResolved": false,
-    "isOutdated": false,
     "path": "src/setup.rs",
     "line": 378,
     "comments": {
@@ -66,7 +63,6 @@
    {
     "id": "PRRT_kwDOUiwtFs6lz7Jy",
     "isResolved": false,
-    "isOutdated": false,
     "path": "src/setup.rs",
     "line": 336,
     "comments": {
@@ -85,7 +81,6 @@
    {
     "id": "PRRT_kwDOUiwtFs6lz7J6",
     "isResolved": false,
-    "isOutdated": false,
     "path": "skills/stage-moderate/SKILL.md",
     "line": 40,
     "comments": {
@@ -112,10 +107,6 @@
      "login": "greptile-apps",
      "__typename": "Bot"
     },
-    "submittedAt": "2026-09-24T23:48:40Z",
-    "commit": {
-     "oid": "034ef1009b9ecde2c299053934934b7d734e41e4"
-    },
     "body": ""
    }
   ]
@@ -129,7 +120,6 @@
      "login": "greptile-apps",
      "__typename": "Bot"
     },
-    "lastEditedAt": "2026-09-24T23:48:55Z",
     "body": "<!-- greptile_summary -->\n\n<h2><a href=\"https://app.greptile.com/api/retrigger?id=69060438\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/RetriggerDark.svg?v=2\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/Retrigger.svg?v=2\"><img alt=\"Retrigger\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/Retrigger.svg?v=2\" align=\"right\"></picture></a>Confidence Score: 3/5</h2>\n\nNot safe to merge until init prevents repository-controlled paths from redirecting writes outside the Target repo. The other findings are non-blocking.\n\n<h2>Findings</h2>\n\n1. <img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\">&nbsp;<img alt=\"Security\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/Security.svg?v=2\" align=\"top\">&nbsp;**Instruction symlinks redirect writes** <a href=\"https://github.com/muresanroland/harness/pull/34#discussion_r4099629490\">▶</a>\n2. <img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\">&nbsp;**Claude file misses guidance** <a href=\"https://github.com/muresanroland/harness/pull/34#discussion_r4099629506\">▶</a>\n3. <img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\">&nbsp;**Installed guide has broken pointer** <a href=\"https://github.com/muresanroland/harness/pull/34#discussion_r4099629522\">▶</a>\n4. <img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\">&nbsp;**Moderator definition needs exception** <a href=\"https://github.com/muresanroland/harness/pull/34#discussion_r4099629532\">▶</a>\n\n…"
    },
    {
@@ -139,7 +129,6 @@
      "login": "greptile-apps",
      "__typename": "Bot"
     },
-    "lastEditedAt": null,
     "body": "<!-- greptile_outside_diff -->\n\n<h3>Comments Outside Diff</h3>\n\nThese findings sit on lines the diff does not cover, so they could not be posted inline. Each one leaves this list once its file changes.\n\n- <img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\">&nbsp;**Init follows repository symlinks when writing agent instructions and docs** <a href=\"https://github.com/muresanroland/harness/pull/34\">▶</a>\n\n  - **Bug**\n    - A target repository can point CLAUDE.md or AGENTS.md at an outside writable file; init appends its Agent skills block to that outside file. A symlinked docs/agents directory likewise redirects three generated files outside the repository, and a dangling docs-file symlink creates its outside target. The noninteractive prompt is displayed but no answer is required. This is a security-relevant, repository-controlled write outside the intended boundary; it is limited to paths writable by the init process.\n  - **Cause**\n    - `src/setup.rs:382-406` treats `None` from the prompt as permission and uses symlink-following reads and `fs::write` for the instruction file, notably line 406. `src/setup.rs:372-389` uses `exists()` and `fs::write` without rejecting symlinked docs paths or parents. `src/cli.rs:45-50` supplies empty input in noninteractive mode.\n  - **Fix**\n    - Require affirmative confirmation for these writes, and reject symlinks at destination files and relevant parent components before writing; use a non-following open strategy to avoid a check/write race.\n- <img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\">&nbsp;**Installed issue\\-tracker guide points to an AGENTS\\.md that init does not create** <a href=\"https://github.com/muresanroland/harness/pull/34\">▶</a>\n\n  - **Bug**\n    - In a target that already has CLAUDE.md, init places the Agent skills block there but the installed issue-tracker.md tells readers to see AGENTS.md. The guide also describes this repo's beads conventions as the target's. This is a documentation wayfinding cost, not an init failure.\n  - **Cause**\n    - setup.rs lines 332–336 embed and install the source guide unchanged, while write_agent_docs selects CLAUDE.md when it exists.\n  - **Fix**\n    - Use target-neutral wording in the installed guide, or adapt its instruction-file pointer and repo-specific conventions when installing it."
    }
   ]

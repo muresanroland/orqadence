@@ -264,7 +264,7 @@ fn a_failed_check_run_is_a_check_item_rated_failed() {
 fn only_the_newest_run_of_a_check_counts() {
     let mut pr = fixture(PR34);
     let run = |conclusion: &str, started: &str| {
-        json!({"__typename": "CheckRun", "name": "test", "status": "COMPLETED",
+        json!({"name": "test", "status": "COMPLETED",
             "conclusion": conclusion, "startedAt": started,
             "checkSuite": {"app": {"slug": "github-actions"},
                 "workflowRun": {"event": "pull_request", "workflow": {"name": "CI"}}}})

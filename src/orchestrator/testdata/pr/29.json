@@ -10,7 +10,6 @@
   "contexts": {
    "nodes": [
     {
-     "__typename": "CheckRun",
      "name": "Greptile Review",
      "status": "COMPLETED",
      "conclusion": "SUCCESS",
@@ -28,7 +27,6 @@
    {
     "id": "PRRT_kwDOUiwtFs6ltc4c",
     "isResolved": true,
-    "isOutdated": false,
     "path": "src/orchestrator/stage.rs",
     "line": 1130,
     "comments": {
@@ -55,7 +53,6 @@
    {
     "id": "PRRT_kwDOUiwtFs6ltc4j",
     "isResolved": true,
-    "isOutdated": false,
     "path": "src/orchestrator/session_test.rs",
     "line": 198,
     "comments": {
@@ -90,10 +87,6 @@
      "login": "greptile-apps",
      "__typename": "Bot"
     },
-    "submittedAt": "2026-09-24T18:15:53Z",
-    "commit": {
-     "oid": "2c07852595c6dc262ceaad1536fd80a1d2d7623b"
-    },
     "body": ""
    },
    {
@@ -103,10 +96,6 @@
      "login": "muresanroland",
      "__typename": "User"
     },
-    "submittedAt": "2026-09-24T18:52:44Z",
-    "commit": {
-     "oid": "046e110abaa4ef51edb0b9287acf2b27e16d7982"
-    },
     "body": ""
    },
    {
@@ -115,10 +104,6 @@
     "author": {
      "login": "muresanroland",
      "__typename": "User"
-    },
-    "submittedAt": "2026-09-24T18:52:46Z",
-    "commit": {
-     "oid": "046e110abaa4ef51edb0b9287acf2b27e16d7982"
     },
     "body": ""
    }
@@ -133,7 +118,6 @@
      "login": "greptile-apps",
      "__typename": "Bot"
     },
-    "lastEditedAt": "2026-09-24T21:19:55Z",
     "body": "<!-- greptile_summary -->\n\n<h2><a href=\"https://app.greptile.com/api/retrigger?id=68857734\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/RetriggerDark.svg?v=2\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/Retrigger.svg?v=2\"><img alt=\"Retrigger\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/Retrigger.svg?v=2\" align=\"right\"></picture></a>Confidence Score: 3/5</h2>\n\nNot safe to merge until the snapshot and cleanup failures are fixed.\n\n<h3>Summary</h3>\n\nThe new Review and Debate worktree guard needs correction before merging. A failed initial Git probe can let a read-only stage run without a usable snapshot, and a failed later probe can cause cleanup that deletes unrelated work.\n\n<!-- greptile_confidence_score:3 -->\n\n<sub>Reviews (3) · Last reviewed commit: [\"Merge origin/main into harness-7nq.13\"](https://github.com/muresanroland/harness/commit/bf2a3b18b76df401d142436e42a9755289f1a145)</sub>"
    },
    {
@@ -143,7 +127,6 @@
      "login": "greptile-apps",
      "__typename": "Bot"
     },
-    "lastEditedAt": "2026-09-24T21:19:59Z",
     "body": "<!-- greptile_outside_diff -->\n\n<h3>Comments Outside Diff</h3>\n\nThese findings sit on lines the diff does not cover, so they could not be posted inline. Each one leaves this list once its file changes.\n\n- <img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\">&nbsp;**Stage runs without snapshot** `src/orchestrator/pipeline.rs:175` <a href=\"https://github.com/muresanroland/harness/blob/bf2a3b18b76df401d142436e42a9755289f1a145/src/orchestrator/pipeline.rs#L169-L175\">▶</a>\n\n  If the initial HEAD probe fails before Review or Debate, the stage still runs and the guard accepts the missing snapshot. In the reproduced Review run, an edit remained in the worktree while the ticket proceeded to an opened PR. Require a usable snapshot before starting the stage.\n- <img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\">&nbsp;**Failed probe deletes concurrent work** `src/orchestrator/pipeline.rs:260` <a href=\"https://github.com/muresanroland/harness/blob/bf2a3b18b76df401d142436e42a9755289f1a145/src/orchestrator/pipeline.rs#L247-L260\">▶</a>\n\n  If the current-tree probe fails after Review or Debate started with a clean tree, the guard runs `git reset --hard` and `git clean -fd` without knowing what changed. In the reproduced run, it reverted an unrelated tracked edit and deleted an untracked file created while Review ran. Park rather than cleaning when the current tree cannot be read.\n- <img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\">&nbsp;**Failed initial HEAD probe disables the read\\-only worktree guard** <a href=\"https://github.com/muresanroland/harness/pull/29\">▶</a>\n\n  - **Bug**\n    - With a one-shot HEAD failure before Review, the fake-world Review dirtied `src/lib.rs`, yet the pipeline advanced through Debate and Fix, opened the PR, and left the edit in the worktree without a reset.\n  - **Cause**\n    - At `src/orchestrator/pipeline.rs:169-175`, `self.head(ticket)` returning `None` skips snapshot creation but does not stop `run_stage`; the later guard accepts the absent snapshot at `src/orchestrator/pipeline.rs:241-246`.\n  - **Fix**\n    - Park before starting Review or Debate when the initial HEAD or tree snapshot cannot be obtained; do not treat a missing snapshot for a newly run stage as a successful guard.\n- <img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\">&nbsp;**Transient tree\\-probe failure deletes concurrent work** <a href=\"https://github.com/muresanroland/harness/pull/29\">▶</a>\n\n  - **Bug**\n    - After Review completed, the test introduced an unrelated tracked edit and untracked file while making the current-tree `git status` probe fail once. The orchestrator reset the tracked file, deleted the untracked file, and continued as though it had restored Review's changes.\n  - **Cause**\n    - At `src/orchestrator/pipeline.rs:247-260`, an unavailable current-tree value fails the equality check; when the initial snapshot was clean, the guard proceeds to `git reset --hard` and `git clean -fd` without establishing that Review made the edits.\n  - **Fix**\n    - Treat a failed current-tree probe as an unsafe-to-restore condition: park and retain the snapshot rather than running destructive cleanup until the tree can be checked reliably.\n- <img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\">&nbsp;**Failed probe saves null tree** `src/orchestrator/pipeline.rs:172` <a href=\"https://github.com/muresanroland/harness/blob/bf2a3b18b76df401d142436e42a9755289f1a145/src/orchestrator/pipeline.rs#L171-L172\">▶</a>\n\n  If the initial tree probe fails, the snapshot records a null tree and Review still starts. The reproduced run parked after Review with its edit left in place, preventing Debate and Fix from proceeding. Reject the failed probe instead of saving an unusable snapshot.\n- <img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\">&nbsp;**Failed initial tree probe records null and parks a clean stage** <a href=\"https://github.com/muresanroland/harness/pull/29\">▶</a>\n\n  - **Bug**\n    - A one-shot initial tree-probe failure saved `[\"a11ce\",null]`. After Review edited the simulated worktree, the ticket parked as though the worktree had already been dirty, retaining the edit and never starting Debate or Fix.\n  - **Cause**\n    - At `src/orchestrator/pipeline.rs:171-172`, the optional result of `self.tree(ticket)` is serialized even when it is `None`; the guard subsequently cannot treat null as a clean baseline.\n  - **Fix**\n    - Require a successful tree probe before saving the snapshot or starting the stage; park with a snapshot-probe error rather than recording null."
    },
    {
@@ -153,7 +136,6 @@
      "login": "muresanroland",
      "__typename": "User"
     },
-    "lastEditedAt": null,
     "body": "**Pane polling can overwrite a Stage session with another agent's ID**\n\nFixed in 5870278: `watch` saves a changed session ID only when the Stage's own named agent (`agent_name(ticket, st.name)`) is still in the polled pane. Covered by `another_agent_in_the_stage_pane_never_has_its_session_id_saved`.\n\n<!-- address-greptile -->"
    },
    {
@@ -163,7 +145,6 @@
      "login": "muresanroland",
      "__typename": "User"
     },
-    "lastEditedAt": null,
     "body": "**Resume-failure fallback is not covered by the changed session tests**\n\nFixed in 046e110: `a_failed_resumed_start_or_continue_starts_the_stage_fresh` (added in 804622a) fails the resumed start and the `continue` prompt; it now also asserts the fresh start runs in a distinct pane that receives the normal Stage prompt, and that the ticket completes.\n\n<!-- address-greptile -->"
    }
   ]
