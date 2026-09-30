@@ -6,7 +6,7 @@
 use super::limit_test::{hits, CODEX};
 use super::pipeline_test::stages_run;
 use super::stage::{Answer, Ask, Orchestrator, AWAY};
-use super::state::{Review, STATUS_PARKED};
+use super::state::{Review, Session, STATUS_PARKED};
 use super::world::{new_world, set_clock, spawn_ticket, succeed, wait_until, BdTicket, World};
 use super::write_file;
 use chrono::TimeZone;
@@ -290,13 +290,14 @@ fn park_on_a_failed_fetch_parks_the_ticket_with_its_error() {
     assert!(w.called("herdr agent start h-hx-1-extra-review").is_empty());
 }
 
-/// An Extra review a stopped run had started, its pane kept, is resumed,
-/// not fetched for again: its session may be reading the cache. It still
-/// gets the Cache. One parked or retried, its Stage and Round kept but its
-/// pane and session gone, starts fresh and is fetched for.
+/// An Extra review a stopped run had started, its session still live in
+/// its pane, is watched, not fetched for again: it may be reading the
+/// cache. One whose pane is gone, or whose saved session does not resume
+/// (its App changed), starts fresh and is fetched for, with the Cache.
 #[test]
-fn a_resumed_extra_review_is_not_fetched_for_again() {
-    for (pane, fetched) in [(true, 0), (false, 1)] {
+fn only_a_resumed_extra_review_is_not_fetched_for_again() {
+    // (the pane is live, the saved session's App, fetches)
+    for (live, app, fetched) in [(true, "", 0), (false, "", 1), (false, "claude", 1)] {
         let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
         config(&w, json!({}));
         let fetches = fetch_sh(&w);
@@ -306,16 +307,49 @@ fn a_resumed_extra_review_is_not_fetched_for_again() {
         o.update("hx-1", |ts| {
             ts.stage = "extra-review".to_string();
             ts.round = 1;
-            if pane {
-                ts.panes
-                    .insert("extra-review".to_string(), "1-9".to_string());
+            ts.panes
+                .insert("extra-review".to_string(), "1-9".to_string());
+            if !app.is_empty() {
+                let session = Session {
+                    app: app.to_string(),
+                    id: "s-1".to_string(),
+                    ..Session::default()
+                };
+                ts.sessions.insert("extra-review".to_string(), session);
             }
         });
-        o.run_ticket("hx-1");
-
+        if live {
+            let mut w = w.lock();
+            w.agents.insert("1-9".to_string(), "working".to_string());
+            w.names
+                .insert("h-hx-1-extra-review".to_string(), "1-9".to_string());
+        }
+        let o = Arc::new(o);
+        let run = spawn_ticket(o.clone(), "hx-1");
+        if live {
+            wait_until("the live Extra review watched", || {
+                !w.called("herdr agent get 1-9").is_empty()
+            });
+            write_file(
+                &o.run_dir("hx-1").join("extra-review-1.md"),
+                "STATUS: done\n",
+            );
+            w.lock()
+                .agents
+                .insert("1-9".to_string(), "idle".to_string());
+        }
         w.await_line("hx-1 PR #hx-1 opened after 1 round");
-        assert_eq!(fetches.lock().unwrap().len(), fetched, "pane kept: {pane}");
-        assert!(w.prompt("extra-review-1.md").contains("- Cache: "));
+        drop(run);
+        assert_eq!(
+            fetches.lock().unwrap().len(),
+            fetched,
+            "live: {live}, app: {app:?}"
+        );
+        let started = w.called("herdr agent start h-hx-1-extra-review").len();
+        assert_eq!(started, fetched, "live: {live}, app: {app:?}");
+        if !live {
+            assert!(w.prompt("extra-review-1.md").contains("- Cache: "));
+        }
     }
 }
 

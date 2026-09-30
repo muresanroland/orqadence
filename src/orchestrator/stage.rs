@@ -694,7 +694,12 @@ impl Orchestrator {
         loop {
             let mut held = match live.take() {
                 Some(pane) => self.hold(ticket, st, &label, &pane, &file, want, true, None),
-                None => self.attempt(ticket, st, &label, retry, &file, &all, want),
+                None => {
+                    let fetched = self.fetch_inputs(ticket, st, &label)?;
+                    let mut all = all.clone();
+                    all.extend(fetched.iter().map(|(name, value)| (*name, value.as_str())));
+                    self.attempt(ticket, st, &label, retry, &file, &all, want)
+                }
             };
             loop {
                 if self.stopping() {

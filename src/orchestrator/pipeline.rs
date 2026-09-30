@@ -135,7 +135,7 @@ impl Orchestrator {
                 // Debate off: its Findings are fix items, not debated.
                 let mut not_debated = Vec::new();
                 if let Some(extra) = &extra {
-                    let found = self.run_extra_review(ticket, extra, round)?;
+                    let found = self.run_extra_review(ticket, round)?;
                     self.report(
                         ticket,
                         &format!(
@@ -210,7 +210,7 @@ impl Orchestrator {
         extra: &ExtraReview,
         verdicts: &mut Vec<String>,
     ) -> Result<StageResult, StageError> {
-        let found = self.run_extra_review(ticket, extra, FINAL)?;
+        let found = self.run_extra_review(ticket, FINAL)?;
         self.report(
             ticket,
             &format!(
@@ -229,44 +229,44 @@ impl Orchestrator {
         self.fix(ticket, FINAL, &fixes, true, "", verdicts)
     }
 
-    /// The Extra review in `round`. When its skill's folder in the worktree
-    /// has a fetch.sh, that runs first and the review gets its cache as the
-    /// Cache Input; not for a review already done, nor again for one a
-    /// stopped run started whose pane or saved session is resumed: it may
-    /// be reading the cache. One parked or retried keeps its Stage and
-    /// Round but not its session, so it starts fresh and is fetched for.
-    fn run_extra_review(
+    /// The Extra review in `round`; run_stage fetches for it (fetch_inputs).
+    fn run_extra_review(&self, ticket: &str, round: usize) -> Result<StageResult, StageError> {
+        let want = ResultRequirements::default();
+        self.run_read_only(ticket, &EXTRA_REVIEW, round, &[], want)
+    }
+
+    /// The Inputs an Extra review's fresh session gets from its fetch: when
+    /// its skill's folder in the worktree has a fetch.sh, that runs first
+    /// and the review gets its cache as the Cache Input, and, run without
+    /// it, the Fetch Input. Asked only where a session starts fresh, so a
+    /// resumed one, which may be reading the cache, is not fetched for,
+    /// and one whose resume failed is. None for any other Stage; a Ticket
+    /// whose labels are not read gets none either, and its start says why.
+    pub(super) fn fetch_inputs(
         &self,
         ticket: &str,
-        extra: &ExtraReview,
-        round: usize,
-    ) -> Result<StageResult, StageError> {
-        let want = ResultRequirements::default();
-        let file = self.run_dir(ticket).join(result_name(&EXTRA_REVIEW, round));
+        st: &Stage,
+        label: &str,
+    ) -> Result<Vec<(&'static str, String)>, StageError> {
+        let extra = match st.name == EXTRA_REVIEW.name {
+            true => self.labels(ticket).ok(),
+            false => None,
+        };
+        let extra = extra.and_then(|labels| app::extra_review(&self.cfg.repo, &labels).ok());
+        let Some(extra) = extra.flatten() else {
+            return Ok(Vec::new());
+        };
         let script = self.worktree(ticket).join(FILES).join(&extra.skill);
         let script = script.join("fetch.sh");
-        let cache = self.cfg.repo.join(LOCAL).join("cache").join(&extra.label);
-        let cache_input = cache.display().to_string();
-        let ts = self.ticket(ticket);
-        let name = EXTRA_REVIEW.name;
-        let resumed = ts.stage == name
-            && ts.round == round
-            && (ts.panes.contains_key(name)
-                || ts.sessions.get(name).is_some_and(|s| !s.id.is_empty()));
-        let mut inputs = Vec::new();
-        let not_run;
-        if script.exists() && !read_stage_result(&file, want).1.is_empty() {
-            inputs.push(("Cache", cache_input.as_str()));
-            let failed = match resumed {
-                true => None,
-                false => self.run_fetch_sh(ticket, round, &script, &cache)?,
-            };
-            if let Some(error) = failed {
-                not_run = format!("not run: {error}");
-                inputs.push(("Fetch", not_run.as_str()));
-            }
+        if !script.exists() {
+            return Ok(Vec::new());
         }
-        self.run_read_only(ticket, &EXTRA_REVIEW, round, &inputs, want)
+        let cache = self.cfg.repo.join(LOCAL).join("cache").join(&extra.label);
+        let mut inputs = vec![("Cache", cache.display().to_string())];
+        if let Some(error) = self.run_fetch_sh(ticket, label, &script, &cache)? {
+            inputs.push(("Fetch", format!("not run: {error}")));
+        }
+        Ok(inputs)
     }
 
     /// Runs an Extra review skill's fetch.sh `script` with network, before
@@ -279,7 +279,7 @@ impl Orchestrator {
     fn run_fetch_sh(
         &self,
         ticket: &str,
-        round: usize,
+        label: &str,
         script: &Path,
         cache: &Path,
     ) -> Result<Option<String>, StageError> {
@@ -297,7 +297,6 @@ impl Orchestrator {
             "bash",
             &script.display().to_string(),
         ];
-        let label = stage_label(&EXTRA_REVIEW, round);
         loop {
             self.update(ticket, |ts| ts.fetching = true);
             // ponytail: the call blocks, so /stop-work waits for fetch.sh to
