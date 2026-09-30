@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "orqadence"
-version = "1.4.11"
+version = "1.4.12"
 dependencies = [
  "chrono",
  "crossterm",
