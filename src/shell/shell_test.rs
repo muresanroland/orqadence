@@ -2867,6 +2867,11 @@ fn temp_file(w: &World) -> PathBuf {
     w.repo.join(format!("orqa.new.{}", std::process::id()))
 }
 
+/// The marker a done install leaves beside the scratch exe.
+fn marker_file(w: &World) -> PathBuf {
+    w.repo.join("orqa.updated")
+}
+
 fn await_update(s: &mut Screen) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while s.update.is_none() && !s.quit {
@@ -2930,10 +2935,7 @@ fn an_update_waits_while_the_lock_is_held_and_installs_at_stop_work() {
         "a deferred install said something:\n{log}"
     );
     assert!(!temp_file(&w).exists());
-    assert_eq!(
-        std::fs::read(w.repo.join("orqa.updated")).unwrap(),
-        b"v1.1.0"
-    );
+    assert_eq!(std::fs::read(marker_file(&w)).unwrap(), b"v1.1.0");
 }
 
 #[test]
@@ -2954,7 +2956,7 @@ fn an_idle_shell_installs_an_update_at_once_and_reexecs() {
     );
     assert!(!log(&w).contains("downloaded"));
     assert_eq!(s.shown_version(), "v1.0.0");
-    let marker = w.repo.join("orqa.updated");
+    let marker = marker_file(&w);
     assert_eq!(std::fs::read(&marker).unwrap(), b"v1.1.0");
     std::fs::remove_file(marker).unwrap();
 
@@ -3007,10 +3009,7 @@ fn exit_with_a_run_live_installs_the_update_as_its_last_act() {
     assert_eq!(std::fs::read(&exe).unwrap(), binary(b"new"));
     assert!(!s.reexec);
     assert!(!log(&w).contains("updating to"), "log:\n{}", log(&w));
-    assert_eq!(
-        std::fs::read(w.repo.join("orqa.updated")).unwrap(),
-        b"v1.1.0"
-    );
+    assert_eq!(std::fs::read(marker_file(&w)).unwrap(), b"v1.1.0");
 }
 
 #[test]
@@ -6198,7 +6197,7 @@ fn a_shell_opened_after_an_update_shows_the_green_notice_for_30s() {
     let (mut s, _) = release_shell(&w);
     let now = chrono::Local::now();
     let clock = set_clock(&mut s.cfg, now);
-    let marker = w.repo.join("orqa.updated");
+    let marker = marker_file(&w);
     std::fs::write(&marker, "v1.0.0").unwrap();
     s.notify_updated();
     assert_eq!(
@@ -6226,7 +6225,7 @@ fn the_update_notice_draws_green_with_its_countdown() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
     let (mut s, _) = release_shell(&w);
     set_clock(&mut s.cfg, chrono::Local::now());
-    std::fs::write(w.repo.join("orqa.updated"), "v1.0.0").unwrap();
+    std::fs::write(marker_file(&w), "v1.0.0").unwrap();
     s.notify_updated();
     let buf = render(&s, 80, 24);
     let at = find(&buf, "╭ NOTICE ─").expect("no NOTICE");

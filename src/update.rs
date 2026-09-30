@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use crate::orchestrator::state::acquire_lock;
 
-pub(crate) const REPO: &str = "muresanroland/orqadence";
+const REPO: &str = "muresanroland/orqadence";
 /// The release asset is orqa-<target>, the target fixed at compile time,
 /// with the magic its binary starts with; any other target never checks.
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -150,9 +150,15 @@ fn marker(exe: &Path) -> PathBuf {
 /// (an install undone since, or a dev build) returns None, as does a
 /// missing or unreadable one.
 pub(crate) fn take_marker(exe: &Path, version: &str) -> Option<String> {
-    let tag = fs::read(marker(exe)).ok()?;
-    let _ = fs::remove_file(marker(exe));
+    let marker = marker(exe);
+    let tag = fs::read(&marker).ok()?;
+    let _ = fs::remove_file(marker);
     (tag == version.as_bytes()).then(|| version.to_string())
+}
+
+/// The release's page on github.com.
+pub(crate) fn release_notes(tag: &str) -> String {
+    format!("https://github.com/{REPO}/releases/tag/{tag}")
 }
 
 /// v1.2.3 as (1, 2, 3); anything else is None.

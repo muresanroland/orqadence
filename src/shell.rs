@@ -429,9 +429,8 @@ impl Screen {
     pub(crate) fn notify_updated(&mut self) {
         if let Some(tag) = update::take_marker(&self.cfg.exe, &self.version) {
             let text = format!(
-                "Updated to version {tag}. See release notes: \
-                 https://github.com/{}/releases/tag/{tag}",
-                update::REPO
+                "Updated to version {tag}. See release notes: {}",
+                update::release_notes(&tag)
             );
             self.notify(NoticeKind::Info, &text, Some(Duration::from_secs(30)));
         }
