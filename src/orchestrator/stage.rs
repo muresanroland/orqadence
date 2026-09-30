@@ -64,7 +64,12 @@ pub(crate) const FIX: Stage = stage("fix", "orqa-stage-fix", 60);
 /// The Round number of the steps after the last Round, when an Extra review
 /// runs before the PR: its files and labels say "final".
 pub(crate) const FINAL: usize = MAX_ROUNDS + 1;
-pub(crate) const ADDRESS: Stage = stage("address", "orqa-stage-address", 60);
+/// Rebase and Address PR comments: outside the Pipeline, each on its
+/// Ticket's open PR in the kept worktree, on the user's command.
+pub(crate) const REBASE: Stage = stage("rebase", "orqa-stage-rebase", 60);
+/// See REBASE.
+pub(crate) const ADDRESS_PR_COMMENTS: Stage =
+    stage("address-pr-comments", "orqa-stage-address-pr-comments", 60);
 
 /// How a Stage ends other than with an accepted result.
 #[derive(Debug, PartialEq)]
@@ -259,8 +264,8 @@ pub(crate) struct Orchestrator {
     /// set and read under the state lock, so no Ticket joins a finished run.
     pub(super) done: AtomicBool,
     /// The Shell's commands waiting to be consumed: retry-<ticket>,
-    /// park-<ticket>, address-<ticket>, continue-<ticket>. Stop is the flag
-    /// above.
+    /// park-<ticket>, rebase-<ticket>, address-pr-comments-<ticket>,
+    /// continue-<ticket>. Stop is the flag above.
     pub(crate) commands: Mutex<Vec<String>>,
     /// Answers to Questions, each for one session: (ticket, pane, answer).
     pub(crate) answers: Mutex<Vec<(String, String, Answer)>>,
@@ -288,8 +293,8 @@ pub(crate) struct Orchestrator {
 impl Orchestrator {
     /// Loads the Target repo's state file, so a restarted Orchestrator
     /// resumes; a config.json no Pipeline Stage can start on, or one that
-    /// breaks a rule /config keeps, refuses the run. Address runs on
-    /// demand, so its row Wakes it alone (attempt).
+    /// breaks a rule /config keeps, refuses the run. Rebase and Address PR
+    /// comments run on demand, so each one's row Wakes it alone (attempt).
     pub(crate) fn new(cfg: Config) -> io::Result<Arc<Self>> {
         for st in [&IMPLEMENT, &REVIEW, &DEBATE, &FIX] {
             stage_row(&cfg.repo, st, &[]).map_err(io::Error::other)?;
@@ -433,8 +438,8 @@ impl Orchestrator {
     }
 
     /// A command from the Shell: retry-<ticket>, park-<ticket>,
-    /// address-<ticket> or continue-<ticket>, consumed by the Ticket's own
-    /// waits or the scheduler.
+    /// rebase-<ticket>, address-pr-comments-<ticket> or continue-<ticket>,
+    /// consumed by the Ticket's own waits or the scheduler.
     pub(crate) fn command(&self, name: &str) {
         self.commands.lock().unwrap().push(name.to_string());
     }
@@ -905,7 +910,13 @@ impl Orchestrator {
         let (skill, mut lacking) = manifest.fill_jobs(&skill, &have, runs.built_in, runs.mention);
         // The code-editing Stages get the Ticket's labels, their skills the
         // App loads (the rest join Not installed) and their guidance.
-        let edits = [IMPLEMENT.name, FIX.name, ADDRESS.name].contains(&st.name);
+        let editing = [
+            IMPLEMENT.name,
+            FIX.name,
+            REBASE.name,
+            ADDRESS_PR_COMMENTS.name,
+        ];
+        let edits = editing.contains(&st.name);
         let entries = match edits {
             true => match ticket_labels(&self.cfg.repo, &labels) {
                 Ok(entries) => entries,
@@ -1122,7 +1133,7 @@ impl Orchestrator {
             (row.app.run_dir_args)(&self.worktree(ticket).display().to_string())
         } else {
             // Implement off claude plans in two steps (plan.rs); codex runs
-            // no Debate, Fix or Address (runs_on).
+            // no Debate, Fix, Rebase or Address PR comments (runs_on).
             (row.app.worktree_args)(&run_dir)
         };
         args.extend(row.flags());
@@ -1329,10 +1340,11 @@ impl Orchestrator {
     /// never a Wake, never judged, and no deadline runs while it waits.
     /// Away, the Ticket parks with a bd comment asking for a manual resume,
     /// its session left waiting in its pane; turning Away on while the
-    /// Question waits does the same. Otherwise, and always for Address,
-    /// whose Ticket has its PR open and no Parked to go to, it is a
-    /// Question, whose answer goes into the pane as a prompt. None once the
-    /// answer is sent, or the session moves on in the pane.
+    /// Question waits does the same. Otherwise, and always for Rebase and
+    /// Address PR comments, whose Ticket has its PR open and no Parked to
+    /// go to, it is a Question, whose answer goes into the pane as a
+    /// prompt. None once the answer is sent, or the session moves on in the
+    /// pane.
     fn question(
         &self,
         ticket: &str,
@@ -1360,7 +1372,8 @@ impl Orchestrator {
                 }
             }
             let (question, options) = asked.unwrap();
-            if self.cfg.away.load(Ordering::SeqCst) && st.name != ADDRESS.name {
+            let on_pr = [REBASE.name, ADDRESS_PR_COMMENTS.name].contains(&st.name);
+            if self.cfg.away.load(Ordering::SeqCst) && !on_pr {
                 let lead = format!(
                     "{label} asked a question while you were away and needs a manual resume: \
                      /continue @{ticket} in the Orqadence Shell puts it to you, its session \

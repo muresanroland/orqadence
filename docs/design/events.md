@@ -36,7 +36,7 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 | Fix done | fix N done |
 | PR opened | PR #12 opened after N rounds *(log line adds the url)* |
 | dependents now wait on a merge | *on each open dependent:* waiting for PR #12 to merge (Ticket 5) |
-| PR conflicts | PR #12 conflicts with main, /address resolves it |
+| PR conflicts | PR #12 conflicts with main, /rebase resolves it |
 | merged | merged, Ticket closed |
 | PR closed unmerged | parked: PR #12 closed without merging |
 | parked | parked: `reason` |
@@ -47,7 +47,8 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 | below the floor, or no TypeSafe | asking you: stuck in fix 1 *(below the floor the judged line goes to the log alone)* |
 | only park left (nudge and retry spent) | parked: fix 1 `reason` again after a retry *(no Judgment asked)* |
 | retry command | retrying fix 1 with a fresh session (pane 2-3) |
-| address | addressed PR #12 · address failed: `err` · address gave up: `err` · address refused: no open PR |
+| rebase | rebased PR #12 · rebase gave up: `err` · rebase refused: no open PR · refused: PR #12 does not conflict with main |
+| address-pr-comments | addressed PR #12 · address pr comments failed: `err` · address pr comments gave up: `err` · address pr comments refused: no open PR |
 | retry or park refused | ignored: not waiting on a Wake · refused: not a Ticket of this run |
 | Away | *(orqadence)* away: on, a Stage's question parks its Ticket · away: off *(/away again, or /continue @ticket)* |
 | /continue @ticket refused | *(orqadence)* refused: Ticket 5 is not parked |

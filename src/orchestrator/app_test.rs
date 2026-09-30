@@ -3,7 +3,7 @@
 
 use super::app::{
     app, canonical, checks, clash, debate_inputs, extra_review, fallback_row, floor_in, labels,
-    row, Clash, ExtraReview, Floor, Label, IF_LIMITED,
+    row, runs_on, Clash, ExtraReview, Floor, Label, IF_LIMITED, ROWS,
 };
 use super::stage::{Answer, Ask, Orchestrator, AWAY};
 use super::state::STATUS_PARKED;
@@ -956,6 +956,39 @@ fn a_label_row_naming_codex_for_fix_is_refused_by_runs_on() {
     assert_eq!(
         row(repo.path(), "fix", &names(&["be"])).err().as_deref(),
         Some("fix does not run on codex")
+    );
+}
+
+/// Rebase and Address PR comments have a row each in place of address,
+/// neither on codex; labels override the new keys. A config.json from
+/// before the split, its address row and neither new one, gives both rows
+/// the address row's fields.
+#[test]
+fn rebase_and_address_pr_comments_rows_replace_address_and_read_an_old_address_row() {
+    assert!(ROWS.contains(&"rebase") && ROWS.contains(&"address_pr_comments"));
+    assert!(!ROWS.contains(&"address"));
+    for key in ["rebase", "address_pr_comments"] {
+        assert_eq!(
+            runs_on(key, app("codex").unwrap()),
+            Err(format!("{key} does not run on codex"))
+        );
+    }
+    let repo = repo_with(&json!({"address": {"model": "opus", "effort": "high"},
+        "labels": {"fast": {"kind": "modifier", "rows": {
+            "rebase": {"effort": "low"}, "address_pr_comments": {"effort": "low"}}}}}));
+    let said = |key: &str, labels: &[&str]| row(repo.path(), key, &names(labels)).map(|r| r.said());
+    for key in ["rebase", "address_pr_comments"] {
+        assert_eq!(said(key, &[]), Ok("claude opus/high".to_string()), "{key}");
+        assert_eq!(
+            said(key, &["fast"]),
+            Ok("claude opus/low".to_string()),
+            "{key}"
+        );
+    }
+    let old = json!({"labels": {"be": {"kind": "area", "rows": {"address": {}}}}});
+    assert_eq!(
+        labels(&old)["be"],
+        Err("labels be rows has no row address".to_string())
     );
 }
 

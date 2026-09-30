@@ -9,8 +9,8 @@ use serde_json::json;
 use super::app::{self, ExtraReview};
 use super::result::{read_stage_result, ResultRequirements, StageResult};
 use super::stage::{
-    plural, pr_ref, result_name, stage_label, Ask, Orchestrator, Stage, StageError, ADDRESS, AWAY,
-    DEBATE, EXTRA_REVIEW, FINAL, FIX, IMPLEMENT, REVIEW,
+    plural, pr_ref, result_name, stage_label, Ask, Orchestrator, Stage, StageError,
+    ADDRESS_PR_COMMENTS, AWAY, DEBATE, EXTRA_REVIEW, FINAL, FIX, IMPLEMENT, REBASE, REVIEW,
 };
 use super::state::{local_dir, LOCAL, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 use crate::setup::{DEFAULT_TEMPLATE, TEMPLATE_DIR};
@@ -284,6 +284,14 @@ impl Orchestrator {
         Ok(inputs)
     }
 
+    /// The remote's default branch as the Ticket's worktree names it,
+    /// "origin/main"; None when git cannot tell.
+    pub(super) fn origin_head(&self, ticket: &str) -> Option<String> {
+        let origin = ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"];
+        let head = self.cfg.tools.run(&self.worktree(ticket), &origin).ok()?;
+        Some(head.trim().to_string()).filter(|head| !head.is_empty())
+    }
+
     /// Runs an Extra review skill's fetch.sh `script` with network, before
     /// the review's pane starts: bash in the worktree, ORQA_CACHE the
     /// label's `cache` in the checkout (made first, shared by every
@@ -302,12 +310,8 @@ impl Orchestrator {
         cache: &Path,
     ) -> Result<Option<String>, StageError> {
         let (tools, worktree) = (&self.cfg.tools, self.worktree(ticket));
-        let origin = ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"];
-        let base = tools.run(&worktree, &origin).unwrap_or_default();
-        let base = match base.trim() {
-            "" => "main",
-            base => base,
-        };
+        let base = self.origin_head(ticket);
+        let base = base.as_deref().unwrap_or("main");
         let argv = [
             "env",
             &format!("ORQA_CACHE={}", cache.display()),
@@ -800,7 +804,8 @@ impl Orchestrator {
             (&REVIEW, app::IF_LIMITED),
             (&DEBATE, "side_a"),
             (&FIX, FIX.name),
-            (&ADDRESS, ADDRESS.name),
+            (&REBASE, REBASE.name),
+            (&ADDRESS_PR_COMMENTS, app::row_key(&ADDRESS_PR_COMMENTS)),
         ];
         let mut loaded: Vec<(&str, &str)> = Vec::new();
         for (st, key) in rows {
@@ -819,9 +824,9 @@ impl Orchestrator {
         // the label skills, on the code-editing Stages' rows
         for (_, label) in &entries {
             for skill in &label.skills {
-                for st in [&IMPLEMENT, &FIX, &ADDRESS] {
+                for st in [&IMPLEMENT, &FIX, &REBASE, &ADDRESS_PR_COMMENTS] {
                     if !(implemented && st.name == IMPLEMENT.name) {
-                        loaded.push((skill, st.name));
+                        loaded.push((skill, app::row_key(st)));
                     }
                 }
             }

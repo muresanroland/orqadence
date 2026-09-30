@@ -728,7 +728,13 @@ fn the_at_list_ranks_open_epics_and_tickets_narrowed_by_the_command() {
         "harness-rev.1",
     ];
     assert_eq!(list_keys(&s), open);
-    for name in ["/start-ticket", "/park", "/address", "/continue"] {
+    for name in [
+        "/start-ticket",
+        "/park",
+        "/rebase",
+        "/address-pr-comments",
+        "/continue",
+    ] {
         s.input = format!("{name} @");
         assert_eq!(list_keys(&s), open, "{name}");
     }
@@ -782,7 +788,7 @@ fn up_and_down_move_an_open_lists_cursor_and_scroll_recent_when_none_is() {
     for _ in 0..20 {
         s.key(key(KeyCode::Down));
     }
-    assert_eq!(s.pick, 14, "past the last row");
+    assert_eq!(s.pick, 15, "past the last row");
     s.key(key(KeyCode::Up));
     s.key(key(KeyCode::Up));
     s.key(key(KeyCode::Enter));
@@ -846,14 +852,14 @@ fn the_slash_list_renders_above_the_input_with_its_hint() {
     type_in(&mut s, "/");
     let buf = render(&s, 120, 40);
     let want = [
-        " › /start-epic     <epic>      run every Ticket of an open Epic",
-        "   /start-ticket   <ticket>…   run Tickets, or add them to the live Ticket run",
-        "   /remove-ticket  <ticket>    take a Ticket out of the live Ticket run",
-        "   /continue       [<ticket>]  resume the saved run, or unpark one Ticket",
-        "   /stop-work                  stop the run, the panes stay",
-        "   /retry          <ticket>    the Ticket's Stage again, in a fresh session",
-        "   /park           <ticket>    take a Ticket out to wait for you",
-        "   /address        <ticket>    resolve a PR's conflicts or review comments",
+        " › /start-epic           <epic>      run every Ticket of an open Epic",
+        "   /start-ticket         <ticket>…   run Tickets, or add them to the live Ticket run",
+        "   /remove-ticket        <ticket>    take a Ticket out of the live Ticket run",
+        "   /continue             [<ticket>]  resume the saved run, or unpark one Ticket",
+        "   /stop-work                        stop the run, the panes stay",
+        "   /retry                <ticket>    the Ticket's Stage again, in a fresh session",
+        "   /park                 <ticket>    take a Ticket out to wait for you",
+        "   /rebase               <ticket>    rebase a PR that conflicts with main",
         "   ↑↓ pick · Tab or Enter fills in · Esc clears",
     ];
     let shown: Vec<String> = (29..38)
@@ -873,12 +879,12 @@ fn the_slash_list_renders_above_the_input_with_its_hint() {
     assert_eq!(at("run every Ticket").0, TEXT);
     assert_eq!(at("run Tickets, or add").0, MUTED);
     // The window follows the cursor to the last row.
-    for _ in 0..14 {
+    for _ in 0..15 {
         s.key(key(KeyCode::Down));
     }
     let buf = render(&s, 120, 40);
     assert!(
-        row(&buf, 29).starts_with("   /address"),
+        row(&buf, 29).starts_with("   /address-pr-comments"),
         "{:#?}",
         rows(&buf)
     );
@@ -1178,6 +1184,7 @@ fn the_idle_tree_renders_from_a_fake_bd_with_the_saved_epic_resumable() {
             "which claude",
             "which claude",
             "which codex",
+            "which claude",
             "which claude",
             "which claude",
             "bd list --json --brief --all"
@@ -2077,9 +2084,13 @@ fn an_unreadable_config_or_a_stage_codex_cannot_run_refuses_the_run() {
     assert!(notice(&s).ends_with(r#"no App named "gemini" for review_if_limited"#));
     assert!(s.run.is_none());
 
-    // Address runs on demand: its row does not hold up the Pipeline.
+    // Rebase and Address PR comments run on demand: their rows do not hold
+    // up the Pipeline.
     w.lock().merged = true;
-    write_file(&file, r#"{"address": {"app": "codex"}}"#);
+    write_file(
+        &file,
+        r#"{"rebase": {"app": "codex"}, "address_pr_comments": {"app": "codex"}}"#,
+    );
     s.command("/start-epic hx");
     assert!(s.run.is_some(), "{:?}", s.notice);
     await_line(&mut s, "Epic done, every Ticket closed");
@@ -2177,6 +2188,29 @@ fn stop_work_ends_scheduling_with_panes_alive_and_continue_resumes() {
     );
     assert_eq!(w.called("bd worktree create").len(), 1);
     assert!(s.state.epic.is_empty());
+}
+
+/// /rebase and /address-pr-comments replace /address: in the / list, and,
+/// like /retry, refused with no run live.
+#[test]
+fn rebase_and_address_pr_comments_replace_address() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
+    let mut s = shell(&w);
+    type_in(&mut s, "/");
+    let listed = list_keys(&s);
+    assert!(listed.contains(&"/rebase") && listed.contains(&"/address-pr-comments"));
+    assert!(!listed.contains(&"/address"));
+    s.input.clear();
+    s.command("/address hx-1");
+    assert_eq!(notice(&s), "unknown command: /address hx-1");
+    for name in ["/rebase", "/address-pr-comments"] {
+        s.command(&format!("{name} hx-1"));
+        assert_eq!(
+            notice(&s),
+            "refused: no run is live, /start-epic or /continue starts one",
+            "{name}"
+        );
+    }
 }
 
 #[test]

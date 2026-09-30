@@ -1,12 +1,10 @@
 use super::app::set_max_tickets;
-use super::result::stage_prompt;
-use super::scheduler::address_inputs;
 use super::stage::{Config, Orchestrator};
 use super::state::{
     acquire_lock, load_state, lock_holder, STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN,
     STATUS_RUNNING,
 };
-use super::world::{new_world, spawn_epic, succeed, BdTicket, Prompt};
+use super::world::{new_world, spawn_epic, succeed, BdTicket, Prompt, World};
 use std::fs;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -172,7 +170,7 @@ fn closed_pr_parks_the_ticket_and_conflict_is_reported_exactly_once() {
     let mut run = spawn_epic(o.clone(), "hx");
 
     w.await_line("hx-1 parked: PR #hx-1 closed without merging");
-    w.await_line("hx-2 PR #hx-2 conflicts with main, /address resolves it");
+    w.await_line("hx-2 PR #hx-2 conflicts with main, /rebase resolves it");
     thread::sleep(Duration::from_millis(30)); // many more polls
     o.stop();
     run.wait();
@@ -343,78 +341,111 @@ fn retry_unparks_a_parked_ticket() {
     );
 }
 
-#[test]
-fn address_prompt_carries_the_pr_feedback_and_conflict_state() {
-    let gh = r#"{"mergeable":"CONFLICTING","reviews":[{"body":"rename this"}],"comments":[]}"#;
-    let inputs = address_inputs("https://example.test/pr/9", gh);
-    let inputs: Vec<(&str, &str)> = inputs
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    let text = stage_prompt(
-        "---\nname: orqa-stage-address\n---\nAddress the PR.",
-        &inputs,
-    );
-    for want in [
-        "Address the PR.",
-        "- PR: https://example.test/pr/9",
-        "- Conflicts with main: yes",
-        "rename this",
-    ] {
-        assert!(
-            text.contains(want),
-            "address prompt lacks {want:?}:\n{text}"
-        );
-    }
-    let clean = address_inputs("u", r#"{"mergeable":"MERGEABLE"}"#);
-    assert_eq!(clean[1].1, "no", "mergeable PR reported as conflicting");
-}
-
-#[test]
-fn address_command_starts_a_fresh_session_in_the_kept_worktree() {
-    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    w.lock().prs.insert(
-        "https://example.test/pr/hx-1".to_string(),
-        r#"{"state":"OPEN","mergeable":"CONFLICTING","reviews":[{"body":"rename this"}]}"#
-            .to_string(),
-    );
-    let address_prompt: Arc<Mutex<Option<Prompt>>> = Default::default();
-    let seen = address_prompt.clone();
+/// The prompt of the first session of `stage`, kept as the world starts it.
+fn first_prompt(w: &World, stage: &'static str) -> Arc<Mutex<Option<Prompt>>> {
+    let prompt: Arc<Mutex<Option<Prompt>>> = Default::default();
+    let seen = prompt.clone();
     w.session(move |p| {
-        if p.stage == "address" {
-            *seen.lock().unwrap() = Some(p.clone());
+        if p.stage == stage {
+            seen.lock().unwrap().get_or_insert_with(|| p.clone());
         }
         succeed(p)
     });
+    prompt
+}
+
+/// /rebase on a PR the last poll saw conflict: a fresh Rebase session in
+/// the kept worktree, fed its Stage skill and the PR; the Ticket stays
+/// pr-open.
+#[test]
+fn rebase_command_on_a_conflicting_pr_starts_rebase_in_the_kept_worktree() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.lock().prs.insert(
+        "https://example.test/pr/hx-1".to_string(),
+        r#"{"state":"OPEN","mergeable":"CONFLICTING"}"#.to_string(),
+    );
+    let prompt = first_prompt(&w, "rebase");
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+    w.await_line("hx-1 PR #hx-1 conflicts with main, /rebase resolves it");
+
+    o.command("rebase-hx-1");
+    w.await_line("hx-1 rebased PR #hx-1");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+
+    let text = prompt.lock().unwrap().as_ref().map(|p| p.text.clone());
+    let text = text.unwrap_or_default();
+    for want in [
+        "# Rebase Stage",
+        "- PR: https://example.test/pr/hx-1",
+        "- Default branch: origin/main",
+    ] {
+        assert!(text.contains(want), "rebase prompt lacks {want:?}:\n{text}");
+    }
+    let tabs = w.called("herdr tab create");
+    assert!(
+        tabs.len() == 2 && tabs[1].contains(&format!("--cwd {}", o.worktree("hx-1").display())),
+        "rebase must reopen a Ticket tab in the kept worktree: {tabs:?}"
+    );
+    assert_eq!(o.ticket("hx-1").status, STATUS_PR_OPEN);
+}
+
+/// /rebase on a PR that does not conflict is refused, and no Stage starts.
+#[test]
+fn rebase_command_on_a_mergeable_pr_is_refused() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
     let o = Arc::new(o);
     let mut run = spawn_epic(o.clone(), "hx");
     w.await_line("hx-1 PR #hx-1 opened");
 
-    o.command("address-hx-1");
+    o.command("rebase-hx-1");
+    w.await_line("hx-1 refused: PR #hx-1 does not conflict with main");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+    assert!(w.called("herdr agent start h-hx-1-rebase").is_empty());
+}
+
+/// /address-pr-comments: a fresh session fed the PR and gh's view of its
+/// comments; the Ticket stays pr-open.
+#[test]
+fn address_pr_comments_command_starts_it_with_the_pr_and_the_gh_json() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.lock().prs.insert(
+        "https://example.test/pr/hx-1".to_string(),
+        r#"{"state":"OPEN","mergeable":"MERGEABLE","reviews":[{"body":"rename this"}]}"#
+            .to_string(),
+    );
+    let prompt = first_prompt(&w, "address-pr-comments");
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+    w.await_line("hx-1 PR #hx-1 opened");
+
+    o.command("address-pr-comments-hx-1");
     w.await_line("hx-1 addressed PR #hx-1");
     o.stop();
     run.wait();
     o.wait_in_flight();
 
-    let text = address_prompt
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|p| p.text.clone())
-        .unwrap_or_default();
-    assert!(
-        text.contains("rename this") && text.contains("Conflicts with main: yes"),
-        "address prompt:\n{text}"
-    );
-    let tabs = w.called("herdr tab create");
-    assert!(
-        tabs.len() == 2 && tabs[1].contains(&format!("--cwd {}", o.worktree("hx-1").display())),
-        "address must reopen a Ticket tab in the kept worktree: {tabs:?}"
-    );
+    let text = prompt.lock().unwrap().as_ref().map(|p| p.text.clone());
+    let text = text.unwrap_or_default();
+    for want in [
+        "# Address PR comments Stage",
+        "- PR: https://example.test/pr/hx-1",
+        "- PR comments (gh JSON): ",
+        "rename this",
+    ] {
+        assert!(
+            text.contains(want),
+            "address-pr-comments prompt lacks {want:?}:\n{text}"
+        );
+    }
     assert_eq!(
         o.ticket("hx-1").status,
         STATUS_PR_OPEN,
-        "status after address, want it still pr-open"
+        "status after address-pr-comments, want it still pr-open"
     );
 }
 
@@ -443,14 +474,14 @@ fn command_lines_say_what_was_refused_ignored_or_failed() {
     w.fail_once("bd ready", "dolt: database is locked");
     let gh_down = AtomicBool::new(true);
     w.hook(move |_, argv| {
-        // the address Stage's own gh view, not the merge poll's
+        // Address PR comments' own gh view, not the merge poll's
         if argv.join(" ").contains("reviews") && gh_down.swap(false, Ordering::SeqCst) {
             return Some(Err("gh: boom".to_string()));
         }
         None
     });
     w.session(|p| {
-        if p.stage == "address" {
+        if p.stage == "address-pr-comments" {
             return (String::new(), "idle".to_string());
         }
         succeed(p)
@@ -465,14 +496,18 @@ fn command_lines_say_what_was_refused_ignored_or_failed() {
     w.await_line("hx-9 refused: not a Ticket of this run");
     o.command("park-hx-1");
     w.await_line("hx-1 ignored: not waiting on a Wake");
-    o.command("address-hx-9");
-    w.await_line("hx-9 address refused: no open PR");
-    o.command("address-hx-1");
-    w.await_line("hx-1 address failed: ");
-    o.command("address-hx-1");
-    w.await_line("hx-1 stuck in address: went idle without a result (pane 1-1)");
+    o.command("address-pr-comments-hx-9");
+    w.await_line("hx-9 address pr comments refused: no open PR");
+    o.command("rebase-hx-9");
+    w.await_line("hx-9 rebase refused: no open PR");
+    o.command("address-pr-comments-hx-1");
+    w.await_line("hx-1 address pr comments failed: ");
+    o.command("address-pr-comments-hx-1");
+    w.await_line("hx-1 stuck in address pr comments: went idle without a result (pane 1-1)");
     o.command("park-hx-1");
-    w.await_line("hx-1 address gave up: address went idle without a result");
+    w.await_line(
+        "hx-1 address pr comments gave up: address pr comments went idle without a result",
+    );
     o.stop();
     run.wait();
     o.wait_in_flight();

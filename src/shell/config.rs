@@ -50,7 +50,7 @@ pub(crate) struct ConfigRow {
     pub(crate) note: &'static str,
 }
 
-pub(crate) const ROWS: [ConfigRow; 8] = [
+pub(crate) const ROWS: [ConfigRow; 9] = [
     ConfigRow {
         key: "implement",
         name: "Implement",
@@ -101,16 +101,23 @@ pub(crate) const ROWS: [ConfigRow; 8] = [
         note: "Fixes the Findings to fix, then opens the PR.",
     },
     ConfigRow {
-        key: "address",
-        name: "Address",
+        key: "rebase",
+        name: "Rebase",
         lead: "",
         section: 4,
-        note: "Resolves a PR's merge conflicts or review comments.",
+        note: "Rebases a PR that conflicts with main, keeping both sides' intent or asking you.",
+    },
+    ConfigRow {
+        key: "address_pr_comments",
+        name: "Address PR comments",
+        lead: "",
+        section: 5,
+        note: "Fixes a PR's comments and failing checks, and pushes to the same PR.",
     },
 ];
 
 /// The Pipeline's sections: title, short name on the left, description.
-pub(crate) const SECTIONS: [(&str, &str, &str); 5] = [
+pub(crate) const SECTIONS: [(&str, &str, &str); 6] = [
     (
         "Plan + Implement",
         "Plan+Impl",
@@ -128,9 +135,14 @@ pub(crate) const SECTIONS: [(&str, &str, &str); 5] = [
     ),
     ("Fix", "Fix", "Fixes the Findings to fix, then opens the PR."),
     (
-        "Address",
-        "Address",
-        "Resolves a PR's merge conflicts or its review comments.",
+        "Rebase",
+        "Rebase",
+        "Rebases a PR that conflicts with main onto it, keeping both sides' intent or asking you.",
+    ),
+    (
+        "Address PR comments",
+        "Comments",
+        "Fixes a PR's comments and failing checks, and pushes to the same PR.",
     ),
 ];
 

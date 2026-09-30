@@ -13,7 +13,9 @@ use std::time::Instant;
 
 use super::app;
 use super::result::ResultRequirements;
-use super::stage::{pr_ref, result_name, Orchestrator, StageError, ADDRESS};
+use super::stage::{
+    pr_ref, result_name, stage_label, Orchestrator, Stage, StageError, ADDRESS_PR_COMMENTS, REBASE,
+};
 use super::state::{TicketState, STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 
 /// One row of a bd JSON reply, the fields the scheduler and the Shell read.
@@ -212,7 +214,10 @@ impl Orchestrator {
         let mut last_poll: Option<Instant> = None;
         loop {
             for command in self.commands() {
-                let (kind, ticket) = command.split_once('-').unwrap_or((&command, ""));
+                let (kind, ticket) = match command.strip_prefix("address-pr-comments-") {
+                    Some(ticket) => ("address-pr-comments", ticket),
+                    None => command.split_once('-').unwrap_or((&command, "")),
+                };
                 let ts = self.ticket(ticket);
                 if kind == "remove" && self.consume(&command) {
                     self.remove(ticket, busy(ticket));
@@ -235,8 +240,10 @@ impl Orchestrator {
                 {
                     // /continue @ticket: its live session watched again, its question asked
                     self.update(ticket, |ts| ts.status = STATUS_RUNNING.to_string());
-                } else if kind == "address" && self.consume(&command) {
-                    launch(ticket, Orchestrator::address);
+                } else if kind == "rebase" && self.consume(&command) {
+                    launch(ticket, Orchestrator::rebase);
+                } else if kind == "address-pr-comments" && self.consume(&command) {
+                    launch(ticket, Orchestrator::address_pr_comments);
                 } else if ts.status.is_empty() && self.consume(&command) {
                     self.report(ticket, "refused: not a Ticket of this run");
                 } else if self.consume(&command) {
@@ -445,7 +452,7 @@ impl Orchestrator {
                 self.report(
                     &ticket,
                     &format!(
-                        "{} conflicts with main, /address resolves it",
+                        "{} conflicts with main, /rebase resolves it",
                         pr_ref(&ts.pr)
                     ),
                 );
@@ -455,61 +462,75 @@ impl Orchestrator {
         }
     }
 
-    /// Runs the address Stage for a Ticket with an open PR, on the user's
-    /// command only: a fresh session in the kept worktree, fed the PR's
-    /// review comments and whether it conflicts with main.
-    fn address(&self, ticket: &str) {
+    /// Runs Rebase for a Ticket whose open PR the last poll saw conflict
+    /// with main, on the user's command only.
+    fn rebase(&self, ticket: &str) {
         let ts = self.ticket(ticket);
         if ts.status != STATUS_PR_OPEN {
-            self.report(ticket, "address refused: no open PR");
-            return;
+            return self.report(ticket, "rebase refused: no open PR");
         }
-        let feedback = match self.cfg.tools.run(
-            &self.cfg.repo,
-            &[
-                "gh",
-                "pr",
-                "view",
-                &ts.pr,
-                "--json",
-                "mergeable,reviews,comments",
-            ],
-        ) {
-            Ok(feedback) => feedback,
+        if !ts.conflict {
+            let text = format!("refused: {} does not conflict with main", pr_ref(&ts.pr));
+            return self.report(ticket, &text);
+        }
+        let base = self.origin_head(ticket);
+        let base = base.as_deref().unwrap_or("origin/main");
+        let inputs = [("PR", ts.pr.as_str()), ("Default branch", base)];
+        self.on_pr(ticket, &REBASE, &inputs, "rebased");
+    }
+
+    /// Runs Address PR comments for a Ticket with an open PR, on the user's
+    /// command only, fed gh's view of the PR's reviews and comments.
+    fn address_pr_comments(&self, ticket: &str) {
+        let st = &ADDRESS_PR_COMMENTS;
+        let ts = self.ticket(ticket);
+        if ts.status != STATUS_PR_OPEN {
+            let text = format!("{} refused: no open PR", stage_label(st, 0));
+            return self.report(ticket, &text);
+        }
+        let argv = ["gh", "pr", "view", &ts.pr, "--json", "reviews,comments"];
+        let comments = match self.cfg.tools.run(&self.cfg.repo, &argv) {
+            Ok(comments) => comments,
             Err(err) => {
-                self.report(ticket, &format!("address failed: {err}"));
-                return;
+                let text = format!("{} failed: {err}", stage_label(st, 0));
+                return self.report(ticket, &text);
             }
         };
-        // every address run is a new one, never an earlier one resumed
-        let _ = fs::remove_file(self.run_dir(ticket).join(result_name(&ADDRESS, 0)));
+        let inputs = [
+            ("PR", ts.pr.as_str()),
+            ("PR comments (gh JSON)", comments.trim()),
+        ];
+        self.on_pr(ticket, st, &inputs, "addressed");
+    }
+
+    /// Runs a PR Stage: a fresh session in the kept worktree, never an
+    /// earlier one resumed, its tab closed once it is done, said as
+    /// "<done> PR #n".
+    fn on_pr(&self, ticket: &str, st: &Stage, inputs: &[(&str, &str)], done: &str) {
+        let _ = fs::remove_file(self.run_dir(ticket).join(result_name(st, 0)));
         self.update(ticket, |ts| {
-            ts.sessions.remove(ADDRESS.name);
+            ts.sessions.remove(st.name);
         });
-        let inputs = address_inputs(&ts.pr, &feedback);
-        let inputs: Vec<(&str, &str)> = inputs
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-        let result = self.run_stage(ticket, &ADDRESS, 0, &inputs, ResultRequirements::default());
+        let result = self.run_stage(ticket, st, 0, inputs, ResultRequirements::default());
         if self.stopping() {
             return;
         }
         match result {
             Ok(_) => {
-                let tab = self.ticket(ticket).tab;
-                if !tab.is_empty() {
-                    let _ = self.herdr(&["tab", "close", &tab]);
+                let ts = self.ticket(ticket);
+                if !ts.tab.is_empty() {
+                    let _ = self.herdr(&["tab", "close", &ts.tab]);
                     self.update(ticket, |ts| {
                         ts.tab.clear();
                         ts.panes.clear();
                         ts.sessions.clear();
                     });
                 }
-                self.report(ticket, &format!("addressed {}", pr_ref(&ts.pr)));
+                self.report(ticket, &format!("{done} {}", pr_ref(&ts.pr)));
             }
             Err(StageError::Parked(reason)) => {
-                self.report(ticket, &format!("address gave up: {reason}"));
+                let text = format!("{} gave up: {reason}", stage_label(st, 0));
+                self.report(ticket, &text);
             }
             Err(StageError::Stopped) => self.close_on_limit(ticket),
         }
@@ -527,25 +548,4 @@ impl Drop for Slot {
     fn drop(&mut self) {
         self.o.active.lock().unwrap().remove(&self.ticket);
     }
-}
-
-/// The address Stage's inputs, from gh's view of the PR.
-pub(crate) fn address_inputs(pr: &str, gh_json: &str) -> Vec<(String, String)> {
-    let mut conflicts = "unknown, check with gh";
-    if let Ok(view) = serde_json::from_str::<GhPr>(gh_json) {
-        if !view.mergeable.is_empty() && view.mergeable != "UNKNOWN" {
-            conflicts = if view.mergeable == "CONFLICTING" {
-                "yes"
-            } else {
-                "no"
-            };
-        }
-    }
-    [
-        ("PR", pr),
-        ("Conflicts with main", conflicts),
-        ("Review comments (gh JSON)", gh_json.trim()),
-    ]
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .to_vec()
 }

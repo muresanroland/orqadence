@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::plan::quoted;
-use super::stage::{Stage, DEBATE};
+use super::stage::Stage;
 use super::trust::{claude_records, codex_records, copilot_records, cursor_records, pi_records};
 use crate::tools::Tools;
 
@@ -539,12 +539,17 @@ pub(crate) fn fallback_row(repo: &Path, labels: &[String]) -> Result<Option<Row>
 /// rows, read then too, over it. A missing file, row or field, or an empty
 /// one, is the default; a field not a string refuses.
 pub(crate) fn stage_row(repo: &Path, st: &Stage, labels: &[String]) -> Result<Row, String> {
-    let key = if st.name == DEBATE.name {
-        "moderator"
-    } else {
-        st.name
-    };
-    row(repo, key, labels)
+    row(repo, row_key(st), labels)
+}
+
+/// The key of the config.json row a Stage runs on: its name, but the
+/// Debate's is the Moderator's, and a key takes _ where a name has -.
+pub(crate) fn row_key(st: &Stage) -> &'static str {
+    match st.name {
+        "debate" => "moderator",
+        "address-pr-comments" => "address_pr_comments",
+        name => name,
+    }
 }
 
 /// Whether TypeSafe is on: config.json's "typesafe", read at each use so a
@@ -643,7 +648,7 @@ pub(crate) fn set_max_tickets(repo: &Path, value: Option<usize>) -> Result<(), S
 
 /// The key of every row of config.json; static, so a label's Check can
 /// borrow one.
-pub(crate) static ROWS: [&str; 8] = [
+pub(crate) static ROWS: [&str; 9] = [
     "implement",
     "review",
     IF_LIMITED,
@@ -651,7 +656,8 @@ pub(crate) static ROWS: [&str; 8] = [
     "side_a",
     "side_b",
     "fix",
-    "address",
+    "rebase",
+    "address_pr_comments",
 ];
 
 /// A Ticket label's entry in config.json's labels, keyed by its name, the
@@ -967,7 +973,20 @@ pub(crate) fn read(repo: &Path) -> Result<(PathBuf, Value), String> {
         Err(err) if err.kind() == io::ErrorKind::NotFound => Value::Null,
         Err(err) => return Err(format!("{}: {err}", path.display())),
     };
-    Ok((path, doc))
+    Ok((path, split_address(doc)))
+}
+
+/// A config.json from before Rebase and Address PR comments, its address
+/// row and neither of theirs: both rows are the address row, so the repo
+/// keeps its App, model and effort, and a save writes the new keys.
+fn split_address(mut doc: Value) -> Value {
+    let (old, new) = ("address", ["rebase", "address_pr_comments"]);
+    if !doc[old].is_null() && new.iter().all(|key| doc[key].is_null()) {
+        for key in new {
+            doc[key] = doc[old].clone();
+        }
+    }
+    doc
 }
 
 /// config.json to edit: missing (or null) is empty; any other non-object
@@ -1012,8 +1031,8 @@ pub(crate) fn field(doc: &Value, key: &str, name: &str) -> Result<String, String
 /// On codex only Implement (the two-step Plan, plan.rs), the Review, its
 /// fallback and the Debate's sides run, until it has the network the
 /// Moderator's side commands and TypeSafe calls need, and a Git write path
-/// for Fix and Address: its sandbox keeps Git metadata read-only. Every
-/// other App runs every Stage.
+/// for Fix, Rebase and Address PR comments: its sandbox keeps Git metadata
+/// read-only. Every other App runs every Stage.
 pub(crate) fn runs_on(key: &str, app: &App) -> Result<(), String> {
     match app.name != "codex"
         || matches!(
