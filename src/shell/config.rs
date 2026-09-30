@@ -613,6 +613,7 @@ impl Settings {
             if let Err(err) = app::floor_in(&self.doc, floor) {
                 checks.push(Check {
                     rows: std::slice::from_ref(&floor.key),
+                    label: None,
                     holds: false,
                     text: format!("{err}: its Judgments are not acted on"),
                 });
@@ -621,6 +622,7 @@ impl Settings {
         if let Err(err) = app::max_tickets_in(&self.doc) {
             checks.push(Check {
                 rows: &[MAX_TICKETS],
+                label: None,
                 holds: false,
                 text: format!("{err}: a run takes {DEFAULT_MAX_TICKETS}"),
             });
@@ -1111,7 +1113,6 @@ impl Settings {
         if self.label.is_none() {
             return "a adds a label, e or Enter opens it, r renames it (its PR template mapping follows), d deletes it (its PR template file stays). Every change saves at once, uncommitted, to .orqadence/config.json.".to_string();
         }
-        let row = |r: usize| ROWS[r].name;
         match self.label_items().get(self.setting) {
             Some(LabelItem::Kind) => "area: the one type of work a Ticket does, one per Ticket; modifier: only changes rows, and combines with an area. Enter or Space toggles.".to_string(),
             Some(LabelItem::Skills) => "The skills its code-editing Stages load, from the ones installed: Enter picks them, or types a source to install one first.".to_string(),
@@ -1120,7 +1121,7 @@ impl Settings {
             Some(LabelItem::Position) => "When the Extra review runs: every Round, after the Review; the first Round only; or before the PR, after the last Round. Enter or Space cycles.".to_string(),
             Some(LabelItem::Debate) => "on: its Findings join the Debate; off: they go straight to the Fix as fix items, not debated. Enter or Space toggles.".to_string(),
             Some(LabelItem::Extra(_)) => "The Extra review's App, model and effort: an empty field falls back to the Review's row. Enter picks.".to_string(),
-            Some(LabelItem::Row(r, _)) => format!("Overrides the repo's {} row for a Ticket with this label: an empty field falls through to the repo's. Enter picks; 'repo's row' empties it.", row(*r)),
+            Some(LabelItem::Row(r, _)) => format!("Overrides the repo's {} row for a Ticket with this label: an empty field falls through to the repo's. Enter picks; 'repo's row' empties it.", ROWS[*r].name),
             _ => "One line given to its code-editing Stages as an Input. Enter types it; nothing clears it.".to_string(),
         }
     }
@@ -1148,14 +1149,6 @@ impl Settings {
     /// The open label's rules over the rows it sets, each held or broken.
     pub(crate) fn label_checks(&self) -> Vec<Check> {
         app::label_checks_of(&self.doc, self.label.as_deref().unwrap_or_default())
-    }
-
-    /// Whether the open label's Extra review is debated: on until set off.
-    pub(crate) fn extra_debate(&self) -> bool {
-        let name = self.label.as_deref().unwrap_or_default();
-        self.doc["labels"][name]["extra_review"]["debate"]
-            .as_bool()
-            .unwrap_or(true)
     }
 
     /// A label name as typed, as bd takes a label: not empty, no whitespace,
@@ -1401,6 +1394,15 @@ fn put_override(
             false => holder[field.key()] = json!(value),
         }
     }
+    // An App or model of its own plans on one model, as put's new App
+    // does: the repo's split may not fit it.
+    if scope == Scope::Label && key == "implement" {
+        let row = holder.as_object_mut().unwrap();
+        match row.contains_key("app") || row.contains_key("model") {
+            true => _ = row.insert(Field::Plan.key().into(), json!("default")),
+            false => _ = row.remove(Field::Plan.key()),
+        }
+    }
     if scope != Scope::Extra {
         let rows = entry["rows"].as_object_mut().unwrap();
         rows.retain(|_, row| row.as_object().is_none_or(|fields| !fields.is_empty()));
@@ -1458,7 +1460,10 @@ fn staged(
 /// mends one rule at a time.
 fn broken_by(before: &Value, after: &Value) -> Option<Check> {
     let was = app::checks(before);
-    let was_broken = |c: &Check| was.iter().any(|w| w.rows == c.rows && !w.holds);
+    let was_broken = |c: &Check| {
+        was.iter()
+            .any(|w| w.rows == c.rows && w.label == c.label && !w.holds)
+    };
     app::checks(after)
         .into_iter()
         .find(|c| !c.holds && !was_broken(c))
@@ -1830,10 +1835,9 @@ impl Screen {
     /// model list whose App could not list its models raises a red Notice
     /// modal with the App's error over it.
     fn open_pick(&mut self, row: usize, field: Field, app: Option<&'static App>, scope: Scope) {
-        let templates = setup::template_files(&self.cfg.repo.join(setup::TEMPLATE_DIR));
         let st = self.settings.as_mut().unwrap();
         if field == Field::Template {
-            st.templates = templates;
+            st.templates = setup::template_files(&self.cfg.repo.join(setup::TEMPLATE_DIR));
         }
         let mut pick = Pick {
             scope,
@@ -2005,38 +2009,34 @@ impl Screen {
         if fields.iter().all(|(f, v)| st.own(scope, row, *f) == *v) {
             return;
         }
-        let staged = app::read_object(&repo).and_then(|(_, read)| {
+        let staged = app::read_object(&repo).and_then(|(path, read)| {
             let mut doc = read.clone();
             let labels = doc["labels"]
                 .as_object_mut()
                 .ok_or_else(|| "labels in config.json is not an object".to_string())?;
             put_override(labels, &name, scope, key, &fields)?;
-            match broken_by(&read, &doc).filter(|_| scope == Scope::Label) {
-                Some(broken) => Err(broken.text),
-                None => Ok(doc),
+            if let Some(broken) = broken_by(&read, &doc).filter(|_| scope == Scope::Label) {
+                return Err(broken.text);
             }
+            let view = match scope {
+                Scope::Extra => app::with_extra(&doc, &name),
+                _ => app::with_label(&doc, &name),
+            };
+            app::row_in(&view, key, &path)
         });
-        let doc = match staged {
-            Ok(doc) => doc,
+        let row_now = match staged {
+            Ok(row_now) => row_now,
             Err(err) => {
                 st.note = Some((format!("Refused: {err}. Nothing changed."), RED));
                 return;
             }
         };
-        let view = match scope {
-            Scope::Extra => app::with_extra(&doc, &name),
-            _ => app::with_label(&doc, &name),
-        };
         let named = fields
             .iter()
             .any(|(f, v)| *f == Field::Model && !v.is_empty());
-        let staged = app::row_in(&view, key, Path::new(""));
-        let Some(row_now) = staged.ok().filter(|_| named) else {
-            return self.save_in(scope, row, &fields);
-        };
         let model = row_now.model;
-        if model == "default" || st.probed.contains(&(row_now.app.name, model.clone())) {
-            return self.save_in(scope, row, &fields);
+        if !named || model == "default" || st.probed.contains(&(row_now.app.name, model.clone())) {
+            return self.save_override(scope, row, &fields);
         }
         self.start_probe(scope, row, fields, row_now.app, model);
     }
@@ -2054,7 +2054,10 @@ impl Screen {
         match result {
             Ok(_) => {
                 st.probed.push((probe.app, probe.model));
-                self.save_in(probe.scope, probe.row, &probe.fields);
+                match probe.scope {
+                    Scope::Repo => self.save(probe.row, &probe.fields),
+                    scope => self.save_override(scope, probe.row, &probe.fields),
+                }
             }
             Err(err) => {
                 let why = refusal(&err);
@@ -2775,24 +2778,10 @@ impl Screen {
         );
     }
 
-    /// save for a scope.
-    fn save_in(&mut self, scope: Scope, row: usize, fields: &[(Field, String)]) {
-        match scope {
-            Scope::Repo => self.save(row, fields),
-            scope => self.save_override(scope, row, fields),
-        }
-    }
-
     /// The change into the open label's entry: "orqa:be implement model
     /// opus", or "is the repo's" for an emptied field.
     fn save_override(&mut self, scope: Scope, row: usize, fields: &[(Field, String)]) {
-        let name = self
-            .settings
-            .as_ref()
-            .unwrap()
-            .label
-            .clone()
-            .unwrap_or_default();
+        let name = self.open_label();
         let (what, falls) = match scope {
             Scope::Extra => ("extra review".to_string(), "the Review's"),
             _ => (ROWS[row].key.replace('_', " "), "the repo's"),
@@ -2810,6 +2799,16 @@ impl Screen {
             move |labels| put_override(labels, &label, scope, key, &fields),
             text,
         );
+    }
+
+    /// The name of the label open on the Labels page; empty with none.
+    fn open_label(&self) -> String {
+        self.settings
+            .as_ref()
+            .unwrap()
+            .label
+            .clone()
+            .unwrap_or_default()
     }
 
     /// Enter (or Space, when it toggles) on an item of the open label's
@@ -2835,9 +2834,7 @@ impl Screen {
         };
         let app = app(&value(&st.view(scope), row, Field::App));
         match app {
-            Some(app)
-                if field == Field::Effort && scope != Scope::Repo && app.effort.is_empty() =>
-            {
+            Some(app) if field == Field::Effort && app.effort.is_empty() => {
                 let text = format!("{} has no effort flag.", app.name);
                 st.note = Some((text, MUTED));
             }
@@ -2865,7 +2862,8 @@ impl Screen {
     /// Enter or Space on Debate: its Findings join it, or go straight to
     /// the Fix.
     fn toggle_debate(&mut self, name: &str) {
-        let on = !self.settings.as_ref().unwrap().extra_debate();
+        let st = self.settings.as_ref().unwrap();
+        let on = !st.label_of(name).is_ok_and(|l| l.extra_review.debate);
         let text = match on {
             true => format!("orqa:{name} Extra review Findings join the Debate"),
             false => {
@@ -2878,13 +2876,7 @@ impl Screen {
     /// An Extra review skill picked: none clears it, and with it the Extra
     /// review.
     fn pick_extra_skill(&mut self, skill: &str) {
-        let name = self
-            .settings
-            .as_ref()
-            .unwrap()
-            .label
-            .clone()
-            .unwrap_or_default();
+        let name = self.open_label();
         let text = match skill.is_empty() {
             true => format!("orqa:{name} has no Extra review"),
             false => format!("orqa:{name} Extra review is {skill}"),
@@ -2911,13 +2903,7 @@ impl Screen {
     /// A PR template picked: a file of the directory, or default, which
     /// takes the mapping off the entry.
     fn pick_template(&mut self, file: &str) {
-        let name = self
-            .settings
-            .as_ref()
-            .unwrap()
-            .label
-            .clone()
-            .unwrap_or_default();
+        let name = self.open_label();
         let text = match file.is_empty() {
             true => format!("orqa:{name} uses the default PR template"),
             false => format!("orqa:{name} uses the PR template {file}"),
@@ -2927,13 +2913,7 @@ impl Screen {
 
     /// The entry's pr_template set to file; empty removes it.
     fn map_template(&mut self, file: &str, text: String) {
-        let name = self
-            .settings
-            .as_ref()
-            .unwrap()
-            .label
-            .clone()
-            .unwrap_or_default();
+        let name = self.open_label();
         let file = file.to_string();
         self.save_label(
             move |labels| {
@@ -2980,13 +2960,7 @@ impl Screen {
     /// repo's, else Orqadence's) and the section, mapped on the label.
     fn write_template(&mut self, section: &str) {
         let repo = &self.cfg.repo;
-        let name = self
-            .settings
-            .as_ref()
-            .unwrap()
-            .label
-            .clone()
-            .unwrap_or_default();
+        let name = self.open_label();
         let file = format!("{name}.md");
         let frame = setup::default_template(repo)
             .and_then(|path| std::fs::read_to_string(path).ok())

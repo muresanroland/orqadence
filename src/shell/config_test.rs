@@ -2418,8 +2418,8 @@ fn pick(s: &mut Screen, item: LabelItem, filter: &str) {
 }
 
 /// Setting orqa:be's implement model writes rows.implement.model, probed
-/// first as on the Stage pages; a row's "repo's row" empties the field, which
-/// removes it, and its row and rows with it.
+/// first as on the Stage pages, and plans on one model; a row's "repo's row"
+/// empties the field, which removes it, and its row and rows with it.
 #[test]
 fn a_labels_row_override_writes_its_field_and_emptying_it_removes_it() {
     let repo = TempDir::new();
@@ -2433,7 +2433,7 @@ fn a_labels_row_override_writes_its_field_and_emptying_it_removes_it() {
     await_probe(&mut s);
     assert_eq!(
         config_json(repo.path())["labels"]["be"],
-        json!({"kind": "area", "rows": {"implement": {"model": "opus"}}})
+        json!({"kind": "area", "rows": {"implement": {"model": "opus", "plan_model": "default"}}})
     );
     assert_eq!(
         note(&s),
@@ -2454,6 +2454,73 @@ fn a_labels_row_override_writes_its_field_and_emptying_it_removes_it() {
         note(&s),
         "orqa:be implement model is the repo's, saved uncommitted in .orqadence/config.json"
     );
+}
+
+/// A label's implement App over the repo's split plans on one model: the
+/// split runs on claude only, so codex would be refused with no split
+/// control on the label's page to mend it.
+#[test]
+fn a_labels_implement_app_over_a_split_plans_on_one_model() {
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"implement": {"model": "claude-opus-5-5", "plan_model": "claude-fable-5-1"},
+            "labels": {"be": {"kind": "area"}}}"#,
+    );
+    let mut s = open_label(apps(""), repo.path());
+    pick(&mut s, LabelItem::Row(0, Field::App), "codex");
+    type_in(&mut s, "gpt-6");
+    s.key(key(KeyCode::Enter));
+    await_probe(&mut s);
+    assert_eq!(
+        config_json(repo.path())["labels"]["be"]["rows"],
+        json!({"implement": {"app": "codex", "model": "gpt-6-sol", "plan_model": "default"}}),
+        "{}",
+        note(&s)
+    );
+}
+
+/// One label's broken Debate rule does not hide another label's: the
+/// second label to break it is refused.
+#[test]
+fn a_rule_one_label_breaks_is_refused_on_another() {
+    let repo = TempDir::new();
+    let file = repo.path().join(".orqadence/config.json");
+    let text = r#"{"side_a": {"model": "claude-opus-5-5"}, "labels": {
+        "a": {"kind": "modifier", "rows": {"side_b": {"app": "claude", "model": "claude-opus-5-5"}}},
+        "b": {"kind": "modifier"}}}"#;
+    write_file(&file, text);
+    let mut s = labels_page(apps(""), repo.path());
+    keys(&mut s, &[KeyCode::Down, KeyCode::Enter]);
+    pick(&mut s, LabelItem::Row(5, Field::App), "claude");
+    type_in(&mut s, "type");
+    s.key(key(KeyCode::Enter));
+    type_line(&mut s, "claude-opus-5-5");
+    assert!(note(&s).starts_with("Refused: b side_b:"), "{}", note(&s));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+}
+
+/// An Extra review model of none is refused, unprobed, as on the Stage
+/// pages: the review row would run on no model.
+#[test]
+fn an_extra_review_model_of_none_is_refused_unprobed() {
+    let repo = TempDir::new();
+    let file = repo.path().join(".orqadence/config.json");
+    write_file(&file, EXTRA);
+    let mut s = labels_page(apps(""), repo.path());
+    keys(&mut s, &[KeyCode::Down, KeyCode::Enter]);
+    pick(&mut s, LabelItem::Extra(Field::Model), "type");
+    type_line(&mut s, "none");
+    assert!(s.settings.as_ref().unwrap().probe.is_none());
+    assert_eq!(
+        note(&s),
+        format!(
+            "Refused: {}: review model none: only review_if_limited takes none. \
+             Nothing changed.",
+            file.display()
+        )
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), EXTRA);
 }
 
 /// security with its Extra review, and codex-review, a Modifier.

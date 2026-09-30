@@ -675,7 +675,7 @@ pub(crate) struct Label {
 }
 
 /// The Extra review a label adds: none while its skill is empty.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(default)]
 pub(crate) struct ExtraReview {
     /// Its review skill, in place of the review pick's.
@@ -686,7 +686,6 @@ pub(crate) struct ExtraReview {
     pub(crate) position: String,
     /// Its Findings join the Debate (the default), or go straight to the
     /// Fix as fix items not debated.
-    #[serde(default = "debate_on")]
     pub(crate) debate: bool,
     /// Its row; each empty field is the Review's.
     pub(crate) app: String,
@@ -694,8 +693,17 @@ pub(crate) struct ExtraReview {
     pub(crate) effort: String,
 }
 
-fn debate_on() -> bool {
-    true
+impl Default for ExtraReview {
+    fn default() -> Self {
+        ExtraReview {
+            skill: String::new(),
+            position: String::new(),
+            debate: true,
+            app: String::new(),
+            model: String::new(),
+            effort: String::new(),
+        }
+    }
 }
 
 /// The Extra review of the Ticket's Area label, read from config.json as
@@ -787,20 +795,22 @@ pub(crate) fn with_label(doc: &Value, name: &str) -> Value {
 /// with_label, then each field the label's Extra review sets over the
 /// review row: the row the Extra review runs on.
 pub(crate) fn with_extra(doc: &Value, name: &str) -> Value {
-    let mut doc = with_label(doc, name);
-    if let Some(Ok(label)) = labels(&doc).remove(name) {
-        let extra = label.extra_review;
-        for (name, value) in [
-            ("app", extra.app),
-            ("model", extra.model),
-            ("effort", extra.effort),
-        ] {
-            if !value.is_empty() {
-                if !doc["review"].is_object() {
-                    doc["review"] = json!({});
-                }
-                doc["review"][name] = json!(value);
-            }
+    let mut doc = doc.clone();
+    let Some(Ok(label)) = labels(&doc).remove(name) else {
+        return doc;
+    };
+    put_rows(&mut doc, &label);
+    if !doc["review"].is_object() {
+        doc["review"] = json!({});
+    }
+    let extra = label.extra_review;
+    for (name, value) in [
+        ("app", extra.app),
+        ("model", extra.model),
+        ("effort", extra.effort),
+    ] {
+        if !value.is_empty() {
+            doc["review"][name] = json!(value);
         }
     }
     doc
@@ -1128,6 +1138,8 @@ fn model_id(app: &App, model: &str) -> Option<String> {
 /// and what it says. /config flags a bad floor as one, its key for the row.
 pub(crate) struct Check {
     pub(crate) rows: &'static [&'static str],
+    /// The Ticket label whose rows it reads; None for config.json's own.
+    pub(crate) label: Option<String>,
     pub(crate) holds: bool,
     pub(crate) text: String,
 }
@@ -1151,6 +1163,7 @@ fn debate(a: Option<&str>, b: Option<&str>) -> Check {
     };
     Check {
         rows: &["side_a", "side_b"],
+        label: None,
         holds,
         text,
     }
@@ -1204,7 +1217,12 @@ fn rules(doc: &Value) -> Vec<Check> {
                 )
             }
         };
-        out.push(Check { rows, holds, text });
+        out.push(Check {
+            rows,
+            label: None,
+            holds,
+            text,
+        });
     }
     if let (Some(a), Some(b)) = (row("side_a"), row("side_b")) {
         out.push(debate(family_of(a.0, &a.1), family_of(b.0, &b.1)));
@@ -1242,6 +1260,7 @@ pub(crate) fn label_checks_of(doc: &Value, name: &str) -> Vec<Check> {
         ) {
             out.push(Check {
                 rows: std::slice::from_ref(key),
+                label: Some(name.to_string()),
                 holds: false,
                 text: format!("{name} {}", err.trim_start_matches(": ")),
             });
@@ -1256,6 +1275,7 @@ pub(crate) fn label_checks_of(doc: &Value, name: &str) -> Vec<Check> {
             .collect();
         if !set.is_empty() {
             out.push(Check {
+                label: Some(name.to_string()),
                 text: format!("{name} {}: {}", set.join(" and "), check.text),
                 ..check
             });

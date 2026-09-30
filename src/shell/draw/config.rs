@@ -342,7 +342,7 @@ fn label_page(st: &Settings, name: &str, width: usize) -> (Vec<Line<'static>>, u
                 )],
             ),
             LabelItem::Debate => {
-                let on = st.extra_debate();
+                let on = label.extra_review.debate;
                 let detail = match on {
                     true => "  joins the Debate",
                     false => "  straight to the Fix",
