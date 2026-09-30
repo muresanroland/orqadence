@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # orqa-infra-review's fetch.sh: fills ORQA_CACHE with what the offline review
-# reads (Terraform providers, tflint plugins, kubeconform schemas) for the
-# files the diff against ORQA_BASE touches. The Orchestrator runs it with
+# reads (Terraform providers and modules, tflint plugins, kubeconform schemas)
+# for the files the diff against ORQA_BASE touches. The Orchestrator runs it with
 # network in the Ticket's worktree before each orqa:infra Extra review. It
 # only reads the worktree: Terraform inits in a temp copy of the committed
 # tree, and kubeconform reads the manifests and charts where they are.
@@ -26,7 +26,7 @@ touched=$(git -c core.quotePath=false diff --name-only "$ORQA_BASE...HEAD")
 roots='' charts='' manifests=''
 for f in $touched; do
 	case $f in
-	*.tf | *.tf.json | *.tfvars | *.tftest.hcl | *.terraform.lock.hcl)
+	*.tf | *.tf.json | *.tfvars | *.tfvars.json | *.tftest.hcl | *.tftest.json | *.terraform.lock.hcl)
 		dir=$(dirname "$f")
 		if [ "$(basename "$dir")" = tests ]; then dir=$(dirname "$dir"); fi
 		if compgen -G "$dir/*.tf" >/dev/null || compgen -G "$dir/*.tf.json" >/dev/null; then
@@ -52,13 +52,39 @@ if [ -n "$roots" ]; then
 	# resolve; copy only the roots and their local modules if repos get big.
 	copy=$(mktemp -d)
 	trap 'rm -rf "$copy"' EXIT
-	git archive HEAD | tar -xf - -C "$copy"
+	head=$(git rev-parse HEAD)
+	git archive "$head" | tar -xf - -C "$copy"
 	mkdir -p "$ORQA_CACHE/providers" "$ORQA_CACHE/tflint"
+	# Terraform calls two inits sharing a plugin cache undefined, and the
+	# scheduler runs Tickets at once: one fetch holds the cache until it exits.
+	# mkdir is atomic everywhere; macOS has no flock.
+	# ponytail: a fetch killed with SIGKILL leaves the lock; rmdir it by hand.
+	lock=$ORQA_CACHE/providers.lock
+	until mkdir "$lock" 2>/dev/null; do sleep 1; done
+	trap 'rm -rf "$copy" "$lock"' EXIT
 	for root in $(printf '%s' "$roots" | sort -u); do
 		# The copy's lock file is thrown away, so the cache may disagree with it.
 		(cd "$copy/$root" && TF_PLUGIN_CACHE_DIR="$ORQA_CACHE/providers" \
 			TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true \
 			terraform init -backend=false -input=false >/dev/null)
+		# The modules init installed (registry and git ones, which the offline
+		# review cannot fetch) are kept as modules/<HEAD>/<root>/.terraform/modules:
+		# keyed by commit, so another worktree's fetch never replaces the snapshot
+		# this review reads, and a snapshot never holds another commit's modules.
+		# A root with no module call writes none, and one already there is kept.
+		# The copy lands by rename from a folder of its own, so a run killed
+		# halfway leaves no half-copied entry.
+		# ponytail: two fetches of one commit at once would leave a stray
+		# folder inside the snapshot; each Ticket has its own HEAD, so none do.
+		# ponytail: snapshots of old commits pile up; prune by age if the cache grows.
+		modules=$copy/$root/.terraform/modules
+		dest=$ORQA_CACHE/modules/$head/$root/.terraform/modules
+		if [ -d "$modules" ] && [ ! -d "$dest" ]; then
+			mkdir -p "$(dirname "$dest")"
+			new=$(mktemp -d "$dest.XXXXXX")
+			cp -Rf "$modules/." "$new"
+			mv "$new" "$dest"
+		fi
 	done
 	# tflint reads the .tflint.hcl in its folder; only a plugin with a source
 	# is downloaded, from GitHub, which allows 60 calls an hour without a token.
