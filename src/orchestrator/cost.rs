@@ -2,18 +2,19 @@
 //! API-equivalent dollars of every session started in its worktree or its
 //! Run directory, read from the transcripts claude, codex and pi keep under
 //! home, and its time, read from the orchestrator log. TypeSafe's
-//! Judgments are not counted.
+//! Judgments are not counted. Prices come from prices.json alone, which the
+//! update check keeps from LiteLLM's catalog.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use chrono::{NaiveDateTime, TimeDelta};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::stage::{run_dir, worktree};
-use super::state::LOCAL;
+use super::state::{local_dir, LOCAL};
 use super::trust::claude_slug;
 
 /// The Apps whose transcripts are read; any other is not supported yet.
@@ -40,10 +41,10 @@ impl Cost {
     }
 
     /// Tokens of kind [input, cache write 5m, cache write 1h, cache read,
-    /// output] on model, priced by PRICES.
-    fn charge(&mut self, model: &str, tokens: [u64; 5]) {
+    /// output], priced per million tokens by per.
+    fn charge(&mut self, per: Option<[f64; 5]>, tokens: [u64; 5]) {
         self.tokens += tokens.iter().sum::<u64>();
-        match price(model) {
+        match per {
             Some(per) => {
                 let millionths: f64 = tokens.iter().zip(per).map(|(n, p)| *n as f64 * p).sum();
                 self.dollars += millionths / 1e6;
@@ -53,48 +54,102 @@ impl Cost {
     }
 }
 
-/// List prices per million tokens: input, cache write 5m, cache write 1h,
-/// cache read, output. OpenAI charges no cache write. Claude's from the
-/// claude-api skill, OpenAI's from its pricing page's Standard tier, both
-/// read 2026-09-26.
-// ponytail: short-context rates; OpenAI doubles them past its long-context
-// threshold, and Claude's fast mode is priced as standard.
-const PRICES: [(&str, [f64; 5]); 18] = [
-    ("claude-fable-5-1", [10.0, 12.5, 20.0, 0.25, 50.0]),
-    ("claude-mythos-5-1", [10.0, 12.5, 20.0, 0.25, 50.0]),
-    ("claude-fable-5", [10.0, 12.5, 20.0, 1.0, 50.0]),
-    ("claude-mythos-5", [10.0, 12.5, 20.0, 1.0, 50.0]),
-    ("claude-opus-5-5", [4.0, 5.0, 8.0, 0.2, 20.0]),
-    ("claude-opus-5", [5.0, 6.25, 10.0, 0.5, 25.0]),
-    ("claude-opus-4-8", [5.0, 6.25, 10.0, 0.5, 25.0]),
-    ("claude-opus-4-7", [5.0, 6.25, 10.0, 0.5, 25.0]),
-    ("claude-opus-4-6", [5.0, 6.25, 10.0, 0.5, 25.0]),
-    ("claude-sonnet-5", [2.0, 2.5, 4.0, 0.2, 10.0]),
-    ("claude-sonnet-4-6", [3.0, 3.75, 6.0, 0.3, 15.0]),
-    ("claude-haiku-4-5", [1.0, 1.25, 2.0, 0.1, 5.0]),
-    ("gpt-6-astra", [10.0, 0.0, 0.0, 1.0, 50.0]),
-    ("gpt-6-sol", [2.0, 0.0, 0.0, 0.2, 10.0]),
-    ("gpt-6-luna", [0.1, 0.0, 0.0, 0.01, 0.5]),
-    ("gpt-5.6-sol", [4.0, 0.0, 0.0, 0.4, 20.0]),
-    ("gpt-5.6-luna", [0.2, 0.0, 0.0, 0.02, 1.2]),
-    ("gpt-5.3-codex", [1.75, 0.0, 0.0, 0.175, 14.0]),
-];
-
 /// A model's prices: its id alone, or with a date after it
 /// (claude-haiku-4-5-20251001).
-fn price(model: &str) -> Option<[f64; 5]> {
+fn price(kept: &BTreeMap<String, [f64; 5]>, model: &str) -> Option<[f64; 5]> {
     let dated = |rest: &str| {
         rest.strip_prefix('-')
             .is_some_and(|date| date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit()))
     };
-    PRICES
-        .iter()
+    kept.iter()
         .find(|(id, _)| {
             model
-                .strip_prefix(id)
+                .strip_prefix(id.as_str())
                 .is_some_and(|rest| rest.is_empty() || dated(rest))
         })
         .map(|(_, per)| *per)
+}
+
+/// prices.json's fields, per million tokens, in the order charge takes them.
+const KINDS: [&str; 5] = [
+    "input",
+    "cache_write_5m",
+    "cache_write_1h",
+    "cache_read",
+    "output",
+];
+
+pub(crate) fn prices_file(repo: &Path) -> PathBuf {
+    repo.join(LOCAL).join("prices.json")
+}
+
+/// The prices kept in prices.json by model; none when it is missing, and a
+/// model missing a field is left out.
+fn kept(repo: &Path) -> BTreeMap<String, [f64; 5]> {
+    let raw = fs::read(prices_file(repo)).unwrap_or_default();
+    let doc: Map<String, Value> = serde_json::from_slice(&raw).unwrap_or_default();
+    doc.into_iter()
+        .filter_map(|(model, per)| {
+            let per = KINDS.map(|kind| per[kind].as_f64());
+            per.iter()
+                .all(Option::is_some)
+                .then(|| (model, per.map(Option::unwrap)))
+        })
+        .collect()
+}
+
+/// Keeps in prices.json what catalog, LiteLLM's
+/// model_prices_and_context_window.json, charges for each of models, by the
+/// name it lists it under: a model it has no input or output price for is
+/// left out, and the file's other models stay, since past Tickets ran on
+/// them. The models kept; with none, the file is not written.
+// ponytail: short-context rates; the catalog's _above_272k_tokens ones are
+// not kept, and Claude's fast mode is priced as standard.
+pub(crate) fn keep_prices(
+    repo: &Path,
+    catalog: &Value,
+    models: &BTreeSet<String>,
+) -> io::Result<Vec<String>> {
+    let mut prices = kept(repo);
+    let mut added = Vec::new();
+    for model in models {
+        let entry = &catalog[model.as_str()];
+        // per token to per million, to the millionth of a dollar
+        let per = |key: &str| entry[key].as_f64().map(|p| (p * 1e12).round() / 1e6);
+        let (Some(input), Some(output)) =
+            (per("input_cost_per_token"), per("output_cost_per_token"))
+        else {
+            continue;
+        };
+        let write = per("cache_creation_input_token_cost").unwrap_or(input);
+        let write_1h = per("cache_creation_input_token_cost_above_1hr").unwrap_or(write);
+        let read = per("cache_read_input_token_cost").unwrap_or(input);
+        prices.insert(model.clone(), [input, write, write_1h, read, output]);
+        added.push(model.clone());
+    }
+    if added.is_empty() {
+        return Ok(added);
+    }
+    let doc: Map<String, Value> = prices
+        .into_iter()
+        .map(|(model, per)| {
+            (
+                model,
+                KINDS
+                    .into_iter()
+                    .map(String::from)
+                    .zip(per.map(Value::from))
+                    .collect(),
+            )
+        })
+        .collect();
+    // Whole through a temp file, as app::write, so a summary never reads half.
+    local_dir(repo)?;
+    let path = prices_file(repo);
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
+    fs::rename(&tmp, &path)?;
+    Ok(added)
 }
 
 /// Each Ticket's Cost by its id: a transcript is a Ticket's when its
@@ -106,6 +161,7 @@ pub(crate) fn costs(home: &Path, repo: &Path, tickets: &[&str]) -> HashMap<Strin
         .flat_map(|t| [(worktree(repo, t), *t), (run_dir(repo, t), *t)])
         .collect();
     let mut out: HashMap<String, Cost> = HashMap::new();
+    let prices = kept(repo);
     let mut found = |ticket: &str, app: &str| {
         let cost = out.entry(ticket.to_string()).or_default();
         cost.apps.insert(app.to_string());
@@ -197,7 +253,7 @@ pub(crate) fn costs(home: &Path, repo: &Path, tickets: &[&str]) -> HashMap<Strin
     for (ticket, model, tokens) in messages.into_values().chain(codex) {
         out.entry(ticket.to_string())
             .or_default()
-            .charge(&model, tokens);
+            .charge(price(&prices, &model), tokens);
     }
     for (ticket, tokens, dollars) in pi {
         let cost = out.entry(ticket.to_string()).or_default();

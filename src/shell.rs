@@ -438,14 +438,22 @@ impl Screen {
 
     /// The updater thread: one check now, then one every `every`, each handed
     /// to poll(); it never renames, and stops once it has handed over a
-    /// release, one replace per process. A dev build's check asks nothing.
+    /// release, one replace per process. Each check keeps the prices of the
+    /// models in use first, a failure handed over as a failed check. A dev
+    /// build's check asks nothing.
     pub(crate) fn check_updates(&self, releases: Arc<dyn Releases>, every: Duration) {
-        let (version, exe, tx) = (
+        let (version, exe, repo, tx) = (
             self.version.clone(),
             self.cfg.exe.clone(),
+            self.cfg.repo.clone(),
             self.update_sender.clone(),
         );
         thread::spawn(move || loop {
+            if let Err(err) = update::refresh_prices(&*releases, &version, &repo) {
+                if tx.send(Err(format!("prices: {err}"))).is_err() {
+                    return;
+                }
+            }
             let checked = update::check(&*releases, &version, &exe);
             let done = matches!(checked, Ok(Some(_)));
             if tx.send(checked).is_err() || done {
