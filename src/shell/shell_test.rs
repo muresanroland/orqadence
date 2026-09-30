@@ -316,7 +316,8 @@ fn the_idle_header_at_104x8_lights_the_bottom_right_pane_and_holds_the_cursor() 
             "│  └────┘ ▝▀▀▀▀▘                     ██                                                                │",
             "╰────────────────────────────────────────────────────────────────────────────────────────── v1.3.0-dev ╯",
         ]
-        .map(|r| r.replace("v1.3.0-dev", &s.version))
+        // The version pushes the border's dashes aside: a longer one takes one.
+        .map(|r| r.replace("── v1.3.0-dev", &format!("{:─>13}", format!(" {}", s.version))))
     );
     assert_eq!(buf[(0, 0)].fg, FRAME);
     assert_eq!(buf[(96, 0)].fg, YELLOW, "the folder");

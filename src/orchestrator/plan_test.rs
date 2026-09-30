@@ -1191,5 +1191,8 @@ fn an_open_question_after_a_longer_fence_is_still_found() {
 fn an_open_question_under_an_indented_heading_is_still_found() {
     let plan = "# Plan\n\n   ## Open question\n\nWhich parser stays?\n\n  ## Steps\n\n1. Parse.\n";
     assert_eq!(open_question(plan).as_deref(), Some("Which parser stays?"));
-    assert_eq!(open_question("# Plan\n\n    ## Open question\n\nNot one.\n"), None);
+    assert_eq!(
+        open_question("# Plan\n\n    ## Open question\n\nNot one.\n"),
+        None
+    );
 }

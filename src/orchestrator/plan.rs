@@ -694,7 +694,11 @@ pub(super) fn open_question(plan: &str) -> Option<String> {
         (line, level)
     });
     let at = lines.by_ref().find_map(|(line, level)| {
-        let text = line.trim_start().trim_start_matches('#').trim().to_lowercase();
+        let text = line
+            .trim_start()
+            .trim_start_matches('#')
+            .trim()
+            .to_lowercase();
         (level > 0 && text.starts_with("open question")).then_some(level)
     })?;
     let question: Vec<&str> = lines
