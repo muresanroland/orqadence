@@ -3,7 +3,7 @@ use super::brand::{
     PINK, PURPLE, RED, TEXT, WORDMARK, YELLOW,
 };
 use super::draw::{draw, ticket_color};
-use super::{About, Epic, Pending, Screen};
+use super::{About, Epic, NoticeKind, Pending, Screen};
 use crate::orchestrator::app::set_max_tickets;
 use crate::orchestrator::judgment::fake::Fake as TypeSafeFake;
 use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
@@ -24,7 +24,9 @@ use crate::tools::fake::Fake;
 use crate::tools::Tools;
 use crate::update::{binary, FakeReleases, EVERY};
 use chrono::TimeZone;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::style::{Color, Modifier};
@@ -5997,4 +5999,211 @@ fn on_call_rings_a_failure_after_the_summary() {
         messages(&bell),
         ["hx · run done · Epic hx", "hx · run stopped · Epic hx"]
     );
+}
+
+/// The front Notice modal's text, "" when none shows.
+fn notice_modal(s: &Screen) -> &str {
+    s.notices.first().map_or("", |n| n.text.as_str())
+}
+
+/// A Notice modal over /config takes every key: one other than Enter or Esc
+/// is swallowed, Enter or Esc closes it, and /config keeps its cursor and
+/// takes the next key.
+#[test]
+fn a_notice_over_config_takes_enter_and_config_keeps_its_state() {
+    let repo = TempDir::new();
+    let mut s = screen_at(Fake::quiet(), repo.path());
+    type_line(&mut s, "/config");
+    s.key(key(KeyCode::Down));
+    let section = |s: &Screen| s.settings.as_ref().unwrap().section;
+    assert_eq!(section(&s), 1);
+
+    s.notify(NoticeKind::Error, "the model listing failed", None);
+    s.key(key(KeyCode::Down));
+    s.key(key(KeyCode::Char('x')));
+    assert_eq!(section(&s), 1, "/config's cursor moved under the notice");
+    assert!(s.input.is_empty(), "{:?}", s.input);
+    assert_eq!(notice_modal(&s), "the model listing failed");
+
+    s.key(key(KeyCode::Enter));
+    assert_eq!(notice_modal(&s), "");
+    let st = s.settings.as_ref().expect("/config closed with the notice");
+    assert_eq!((st.section, st.open), (1, false));
+    s.key(key(KeyCode::Down));
+    assert_eq!(section(&s), 2, "/config did not take the next key");
+
+    s.notify(NoticeKind::Error, "the probe was refused", None);
+    s.key(key(KeyCode::Esc));
+    assert_eq!(notice_modal(&s), "");
+    assert_eq!(section(&s), 2, "Esc reached /config");
+}
+
+/// Over the Shell a Notice modal swallows a typed key, and a click or a
+/// wheel notch closes nothing and scrolls nothing; Esc closes it.
+#[test]
+fn a_notice_swallows_typing_and_the_mouse_and_esc_closes_it() {
+    let mut s = screen();
+    s.notify(NoticeKind::Info, "saved", None);
+    s.key(key(KeyCode::Char('x')));
+    assert!(s.input.is_empty(), "{:?}", s.input);
+    render(&s, 80, 24);
+    let r = s.recent_area.get();
+    let at = (r.x + 2, r.y + 1);
+    s.mouse(wheel(MouseEventKind::ScrollUp, at));
+    s.mouse(wheel(MouseEventKind::Down(MouseButton::Left), at));
+    assert_eq!(s.recent.get(), 0, "the wheel scrolled RECENT");
+    assert_eq!(notice_modal(&s), "saved", "a click closed it");
+    s.key(key(KeyCode::Esc));
+    assert_eq!(notice_modal(&s), "");
+}
+
+/// Two Notice modals show one after the other, the second waiting behind
+/// the first; Ctrl-C twice still exits over one.
+#[test]
+fn two_notices_show_one_after_the_other_and_ctrl_c_twice_exits() {
+    let mut s = screen();
+    s.notify(NoticeKind::Error, "first", None);
+    s.notify(NoticeKind::Info, "second", None);
+    assert_eq!(notice_modal(&s), "first");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(notice_modal(&s), "second");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(notice_modal(&s), "");
+
+    s.notify(NoticeKind::Error, "third", None);
+    let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    s.key(ctrl_c);
+    assert!(!s.quit, "one Ctrl-C exits");
+    assert_eq!(notice(&s), "press Ctrl-C again to exit");
+    s.key(ctrl_c);
+    assert!(s.quit, "two Ctrl-C do not exit");
+}
+
+/// An autoclose Notice modal closes after its length with no key pressed;
+/// any key but Enter or Esc stops its countdown for good. A queued one's
+/// countdown starts only when it shows.
+#[test]
+fn an_autoclose_notice_closes_by_itself_until_a_key_is_pressed() {
+    let now = chrono::Local::now();
+    let at = |secs: i64| now + chrono::Duration::seconds(secs);
+    let mut s = screen();
+    let clock = set_clock(&mut s.cfg, now);
+    let thirty = Some(Duration::from_secs(30));
+    s.notify(NoticeKind::Info, "updated", thirty);
+    *clock.lock().unwrap() = at(29);
+    s.tick();
+    assert_eq!(notice_modal(&s), "updated", "closed early");
+    *clock.lock().unwrap() = at(30);
+    s.tick();
+    assert_eq!(notice_modal(&s), "", "did not close by itself");
+
+    // A key stops it for good.
+    s.notify(NoticeKind::Info, "updated", thirty);
+    s.key(key(KeyCode::Char('x')));
+    *clock.lock().unwrap() = at(120);
+    s.tick();
+    assert_eq!(notice_modal(&s), "updated", "closed after a key");
+    s.key(key(KeyCode::Enter));
+
+    // Queued behind one with no autoclose, it counts from when it shows.
+    s.notify(NoticeKind::Error, "first", None);
+    s.notify(NoticeKind::Info, "queued", thirty);
+    *clock.lock().unwrap() = at(200);
+    s.tick();
+    s.key(key(KeyCode::Esc));
+    assert_eq!(notice_modal(&s), "queued");
+    *clock.lock().unwrap() = at(229);
+    s.tick();
+    assert_eq!(
+        notice_modal(&s),
+        "queued",
+        "its countdown ran while it waited"
+    );
+    *clock.lock().unwrap() = at(230);
+    s.tick();
+    assert_eq!(notice_modal(&s), "");
+}
+
+/// An Error Notice modal over the Shell, at 80x24 and 160x48: a 60-column
+/// box centred over a Clear, its border and ' ERROR ' red, the message
+/// wrapped whole to the box, and one [ OK ] focused on red.
+#[test]
+fn an_error_notice_draws_red_and_centred_over_the_shell() {
+    let mut s = screen();
+    let text = "claude refused the probe: the model opus-9 is not available \
+                on this account, pick another model or App";
+    s.notify(NoticeKind::Error, text, None);
+    for (w, h, at) in [(80, 24, (10, 9)), (160, 48, (50, 21))] {
+        let buf = render(&s, w, h);
+        assert_eq!(find(&buf, "╭ ERROR ─"), Some(at), "{:#?}", rows(&buf));
+        assert_eq!(buf[at].fg, RED);
+        assert_eq!(buf[(at.0 + 2, at.1)].fg, RED, "the title is not red");
+        let (x, y) = (at.0 + 2, at.1 + 1);
+        assert_eq!(
+            cols(&buf, y, x as usize, x as usize + 56).trim_end(),
+            "claude refused the probe: the model opus-9 is not",
+        );
+        assert_eq!(
+            cols(&buf, y + 1, x as usize, x as usize + 56).trim_end(),
+            "available on this account, pick another model or App",
+        );
+        let ok = find(&buf, "[ OK ]").expect("no [ OK ]");
+        assert_eq!(ok.1, at.1 + 4, "{:#?}", rows(&buf));
+        assert_eq!(buf[ok].bg, RED, "[ OK ] is not focused");
+        assert!(row(&buf, at.1 + 5).contains("╰"), "{:#?}", rows(&buf));
+    }
+}
+
+/// An Info Notice modal with an autoclose over /config: green, ' NOTICE ',
+/// and the time left at its foot.
+#[test]
+fn an_info_notice_counts_down_green_over_config() {
+    let repo = TempDir::new();
+    let mut s = screen_at(Fake::quiet(), repo.path());
+    set_clock(&mut s.cfg, chrono::Local::now());
+    type_line(&mut s, "/config");
+    s.notify(
+        NoticeKind::Info,
+        "Updated to version v1.5.0.",
+        Some(Duration::from_secs(30)),
+    );
+    for (w, h) in [(80, 24), (160, 48)] {
+        let buf = render(&s, w, h);
+        let at = find(&buf, "╭ NOTICE ─").expect("no NOTICE");
+        assert_eq!(buf[at].fg, GREEN);
+        assert!(find(&buf, "Updated to version v1.5.0.").is_some());
+        let (x, y) = find(&buf, "closes in 30s").expect("no countdown");
+        assert_eq!(buf[(x - 2, y)].symbol(), "╰", "{:#?}", rows(&buf));
+        assert!(find(&buf, "/config").is_some(), "/config is gone");
+    }
+}
+
+/// A message longer than the screen: the box takes the screen's height and
+/// ↑↓ scroll the message, every line of it reachable.
+#[test]
+fn a_notice_longer_than_the_screen_scrolls() {
+    let mut s = screen();
+    let text: Vec<String> = (1..=60).map(|n| format!("line {n:02}")).collect();
+    s.notify(NoticeKind::Error, &text.join("\n"), None);
+    for (w, h) in [(80, 24), (160, 48)] {
+        s.notices[0].scroll.set(0);
+        let shown = h as usize - 4;
+        let buf = render(&s, w, h);
+        assert!(row(&buf, 0).contains("╭ ERROR ─"), "{:#?}", rows(&buf));
+        assert!(row(&buf, h - 1).contains("↑↓ scrolls"), "{:#?}", rows(&buf));
+        assert!(find(&buf, "line 01").is_some());
+        let last = format!("line {shown:02}");
+        assert!(find(&buf, &last).is_some(), "{last} not shown");
+        let next = format!("line {:02}", shown + 1);
+        assert!(find(&buf, &next).is_none(), "{next} shown");
+        for _ in 0..100 {
+            s.key(key(KeyCode::Down));
+        }
+        let buf = render(&s, w, h);
+        assert!(find(&buf, "line 60").is_some(), "{:#?}", rows(&buf));
+        assert!(find(&buf, "line 01").is_none());
+        s.key(key(KeyCode::Up));
+        let buf = render(&s, w, h);
+        assert!(find(&buf, "line 60").is_none(), "↑ did not scroll back");
+    }
 }

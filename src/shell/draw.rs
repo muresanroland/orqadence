@@ -4,6 +4,7 @@
 //! notice line and the input line. A plan, a Wake or a Stage's own question
 //! docks the Shell beside it (draw/modal.rs), and so does /config
 //! (draw/config.rs); the Epic summary takes the whole terminal (draw/pager.rs).
+//! A Notice modal shows over all of them (draw/modal.rs).
 
 use std::sync::atomic::Ordering;
 
@@ -73,7 +74,8 @@ pub(crate) fn ticket_color(id: &str) -> Color {
 }
 
 /// The Shell over the whole terminal, or docked beside a plan, a Wake or a
-/// Stage's own question; the Epic summary over both.
+/// Stage's own question; the Epic summary over both; a Notice modal over
+/// whichever shows.
 pub(crate) fn draw(f: &mut Frame, s: &Screen) {
     if let Some(summary) = &s.summary {
         pager::pager(f, s, summary);
@@ -86,6 +88,9 @@ pub(crate) fn draw(f: &mut Frame, s: &Screen) {
         }
     } else {
         shell(f, f.area(), s);
+    }
+    if !s.notices.is_empty() {
+        modal::notice(f, s);
     }
     if !s.truecolor {
         for cell in f.buffer_mut().content.iter_mut() {
