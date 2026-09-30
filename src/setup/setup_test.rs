@@ -1,7 +1,7 @@
 use super::{ask_typesafe, install_skills, preflight, typesafe_key, warnings, yes};
 use crate::orchestrator::write_file;
 use crate::skills::manifest::{Manifest, JOBS, NONE};
-use crate::skills::SKILLS;
+use crate::skills::{EXTRA_FILES, SKILLS};
 use crate::tempdir::TempDir;
 use crate::tools::fake::Fake;
 use std::collections::BTreeMap;
@@ -376,7 +376,11 @@ fn install_skills_records_every_file_it_writes_without_a_gate() {
         "a fresh repo hit the gate:\n{out}"
     );
     let record = record(repo.path());
-    assert_eq!(record.len(), 6, "record: {record:?}");
+    assert_eq!(
+        record.len(),
+        SKILLS.len() + EXTRA_FILES.len(),
+        "record: {record:?}"
+    );
     for (rel, wrote) in &record {
         assert_eq!(
             fs::read_to_string(repo.path().join(rel)).unwrap(),
@@ -385,6 +389,23 @@ fn install_skills_records_every_file_it_writes_without_a_gate() {
         );
     }
     assert!(record.contains_key(STAGE_FIX), "record: {record:?}");
+}
+
+/// A Shipped skill's other files go beside its SKILL.md, executable, and
+/// are recorded like it.
+#[test]
+fn install_skills_writes_a_skills_other_files_beside_it_executable() {
+    let repo = TempDir::new();
+    install(repo.path(), "");
+    let at = repo
+        .path()
+        .join(".orqadence/skills/orqa-infra-review/fetch.sh");
+    let mode = fs::metadata(&at).unwrap().permissions().mode();
+    assert_eq!(mode & 0o111, 0o111, "fetch.sh mode {mode:o}");
+    assert_eq!(
+        record(repo.path())[".agents/skills/orqa-infra-review/fetch.sh"],
+        fs::read_to_string(&at).unwrap()
+    );
 }
 
 #[test]

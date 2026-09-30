@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
+use std::iter;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -17,7 +18,7 @@ use crate::orchestrator::app::{self, APPS};
 use crate::orchestrator::state::{self, local_dir};
 use crate::shell::brand::{self, BORDER, FRAME, GREEN, MUTED, PURPLE, TEXT, YELLOW};
 use crate::skills::manifest::{self, Installed, Manifest, FILES, JOBS, LINKS};
-use crate::skills::{stage_skill, CREATE_PR, SKILLS};
+use crate::skills::{stage_skill, CREATE_PR, EXTRA_FILES, SKILLS};
 use crate::tools::Tools;
 
 /// The record of every skill file init wrote, path to the text it wrote:
@@ -202,9 +203,9 @@ pub(crate) fn install_skills(
     unhide_links(repo)?;
     let (renamed, left) = manifest::prefix(repo, &mut manifest)?;
     for (old, new) in &renamed {
-        if let Some(wrote) = record.remove(&record_key(old)) {
+        if let Some(wrote) = record.remove(&record_key(old, "SKILL.md")) {
             record
-                .entry(record_key(new))
+                .entry(record_key(new, "SKILL.md"))
                 .or_insert_with(|| manifest::renamed(&wrote, new));
         }
         write!(out, "init: renamed {old} to {new}\r\n")?;
@@ -241,29 +242,40 @@ pub(crate) fn install_skills(
         Mode::Fresh
     };
     for &(name, body) in SKILLS {
-        let rel = record_key(name);
         manifest::move_in(repo, name)?;
-        let dest = manifest::skill_dir(repo, name).join("SKILL.md");
-        let existing = fs::symlink_metadata(&dest).ok();
+        let dir = manifest::skill_dir(repo, name);
+        let link = |path: &Path| {
+            fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+        };
         // A link is the repo's own arrangement: never written through.
-        if existing
-            .as_ref()
-            .is_some_and(|meta| meta.file_type().is_symlink())
-        {
+        if link(&dir.join("SKILL.md")) {
             continue;
         }
-        let write = match mode {
-            Mode::Overwrite => true,
-            Mode::Refresh => record
-                .get(&rel)
-                .is_some_and(|wrote| fs::read_to_string(&dest).is_ok_and(|now| now == *wrote)),
-            Mode::Fresh => existing.is_none(),
-        };
-        if write {
-            fs::create_dir_all(dest.parent().unwrap())?;
-            fs::write(&dest, body)?;
-            record.insert(rel, body.to_string());
-            manifest.skills.insert(name.to_string(), shipped());
+        let extra = EXTRA_FILES
+            .iter()
+            .filter(|(skill, ..)| *skill == name)
+            .map(|&(_, file, body)| (file, body));
+        for (file, body) in iter::once(("SKILL.md", body)).chain(extra) {
+            let (rel, dest) = (record_key(name, file), dir.join(file));
+            if link(&dest) {
+                continue;
+            }
+            let write = match mode {
+                Mode::Overwrite => true,
+                Mode::Refresh => record
+                    .get(&rel)
+                    .is_some_and(|wrote| fs::read_to_string(&dest).is_ok_and(|now| now == *wrote)),
+                Mode::Fresh => !dest.exists(),
+            };
+            if write {
+                fs::create_dir_all(&dir)?;
+                fs::write(&dest, body)?;
+                if file != "SKILL.md" {
+                    fs::set_permissions(&dest, fs::Permissions::from_mode(0o755))?;
+                }
+                record.insert(rel, body.to_string());
+                manifest.skills.insert(name.to_string(), shipped());
+            }
         }
         manifest::link(repo, name)?;
     }
@@ -293,10 +305,10 @@ fn shipped() -> Installed {
     }
 }
 
-/// The record's key for a skill init wrote: its path in the repo's
+/// The record's key for a skill's file init wrote: its path in the repo's
 /// .agents/skills, as the record has always named it, wherever it is now.
-fn record_key(name: &str) -> String {
-    format!(".agents/skills/{name}/SKILL.md")
+fn record_key(name: &str, file: &str) -> String {
+    format!(".agents/skills/{name}/{file}")
 }
 
 /// Whether a shipped skill is already installed in dir.
