@@ -49,7 +49,9 @@ fn the_demo_plays_a_run_asks_and_puts_the_shell_back() {
             Ask::Blocked { .. } => ("blocked", 2),        // park
             Ask::Wake { .. } => ("wake", 1),              // nudge
             Ask::PlanFailed { .. } => panic!("the demo asks no plan failure"),
-            Ask::TicketStart { .. } => panic!("the demo asks nothing at a Ticket's start"),
+            Ask::TicketStart { .. } | Ask::Labels { .. } => {
+                panic!("the demo asks nothing at a Ticket's start")
+            }
         };
         asked.push(kind);
         pick(&mut s, option);

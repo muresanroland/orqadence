@@ -2,15 +2,18 @@
 //! effort, read when the Stage starts.
 
 use super::app::{
-    app, canonical, checks, debate_inputs, fallback_row, floor_in, labels, row, ExtraReview, Floor,
-    Label, IF_LIMITED,
+    app, canonical, checks, clash, debate_inputs, fallback_row, floor_in, labels, row, Clash,
+    ExtraReview, Floor, Label, IF_LIMITED,
 };
+use super::stage::{Answer, Ask, Orchestrator, AWAY};
+use super::state::STATUS_PARKED;
 use super::world::{new_world, spawn_ticket, succeed, BdTicket, World};
 use super::write_file;
 use crate::skills::manifest::{set_personal, Manifest, NONE};
 use crate::skills::SKILLS;
 use crate::tempdir::TempDir;
 use serde_json::{json, Value};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 fn config(w: &World, body: &str) {
@@ -825,13 +828,14 @@ fn an_area_and_a_modifier_together_putting_review_on_implements_model_refuse() {
 #[test]
 fn labels_that_clash_or_have_no_entry_refuse_the_row() {
     let review = |app: &str| json!({"review": {"app": app}});
-    let repo = repo_with(&json!({"labels": {
+    let doc = json!({"labels": {
         "be": {"kind": "area", "rows": {"review": {"app": "claude", "model": "opus"}}},
         "fe": {"kind": "area"},
         "codex-review": {"kind": "modifier", "rows": review("codex")},
         "pi-review": {"kind": "modifier", "rows": review("pi")},
         "fast": {"kind": "modifier", "rows": {"review": {"effort": "low"}}},
-    }}));
+    }});
+    let repo = repo_with(&doc);
     let said = |labels: &[&str]| row(repo.path(), "review", &names(labels)).map(|r| r.said());
     assert_eq!(
         said(&["be", "fe"]),
@@ -849,6 +853,30 @@ fn labels_that_clash_or_have_no_entry_refuse_the_row() {
         said(&["codex-review", "be", "fast"]),
         Ok("codex opus/low".to_string())
     );
+
+    // the clash as data, for the Question: the first one, in that order
+    let orqa = |labels: &[&str]| {
+        labels
+            .iter()
+            .map(|l| format!("orqa:{l}"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        clash(&doc, &names(&["be", "fe"])),
+        Some(Clash::Areas(orqa(&["be", "fe"])))
+    );
+    assert_eq!(
+        clash(&doc, &names(&["codex-review", "pi-review"])),
+        Some(Clash::Setters {
+            labels: orqa(&["codex-review", "pi-review"]),
+            field: "review app".to_string()
+        })
+    );
+    assert_eq!(
+        clash(&doc, &names(&["be", "fe", "typo"])),
+        Some(Clash::Unknown("orqa:typo".to_string()))
+    );
+    assert_eq!(clash(&doc, &names(&["codex-review", "be", "fast"])), None);
 }
 
 /// A label's rows keep the Debate's rule: a label pinning side_b to side
@@ -938,16 +966,228 @@ fn a_tickets_orqa_label_pins_its_implement_and_a_triage_label_changes_nothing() 
     assert!(argv(&w, "implement").ends_with("--model opus --effort high"));
 }
 
-/// Two Area labels on one Ticket are not guessed at: its Stage Wakes with a
-/// reason naming both, before any session starts.
+/// How many Events put a Question.
+fn asked(w: &World) -> usize {
+    w.events().iter().filter(|e| e.ask.is_some()).count()
+}
+
+/// Answers the label Question saying `about` with `option`, its options
+/// being `options`.
+fn answer_labels(w: &World, o: &Orchestrator, about: &str, options: &[&str], option: &str) {
+    let asked = w.await_event(about);
+    assert_eq!(asked.text, about);
+    let Some(Ask::Labels { options: got }) = asked.ask else {
+        panic!("no label Question: {:?}", asked.ask);
+    };
+    assert_eq!(got, options);
+    o.answer("hx-1", "", Answer::Prompt(option.to_string()));
+}
+
+/// Two Area labels on one Ticket are not guessed at: a Question before
+/// Implement starts, one option per label and park. The label kept stays,
+/// the other is removed in bd, and Implement starts on the kept one's rows.
 #[test]
-fn a_ticket_with_two_area_labels_wakes_naming_both() {
+fn two_area_labels_ask_which_to_keep_before_implement_starts() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:be", "orqa:fe"])]);
+    let area = |model: &str| json!({"kind": "area", "rows": {"implement": {"model": model}}});
+    config(
+        &w,
+        &json!({"labels": {"be": area("opus"), "fe": area("haiku")}}).to_string(),
+    );
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+
+    let about = "hx-1 has orqa:be and orqa:fe: keep which?";
+    answer_labels(&w, &o, about, &["orqa:be", "orqa:fe", "park"], "orqa:fe");
+    run.wait();
+
+    assert_eq!(
+        w.called("bd label remove"),
+        ["bd label remove hx-1 orqa:be"]
+    );
+    w.await_line("hx-1 kept orqa:fe, removed orqa:be");
+    w.await_line("hx-1 implement started: claude haiku (pane 1-1)");
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 1, "asked again");
+    let starts = w.called("herdr agent start");
+    let asked_at = w
+        .calls()
+        .iter()
+        .position(|c| c.starts_with("bd label remove"));
+    let started_at = w
+        .calls()
+        .iter()
+        .position(|c| c.starts_with("herdr agent start"));
+    assert!(
+        asked_at < started_at,
+        "a Stage started before the answer: {starts:?}"
+    );
+}
+
+/// An orqa: label with no entry in config.json is a typo: the Question
+/// offers to remove it, and the answer does, in bd.
+#[test]
+fn a_label_with_no_entry_asks_and_the_answer_removes_it() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:typo"])]);
+    config(&w, &json!({"labels": {"be": {"kind": "area"}}}).to_string());
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+
+    let about = "hx-1 has orqa:typo, which no label entry names";
+    answer_labels(
+        &w,
+        &o,
+        about,
+        &["remove orqa:typo", "park"],
+        "remove orqa:typo",
+    );
+    run.wait();
+
+    assert_eq!(
+        w.called("bd label remove"),
+        ["bd label remove hx-1 orqa:typo"]
+    );
+    w.await_line("hx-1 removed orqa:typo");
+    w.await_line("hx-1 PR #hx-1 opened");
+}
+
+/// Two Modifiers setting the same row field ask which to keep; two setting
+/// different rows combine and ask nothing.
+#[test]
+fn two_modifiers_setting_one_field_ask_and_two_setting_different_rows_do_not() {
+    let modifier =
+        |row: &str, model: &str| json!({"kind": "modifier", "rows": {row: {"model": model}}});
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:a", "orqa:b"])]);
+    let doc =
+        json!({"labels": {"a": modifier("review", "opus"), "b": modifier("review", "haiku")}});
+    config(&w, &doc.to_string());
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    let about = "hx-1 has orqa:a and orqa:b both set review model: keep which?";
+    answer_labels(&w, &o, about, &["orqa:a", "orqa:b", "park"], "orqa:a");
+    run.wait();
+    assert_eq!(w.called("bd label remove"), ["bd label remove hx-1 orqa:b"]);
+    w.await_line("hx-1 PR #hx-1 opened");
+
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:a", "orqa:b"])]);
+    let doc = json!({"labels": {"a": modifier("review", "opus"), "b": modifier("fix", "haiku")}});
+    config(&w, &doc.to_string());
+    o.run_ticket("hx-1");
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 0, "a Question was put");
+    assert!(w.called("bd label remove").is_empty());
+}
+
+/// Away, the label Question parks the Ticket with a bd comment, as a
+/// Stage's own question does: nothing is asked and no Stage starts, until
+/// /continue asks it.
+#[test]
+fn away_a_label_clash_parks_the_ticket_without_asking() {
     let (w, o) = new_world(vec![labelled_ticket(&["orqa:be", "orqa:fe"])]);
     let area = json!({"kind": "area"});
     config(&w, &json!({"labels": {"be": area, "fe": area}}).to_string());
-    let o = Arc::new(o);
-    let _run = spawn_ticket(o.clone(), "hx-1");
+    o.cfg.away.store(true, Ordering::SeqCst);
+    o.run_ticket("hx-1");
 
-    w.await_line("hx-1 stuck in implement: Area labels orqa:be and orqa:fe: a Ticket takes one");
-    assert!(w.called("herdr agent start").is_empty());
+    w.await_line("hx-1 parked: asked you while away");
+    let ts = o.ticket("hx-1");
+    assert_eq!(
+        (ts.status.as_str(), ts.reason.as_str()),
+        (STATUS_PARKED, AWAY)
+    );
+    let comments = w.called("bd comments add hx-1 ");
+    assert!(
+        comments.len() == 1
+            && comments[0].contains("/continue @hx-1")
+            && comments[0].contains("hx-1 has orqa:be and orqa:fe: keep which?")
+            && comments[0].contains("- orqa:be\n- orqa:fe\n- park"),
+        "bd comments = {comments:?}"
+    );
+    assert_eq!(asked(&w), 0, "Away still asked");
+    assert!(w.called("herdr agent start").is_empty(), "a Stage started");
+
+    o.cfg.away.store(false, Ordering::SeqCst);
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    let about = "hx-1 has orqa:be and orqa:fe: keep which?";
+    answer_labels(&w, &o, about, &["orqa:be", "orqa:fe", "park"], "orqa:be");
+    run.wait();
+    w.await_line("hx-1 PR #hx-1 opened");
+}
+
+/// A label added in bd while a Stage runs is read as the next Stage
+/// starts: a second Area label put on during Implement asks as Review 1
+/// starts, and the answer removes it.
+#[test]
+fn a_label_added_between_stages_asks_as_the_next_stage_starts() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:be"])]);
+    let area = json!({"kind": "area"});
+    config(&w, &json!({"labels": {"be": area, "fe": area}}).to_string());
+    let world = Arc::downgrade(&w);
+    w.session(move |p| {
+        if p.stage == "implement" {
+            let w = world.upgrade().unwrap();
+            w.lock().tickets[0].labels.push("orqa:fe".to_string());
+        }
+        succeed(p)
+    });
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+
+    w.await_line("hx-1 implemented");
+    let about = "hx-1 has orqa:be and orqa:fe: keep which?";
+    answer_labels(&w, &o, about, &["orqa:be", "orqa:fe", "park"], "orqa:be");
+    run.wait();
+
+    assert_eq!(
+        w.called("bd label remove"),
+        ["bd label remove hx-1 orqa:fe"]
+    );
+    w.await_line("hx-1 review 1 started");
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 1);
+}
+
+/// A bd label remove that fails parks the Ticket, its reason said: at the
+/// Ticket's start as the parked reason, at a Stage's start as a panel line
+/// before the park.
+#[test]
+fn a_failed_label_remove_parks_the_ticket_saying_why() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:be", "orqa:fe"])]);
+    let area = json!({"kind": "area"});
+    config(&w, &json!({"labels": {"be": area, "fe": area}}).to_string());
+    w.fail_once("bd label remove", "no such label");
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    let about = "hx-1 has orqa:be and orqa:fe: keep which?";
+    answer_labels(&w, &o, about, &["orqa:be", "orqa:fe", "park"], "orqa:be");
+    run.wait();
+    let ts = o.ticket("hx-1");
+    assert_eq!(ts.status, STATUS_PARKED);
+    assert!(
+        ts.reason.starts_with("orqa:fe not removed: "),
+        "{}",
+        ts.reason
+    );
+
+    // at a Stage's start: the second Area label put on during Implement
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:be"])]);
+    config(&w, &json!({"labels": {"be": area, "fe": area}}).to_string());
+    let world = Arc::downgrade(&w);
+    w.session(move |p| {
+        if p.stage == "implement" {
+            let w = world.upgrade().unwrap();
+            w.lock().tickets[0].labels.push("orqa:fe".to_string());
+            w.fail_once("bd label remove", "no such label");
+        }
+        succeed(p)
+    });
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    answer_labels(&w, &o, about, &["orqa:be", "orqa:fe", "park"], "orqa:be");
+    run.wait();
+    assert_eq!(o.ticket("hx-1").status, STATUS_PARKED);
+    let said = w.await_line("hx-1 orqa:fe not removed: ");
+    assert!(said.contains("no such label"), "{said}");
+    w.await_line("hx-1 parked: by you at review 1");
 }

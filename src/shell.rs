@@ -748,6 +748,7 @@ impl Screen {
             Ask::Limited { .. } => "Usage limit",
             Ask::StageQuestion { .. } => "Stage question",
             Ask::TicketStart { .. } => "Start question",
+            Ask::Labels { .. } => "Label question",
         };
         let mut message = format!("{id} · {kind}");
         if let Some(title) = self.title(id) {
@@ -838,7 +839,8 @@ impl Screen {
             | Ask::Plan { .. }
             | Ask::Limited { .. }
             | Ask::StageQuestion { .. }
-            | Ask::TicketStart { .. } => text.as_str(),
+            | Ask::TicketStart { .. }
+            | Ask::Labels { .. } => text.as_str(),
         };
         let asking = format!("asking you: {short}");
         // /continue @ticket's goes after a confirmation, and the Question
@@ -955,13 +957,18 @@ impl Screen {
         !self.questions.is_empty() && !self.hidden
     }
 
-    /// Whether the front Question docks in the modal: a plan, a Wake or a
-    /// Stage's own question.
+    /// Whether the front Question docks in the modal: a plan, a Wake, a
+    /// Stage's own question or the Ticket's labels.
     pub(crate) fn modal(&self) -> bool {
         self.showing()
             && matches!(
                 self.questions[0].about,
-                About::Asked(Ask::Plan { .. } | Ask::Wake { .. } | Ask::StageQuestion { .. })
+                About::Asked(
+                    Ask::Plan { .. }
+                        | Ask::Wake { .. }
+                        | Ask::StageQuestion { .. }
+                        | Ask::Labels { .. }
+                )
             )
     }
 
@@ -1010,7 +1017,7 @@ impl Screen {
                 .cloned()
                 .chain(["an answer of your own", "open the pane", "park"].map(str::to_string))
                 .collect(),
-            About::Asked(Ask::TicketStart { options }) => options.clone(),
+            About::Asked(Ask::TicketStart { options } | Ask::Labels { options }) => options.clone(),
             About::Confirm(_) => ["yes", "no"].map(str::to_string).to_vec(),
             About::Continue { rows } => rows
                 .iter()
@@ -1444,7 +1451,7 @@ impl Screen {
                 }
             }
             // its options alone, the one picked sent word for word
-            (About::Asked(Ask::TicketStart { options }), n) => {
+            (About::Asked(Ask::TicketStart { options } | Ask::Labels { options }), n) => {
                 if let Some(option) = options.get(n).cloned() {
                     self.reply(&option.clone(), Answer::Prompt(option));
                 }
@@ -1559,7 +1566,8 @@ impl Screen {
                 | Ask::PlanFailed { pane, .. }
                 | Ask::StageQuestion { pane, .. },
             ) => pane.as_str(),
-            About::Asked(Ask::TicketStart { .. }) => "", // no session: the Ticket's own
+            // no session: the Ticket's own
+            About::Asked(Ask::TicketStart { .. } | Ask::Labels { .. }) => "",
             _ => return,
         };
         if let Some(run) = &self.run {

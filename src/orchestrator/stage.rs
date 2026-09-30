@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::app::{check, debate_inputs, fallback_row, stage_row, ticket_labels, App, Row};
+use super::app::{self, check, debate_inputs, fallback_row, stage_row, ticket_labels, App, Row};
 use super::herdr::{agent_name, split_target};
 use super::judgment::{offered, Action, Judged, PlanJudged, TypeSafe, WAKE_FLOOR};
 use super::limit::{codex_review, until, Limit, LAST_LINES};
@@ -133,6 +133,10 @@ pub(crate) enum Ask {
     /// its text is the line's, and the option picked is answered word for
     /// word, for no pane ("").
     TicketStart { options: Vec<String> },
+    /// The Ticket's labels clash (ask_labels): its options are the labels
+    /// to keep one of, or the one to remove, then park; the one picked is
+    /// answered word for word, for no pane ("").
+    Labels { options: Vec<String> },
 }
 
 /// The user's answer to a Question, for the session (pane) it was about.
@@ -778,10 +782,19 @@ impl Orchestrator {
         inputs: &[(&str, &str)],
         want: ResultRequirements,
     ) -> Held {
-        let labels = match self.labels(ticket) {
+        let mut labels = match self.labels(ticket) {
             Ok(labels) => labels,
             Err(err) => return Held::Woke(format!("Ticket labels not read: {err}")),
         };
+        match self.ask_labels(ticket, &mut labels) {
+            Ok(()) => {}
+            Err(StageError::Parked(reason)) if reason == AWAY => return Held::Away,
+            Err(StageError::Parked(reason)) => {
+                self.report(ticket, &reason); // the park's reason is the Stage's
+                return Held::Park;
+            }
+            Err(StageError::Stopped) => return Held::Stopped,
+        }
         let row = match stage_row(&self.cfg.repo, st, &labels) {
             Ok(row) => row,
             Err(err) => return Held::Woke(err),
@@ -1363,33 +1376,32 @@ impl Orchestrator {
         }
     }
 
-    /// A Question at the Ticket's start, before any Stage: no pane and no
-    /// session, so its answer is for pane "". Away, the Ticket parks with a
-    /// bd comment, as for a Stage's own question, and /continue @ticket
-    /// asks again; turning Away on while it waits does the same. The place
-    /// in `options` of the one picked; /park parks.
+    /// A Question with no pane and no session, at the Ticket's start or
+    /// over its labels, so its answer is for pane "". Away, the Ticket
+    /// parks with a bd comment, as for a Stage's own question, and
+    /// /continue @ticket asks again; turning Away on while it waits does
+    /// the same. `ask` makes the Ask from `options`. The place in `options`
+    /// of the one picked; /park parks.
     pub(super) fn ask_at_start(
         &self,
         ticket: &str,
         text: &str,
         options: Vec<String>,
+        ask: fn(Vec<String>) -> Ask,
     ) -> Result<usize, StageError> {
         let mut raised = false;
         loop {
             if self.cfg.away.load(Ordering::SeqCst) {
                 let lead = format!(
-                    "{ticket} asked a question at its start while you were away and needs a \
-                     manual resume: /continue @{ticket} in the Orqadence Shell asks it again."
+                    "{ticket} asked a question while you were away and needs a manual resume: \
+                     /continue @{ticket} in the Orqadence Shell asks it again."
                 );
                 self.comment_away(ticket, &lead, text, &options);
                 return Err(StageError::Parked(AWAY.to_string()));
             }
             if !raised {
                 self.take_answer(ticket, None); // an answer sent before it is not for it
-                let ask = Ask::TicketStart {
-                    options: options.clone(),
-                };
-                self.ask_only(ticket, text, ask);
+                self.ask_only(ticket, text, ask(options.clone()));
                 raised = true;
             }
             match self.take_answer(ticket, Some("")) {
@@ -1401,6 +1413,71 @@ impl Orchestrator {
                 None => {}
             }
             self.wait_at_start(ticket)?;
+        }
+    }
+
+    /// Settles the Ticket's labels, by name, before a Stage starts on them:
+    /// each clash (two Area labels, two Modifiers setting one field, an
+    /// orqa: label with no entry) is a Question, one option per label and
+    /// park, and the answer removes every label not kept in bd and from
+    /// `labels`. A config.json that cannot be read is the row's to refuse.
+    pub(super) fn ask_labels(
+        &self,
+        ticket: &str,
+        labels: &mut Vec<String>,
+    ) -> Result<(), StageError> {
+        loop {
+            let Ok((_, doc)) = app::read(&self.cfg.repo) else {
+                return Ok(());
+            };
+            let Some(clash) = app::clash(&doc, labels) else {
+                return Ok(());
+            };
+            let names = clash.labels().join(" and ");
+            let (text, mut options) = match &clash {
+                app::Clash::Areas(_) => (
+                    format!("{ticket} has {names}: keep which?"),
+                    clash.labels().to_vec(),
+                ),
+                app::Clash::Setters { field, .. } => (
+                    format!("{ticket} has {names} both set {field}: keep which?"),
+                    clash.labels().to_vec(),
+                ),
+                app::Clash::Unknown(name) => (
+                    format!("{ticket} has {name}, which no label entry names"),
+                    vec![format!("remove {name}")],
+                ),
+            };
+            options.push("park".to_string());
+            let picked =
+                self.ask_at_start(ticket, &text, options, |options| Ask::Labels { options })?;
+            let kept = match clash {
+                app::Clash::Unknown(_) if picked == 0 => None,
+                _ if picked < clash.labels().len() => Some(clash.labels()[picked].clone()),
+                _ => {
+                    return Err(StageError::Parked(format!(
+                        "labels not settled: /continue @{ticket} asks again"
+                    )))
+                }
+            };
+            let removed: Vec<&str> = clash
+                .labels()
+                .iter()
+                .filter(|label| Some(*label) != kept.as_ref())
+                .map(String::as_str)
+                .collect();
+            for label in &removed {
+                let argv = ["bd", "label", "remove", ticket, label];
+                if let Err(err) = self.cfg.tools.run(&self.cfg.repo, &argv) {
+                    return Err(StageError::Parked(format!("{label} not removed: {err}")));
+                }
+                labels.retain(|name| format!("orqa:{name}") != *label);
+            }
+            let said = match kept {
+                Some(kept) => format!("kept {kept}, removed {}", removed.join(" and ")),
+                None => format!("removed {}", removed.join(" and ")),
+            };
+            self.report(ticket, &said);
         }
     }
 
