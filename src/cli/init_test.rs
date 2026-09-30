@@ -1,12 +1,14 @@
 use super::run;
+use crate::orchestrator::app::{self, Label};
 use crate::orchestrator::write_file;
 use crate::setup::setup_test::snapshot;
-use crate::setup::TYPESAFE_SKILL;
-use crate::skills::manifest::{Manifest, JOBS};
+use crate::setup::{LABELS, TYPESAFE_SKILL};
+use crate::skills::manifest::{Installed, Manifest, JOBS};
 use crate::skills::SKILLS;
 use crate::tempdir::TempDir;
 use crate::tools::fake::Fake;
 use crate::tools::Tools;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
@@ -24,8 +26,8 @@ pub(super) fn prepared_repo() -> TempDir {
 }
 
 /// Every prerequisite there, and a git whose every clone holds every job's
-/// default and the typesafe-ai skill at its path in the source, at commit
-/// abc123.
+/// default, the typesafe-ai skill and every shipped label's skills at their
+/// paths in the source, at commit abc123; terraform 1.9.0 is on PATH.
 pub(super) fn ok_tools() -> Arc<Fake> {
     Fake::new(ok)
 }
@@ -35,20 +37,25 @@ fn ok(_: &Path, argv: &[&str]) -> Result<String, String> {
     if argv.contains(&"clone") {
         let dest = Path::new(argv.last().unwrap());
         let defaults = JOBS.iter().map(|(_, suggestions)| suggestions[0]);
-        for (name, source) in defaults.chain([TYPESAFE_SKILL]) {
-            if let Some(path) = source.splitn(3, '/').nth(2) {
-                // named upstream without the prefix
-                let name = name.strip_prefix("orqa-").unwrap_or(name);
-                write_file(
-                    &dest.join(path).join("SKILL.md"),
-                    &format!("---\nname: {name}\n---\n"),
-                );
+        let labels = LABELS.iter().flat_map(|label| label.sources());
+        for (name, source) in defaults.chain([TYPESAFE_SKILL]).chain(labels) {
+            if source.is_empty() {
+                continue; // built in, or Shipped
             }
+            // The skill's folder, the clone's root when the source is the repo alone.
+            let path = source.splitn(3, '/').nth(2).unwrap_or("");
+            // named upstream without the prefix
+            let name = name.strip_prefix("orqa-").unwrap_or(name);
+            write_file(
+                &dest.join(path).join("SKILL.md"),
+                &format!("---\nname: {name}\n---\n"),
+            );
         }
     }
     Ok(match argv.join(" ").as_str() {
         "git remote" => "origin\n",
         "git rev-parse HEAD" => "abc123\n",
+        "terraform version -json" => r#"{"terraform_version": "1.9.0"}"#,
         _ => "",
     }
     .to_string())
@@ -725,14 +732,15 @@ codex: outdated (v7) (/h/.codex/herdr-agent-state.sh)
             .filter(|c| c.starts_with("herdr integration install"))
             .collect()
     };
-    // The docs/agents setup, TypeSafe no, On call no, then the integrations: yes.
+    // The docs/agents setup, TypeSafe no, the labels, On call no, then the
+    // integrations: yes.
     let (repo, home) = (bare_repo(), TempDir::new());
     let tools = herdr(true);
     let (_, out) = init_with(
         repo.path(),
         home.path(),
         tools.clone(),
-        &["\n", "n\n", "\n", "\n"],
+        &["\n", "n\n", "\n", "\n", "\n"],
         "",
     );
     assert_eq!(
@@ -899,9 +907,9 @@ fn on_call(repo: &Path) -> Option<serde_json::Value> {
 /// readable only by you; enter alone, or nobody answering, keeps none.
 #[test]
 fn init_asks_on_call_and_keeps_the_moshi_token_readable_only_by_you() {
-    // The docs/agents setup, TypeSafe no, On call yes, the token.
+    // The docs/agents setup, TypeSafe no, the labels, On call yes, the token.
     let (repo, home) = (bare_repo(), TempDir::new());
-    let keys = ["\n", "n\n", "y\n", "moshi-tok\n"];
+    let keys = ["\n", "n\n", "\n", "y\n", "moshi-tok\n"];
     let (code, out) = init_keys(repo.path(), home.path(), &keys);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains(ON_CALL) && out.contains("› 2. No"), "{out}");
@@ -922,7 +930,7 @@ fn init_asks_on_call_and_keeps_the_moshi_token_readable_only_by_you() {
     );
 
     // Enter alone is no; nobody answering changes nothing.
-    for keys in [&["\n", "n\n", "\n"][..], &[][..]] {
+    for keys in [&["\n", "n\n", "\n", "\n"][..], &[][..]] {
         let (repo, home) = (bare_repo(), TempDir::new());
         let (code, out) = init_keys(repo.path(), home.path(), keys);
         assert_eq!(code, 0, "{out}");
@@ -959,4 +967,281 @@ fn a_committed_checkout_asks_on_call() {
     assert!(out.contains(COMMITTED), "{out}");
     assert!(out.contains(ON_CALL), "{out}");
     assert_eq!(on_call(repo.path()).unwrap()["token"], "moshi-tok");
+}
+
+/// config.json's labels, each entry read as the Orchestrator reads it.
+fn labels_in(repo: &Path) -> BTreeMap<String, Label> {
+    let (_, doc) = app::read(repo).unwrap();
+    app::labels(&doc)
+        .into_iter()
+        .map(|(name, label)| (name, label.unwrap()))
+        .collect()
+}
+
+/// The rule that opens init's labels step.
+const LABELS_STEP: &str = "TICKET LABELS";
+
+/// init lists the seven shipped labels checked, and nobody answering keeps
+/// them all: each gets its entry, kind, guidance, rows and Extra review as
+/// shipped, and its skills are installed through the manifest with their
+/// sources; the Shipped orqa-infra-review is not fetched.
+#[test]
+fn init_lists_the_shipped_labels_checked_and_writes_all_seven_unanswered() {
+    let repo = bare_repo();
+    let tools = ok_tools();
+    let (code, out) = run_with(&["init"], repo.path(), tools.clone(), &herdr_env);
+    assert_eq!(code, 0, "{out}");
+    let list = &out[out.find(LABELS_STEP).expect("no labels step")..];
+    for (i, label) in LABELS.iter().enumerate() {
+        let row = format!("[x] {}. {}", i + 1, label.name);
+        assert!(list.contains(&row), "{row:?} not listed:\n{list}");
+    }
+    let labels = labels_in(repo.path());
+    // The Ticket's list: each label's kind and its skills' sources, which
+    // the entry names as installed and the manifest holds pinned.
+    let manifest = Manifest::load(repo.path()).unwrap();
+    let shipped: [(&str, &str, &[&str]); 7] = [
+        ("fe", "area", &["anthropics/skills/skills/frontend-design"]),
+        (
+            "be",
+            "area",
+            &["addyosmani/agent-skills/skills/api-and-interface-design"],
+        ),
+        (
+            "db",
+            "area",
+            &[
+                "supabase/agent-skills/skills/supabase-postgres-best-practices",
+                "addyosmani/agent-skills/skills/deprecation-and-migration",
+            ],
+        ),
+        (
+            "security",
+            "area",
+            &["addyosmani/agent-skills/skills/security-and-hardening"],
+        ),
+        (
+            "architecture",
+            "area",
+            &[
+                "mattpocock/skills/skills/engineering/codebase-design",
+                "mattpocock/skills/skills/engineering/domain-modeling",
+            ],
+        ),
+        (
+            "infra",
+            "area",
+            &[
+                "hashicorp/agent-skills/plugins/terraform/skills/terraform-style-guide",
+                "hashicorp/agent-skills/plugins/terraform/skills/terraform-test",
+                "docker/skills/skills/docker-build-strategies",
+                "lukasniessen/kubernetes-skill",
+                "addyosmani/agent-skills/skills/ci-cd-and-automation",
+                "github/awesome-copilot/skills/github-actions-hardening",
+            ],
+        ),
+        ("codex-review", "modifier", &[]),
+    ];
+    for (name, kind, sources) in shipped {
+        assert_eq!(labels[name].kind, kind, "{name}");
+        let installed: Vec<String> = labels[name]
+            .skills
+            .iter()
+            .map(|skill| {
+                let skill = &manifest.skills[skill];
+                assert_eq!(skill.commit, "abc123", "{name}");
+                let repo = skill.repo.strip_prefix("https://github.com/").unwrap();
+                format!("{repo}/{}", skill.path)
+                    .trim_end_matches('/')
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(installed, sources, "{name}");
+    }
+    assert_eq!(labels.len(), shipped.len());
+    for (name, said) in [
+        ("fe", "screenshots of every changed screen"),
+        ("be", "status codes"),
+        ("db", "rollback"),
+        ("security", "Open question"),
+        ("architecture", "ADR"),
+        ("infra", "mock_provider"),
+    ] {
+        assert!(
+            labels[name].guidance.contains(said),
+            "{name}: {}",
+            labels[name].guidance
+        );
+    }
+    assert_eq!(labels["fe"].skills, ["orqa-frontend-design"]);
+    assert_eq!(labels["db"].extra_review, app::ExtraReview::default());
+    let security = &labels["security"].extra_review;
+    assert_eq!(
+        (
+            security.skill.as_str(),
+            security.position.as_str(),
+            security.debate
+        ),
+        ("orqa-security-review", "every", true)
+    );
+    assert_eq!(
+        manifest.skills["orqa-security-review"],
+        Installed {
+            repo: "https://github.com/getsentry/skills".to_string(),
+            path: "skills/security-review".to_string(),
+            commit: "abc123".to_string(),
+            ..Installed::default()
+        }
+    );
+    let infra = &labels["infra"].extra_review;
+    assert_eq!(
+        (infra.skill.as_str(), infra.position.as_str(), infra.debate),
+        ("orqa-infra-review", "every", false)
+    );
+    let codex = &labels["codex-review"];
+    assert_eq!(codex.rows["review"]["app"], "codex");
+    assert!(codex.skills.is_empty() && codex.guidance.is_empty());
+    for (name, _, _) in shipped.iter().filter(|(name, ..)| *name != "codex-review") {
+        assert!(labels[*name].rows.is_empty(), "{name}");
+    }
+    for label in LABELS {
+        for (name, _) in label.skills {
+            assert!(
+                out.contains(&format!("init: installed {name}, for orqa:{}", label.name)),
+                "{out}"
+            );
+        }
+    }
+    assert!(manifest.skills["orqa-infra-review"].shipped);
+    assert!(
+        !tools
+            .calls()
+            .iter()
+            .any(|call| call.contains("clone") && call.contains("infra-review")),
+        "{:?}",
+        tools.calls()
+    );
+}
+
+/// Unchecking db (its digit toggles it) writes the six others and installs
+/// no db skill.
+#[test]
+fn unchecking_db_writes_six_entries_and_installs_no_db_skill() {
+    let (repo, home) = (bare_repo(), TempDir::new());
+    let tools = ok_tools();
+    // The docs/agents setup, TypeSafe no, then db off and enter.
+    let keys = ["\n", "n\n", "3", "\r"];
+    let (code, out) = init_with(repo.path(), home.path(), tools.clone(), &keys, "");
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("[ ] 3. db"), "{out}");
+    let labels = labels_in(repo.path());
+    assert_eq!(labels.len(), 6, "{:?}", labels.keys());
+    assert!(!labels.contains_key("db"));
+    let manifest = Manifest::load(repo.path()).unwrap();
+    for name in [
+        "orqa-supabase-postgres-best-practices",
+        "orqa-deprecation-and-migration",
+    ] {
+        assert!(
+            !manifest.skills.contains_key(name),
+            "{name} installed:\n{out}"
+        );
+    }
+    assert!(
+        manifest.skills.contains_key("orqa-frontend-design"),
+        "{out}"
+    );
+    assert!(
+        !tools.calls().iter().any(|call| call.contains("supabase")),
+        "{:?}",
+        tools.calls()
+    );
+}
+
+/// A second init keeps an entry the user edited, and fetches nothing again.
+#[test]
+fn a_second_init_keeps_an_entry_the_user_edited() {
+    let (repo, home) = (bare_repo(), TempDir::new());
+    init_keys(repo.path(), home.path(), &[]);
+    let config = repo.path().join(".orqadence/config.json");
+    let mut doc: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+    doc["labels"]["fe"]["guidance"] = "ours".into();
+    doc["labels"]["fe"]["skills"] = serde_json::json!([]);
+    fs::write(&config, doc.to_string()).unwrap();
+    let tools = ok_tools();
+    // The gate: refresh; TypeSafe no; the labels all checked.
+    let keys = ["2", "n\n", "\r"];
+    let (code, out) = init_with(repo.path(), home.path(), tools.clone(), &keys, "");
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains(LABELS_STEP), "{out}");
+    let labels = labels_in(repo.path());
+    assert_eq!(labels.len(), 7);
+    assert_eq!(labels["fe"].guidance, "ours");
+    assert!(labels["fe"].skills.is_empty());
+    assert!(
+        !tools.calls().iter().any(|call| call.contains("clone")),
+        "{:?}",
+        tools.calls()
+    );
+}
+
+/// A checkout whose settings are committed is not asked about the labels.
+#[test]
+fn a_committed_checkout_does_not_ask_the_labels() {
+    let (repo, home) = (prepared_repo(), TempDir::new());
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"typesafe": false}"#,
+    );
+    let (_, out) = init_with(
+        repo.path(),
+        home.path(),
+        committed_tools(),
+        &["\n", "\r"],
+        "",
+    );
+    assert!(!out.contains(LABELS_STEP), "{out}");
+    assert!(labels_in(repo.path()).is_empty());
+}
+
+/// A label skill whose fetch fails leaves init unready: the preflight names
+/// the missing Extra review skill, as it does a label's own skill.
+#[test]
+fn a_failed_label_skill_fetch_fails_the_preflight() {
+    let repo = bare_repo();
+    let tools = Fake::new(|dir, argv| {
+        if argv.contains(&"clone") && argv.iter().any(|arg| arg.contains("getsentry")) {
+            return Err("clone failed".to_string());
+        }
+        ok(dir, argv)
+    });
+    let (code, out) = run_with(&["init"], repo.path(), tools, &herdr_env);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("init: orqa-security-review not installed"),
+        "{out}"
+    );
+    assert!(
+        out.contains("preflight: orqa:security's skill orqa-security-review is missing"),
+        "{out}"
+    );
+    assert!(!out.contains("ready"), "{out}");
+}
+
+/// The checklist draws with auto-wrap off, so a row wider than the terminal
+/// stays one row, and turns it back on when it folds, even unanswered.
+#[test]
+fn the_labels_checklist_turns_auto_wrap_off_and_back_on() {
+    let repo = bare_repo();
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "{out}");
+    let list = &out[out.find(LABELS_STEP).expect("no labels step")..];
+    let (off, row, on) = (
+        list.find("\x1b[?7l").unwrap(),
+        list.find("[x] 1. fe").unwrap(),
+        list.find("\x1b[?7h").unwrap(),
+    );
+    assert!(off < row && row < on, "{list:?}");
+    assert!(list.contains("✓ fe, be, db"), "{list:?}");
 }
