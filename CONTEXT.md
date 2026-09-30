@@ -24,7 +24,7 @@ A third-party skill a Stage skill or Brainstorm skill runs for one job (test-fir
 _Avoid_: Override, replacement, work skill
 
 **Shipped skill**:
-Any skill Orqadence ships and installs for a Target repo, committed with the repo's Orqadence settings: the Stage skills, the Brainstorm skills, plus orqa-create-pr, which the Fix Stage runs. Like every skill Orqadence installs, fetched Delegate skills too, its name starts with orqa-, so none shares a name with a skill of the repo's or the user's own.
+Any skill Orqadence ships and installs for a Target repo, committed with the repo's Orqadence settings: the Stage skills, the Brainstorm skills, plus orqa-create-pr, which the Fix Stage runs, and orqa-infra-review, orqa:infra's Extra review skill. Like every skill Orqadence installs, fetched Delegate skills too, its name starts with orqa-, so none shares a name with a skill of the repo's or the user's own.
 
 **Skill manifest**:
 The Target repo's record of the skills Orqadence installs for it: the Shipped skills, plus third-party skills named by their pinned source, and which of them is each Stage's Delegate skill. It belongs to the repo and is committed beside the skill files themselves, so every checkout runs the same text, and a new version of any skill reaches the repo only as a change someone reviews.
