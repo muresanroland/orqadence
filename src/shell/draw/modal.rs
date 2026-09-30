@@ -99,8 +99,13 @@ pub(super) fn notice(f: &mut Frame, s: &Screen) {
         .text
         .lines()
         .flat_map(|line| {
-            let text = vec![(line.to_string(), fg(TEXT))];
-            wrap_spans(text, width.saturating_sub(4) as usize, "", "", fg(TEXT))
+            wrap_spans(
+                vec![(line.to_string(), fg(TEXT))],
+                width.saturating_sub(4) as usize,
+                "",
+                "",
+                fg(TEXT),
+            )
         })
         .collect();
     let height = (rows.len() as u16 + 4).min(area.height);
