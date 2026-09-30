@@ -23,10 +23,10 @@ Nothing matches: write the Findings heading with no items.
 
 ## Run them offline
 
-Copy the committed tree once, so relative module sources resolve, and run every check in the copy: its paths are the Worktree's paths.
+Copy the committed tree once, so relative module sources resolve, and run every check in the copy: its paths are the Worktree's paths. The copy goes in a new folder of its own, which the command prints: a folder an earlier review filled would still hold files HEAD has deleted, and another Ticket's review could overwrite it mid-run.
 
 ```bash
-mkdir -p "$TMPDIR/infra" && git -C <Worktree> archive HEAD | tar -xf - -C "$TMPDIR/infra"
+infra=$(mktemp -d) && git -C <Worktree> archive HEAD | tar -xf - -C "$infra" && echo "$infra"
 ```
 
 In each touched Terraform root, inside the copy:
@@ -34,7 +34,7 @@ In each touched Terraform root, inside the copy:
 1. `terraform fmt -check -recursive`: each file it lists is one Finding.
 2. `terraform init -backend=false -input=false -plugin-dir=<Cache>/providers`. If it fails on a checksum the lock file lacks, delete the copy's `.terraform.lock.hcl` and run it again. If it still fails (a module from a registry or git needs the network), list the root's validate and tests under Not run with init's last error line.
 3. `terraform validate -json`.
-4. `terraform test -filter=<file>` for each `.tftest.hcl` that declares `mock_provider`. A test file without one would call real providers: never run it, list it under Not run.
+4. `terraform test -filter=<file>` for each `.tftest.hcl` whose runs reach only mocked providers: every provider `terraform providers` lists for the root, and for the module of any run with a `module` block, other than the built-in `terraform` one, has a `mock_provider` block of the same name (and alias, where one is used) in the file; no run's `providers` map passes one that is not mocked; and no resource a run applies (`command = apply`, the default) has a `provisioner`. Declaring one `mock_provider` is not enough: any other test file would call a real provider or run a command, so never run it, and list it under Not run with the provider or provisioner that stopped it.
 5. `TFLINT_PLUGIN_DIR=<Cache>/tflint tflint --format=json`, with `--config` the root's `.tflint.hcl`, else the one at the top of the copy, if any. If a plugin it names is not in the cache, run it again with `--config` an empty file, so only its bundled ruleset runs, and list the plugins under Not run.
 6. `trivy config --skip-check-update --cache-dir "$TMPDIR/trivy" --format json <root>`.
 

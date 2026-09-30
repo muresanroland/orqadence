@@ -73,14 +73,25 @@ fi
 
 if [ -n "$charts$manifests" ]; then
 	mkdir -p "$ORQA_CACHE/kubeconform"
-	# Downloads the schema of each kind it validates into the cache.
-	kube() { kubeconform -strict -cache "$ORQA_CACHE/kubeconform" -ignore-missing-schemas "$@" 2>&1 || true; }
-	out=''
-	if [ -n "$manifests" ]; then out=$(kube $manifests); fi
+	# Downloads the schema of each kind it validates into the cache. An invalid
+	# manifest, a kind with no schema (a CRD) or a chart that fails to render is
+	# the review's to report; a schema that failed to download or to reach the
+	# cache, or a kubeconform that stopped before any resource, fails here.
+	kube() {
+		local out status=0
+		out=$(kubeconform -strict -cache "$ORQA_CACHE/kubeconform" -ignore-missing-schemas "$@" 2>&1) || status=$?
+		if printf '%s\n' "$out" | grep -E 'downloading schema|parsing schema from|write cache to disk' >&2; then
+			return 1
+		fi
+		if [ "$status" != 0 ] && ! printf '%s\n' "$out" | grep -Eq ' (is invalid|failed validation): '; then
+			printf 'kubeconform: %s\n' "$out" | tail -n 3 >&2
+			return 1
+		fi
+	}
+	if [ -n "$manifests" ]; then kube $manifests; fi
 	for chart in $(printf '%s' "$charts" | sort -u); do
-		out="$out"$'\n'"$(helm template "$chart" 2>/dev/null | kube - || true)"
+		if rendered=$(helm template "$chart" 2>/dev/null); then
+			printf '%s\n' "$rendered" | kube -
+		fi
 	done
-	# An invalid manifest or a chart that fails is the review's to report;
-	# only a schema that failed to download is this script's failure.
-	if printf '%s\n' "$out" | grep 'failed downloading schema' >&2; then exit 1; fi
 fi
