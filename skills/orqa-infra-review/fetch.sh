@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # orqa-infra-review's fetch.sh: fills ORQA_CACHE with what the offline review
-# reads (Terraform providers, tflint plugins, kubeconform schemas) for the
-# files the diff against ORQA_BASE touches. The Orchestrator runs it with
+# reads (Terraform providers and modules, tflint plugins, kubeconform schemas)
+# for the files the diff against ORQA_BASE touches. The Orchestrator runs it with
 # network in the Ticket's worktree before each orqa:infra Extra review. It
 # only reads the worktree: Terraform inits in a temp copy of the committed
 # tree, and kubeconform reads the manifests and charts where they are.
@@ -59,6 +59,22 @@ if [ -n "$roots" ]; then
 		(cd "$copy/$root" && TF_PLUGIN_CACHE_DIR="$ORQA_CACHE/providers" \
 			TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true \
 			terraform init -backend=false -input=false >/dev/null)
+		# The modules init installed (registry and git ones, which the offline
+		# review cannot fetch) are kept as modules/<root>/.terraform/modules,
+		# mirroring the tree; a root with no module call writes none. The old
+		# entry goes first, whole: a stale module file would validate the wrong
+		# code. The copy lands by rename from a folder of its own, so a run
+		# killed halfway, or another worktree's fetch of the same root, leaves
+		# no half-copied entry.
+		modules=$copy/$root/.terraform/modules
+		dest=$ORQA_CACHE/modules/$root/.terraform/modules
+		rm -rf "$dest"
+		if [ -d "$modules" ]; then
+			mkdir -p "$(dirname "$dest")"
+			new=$(mktemp -d "$dest.XXXXXX")
+			cp -Rf "$modules/." "$new"
+			mv -f "$new" "$dest"
+		fi
 	done
 	# tflint reads the .tflint.hcl in its folder; only a plugin with a source
 	# is downloaded, from GitHub, which allows 60 calls an hour without a token.

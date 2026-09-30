@@ -38,6 +38,8 @@ fn infra_review_is_shipped_and_names_its_checks() {
         // offline, from the cache
         "-backend=false",
         "-plugin-dir",
+        "<Cache>/modules/<root>/.terraform/modules",
+        "-get=false",
         "TFLINT_PLUGIN_DIR",
         "-ignore-missing-schemas",
         "infra=$(mktemp -d)",
@@ -103,25 +105,26 @@ fn git(repo: &Path, args: &[&str]) -> String {
 
 /// A worktree whose branch t, off main, commits `files`; fetch.sh run in it
 /// as the Orchestrator runs it, with stub tools first on PATH that log each
-/// call (the tool, its cwd and its arguments). Returns the worktree and the
-/// log. The real bash and git run: fetch.sh is outside the Tools seam.
-fn fetch(files: &[(&str, &str)]) -> (TempDir, String) {
-    let (repo, log, out) = run_fetch(files, "", 0);
+/// call (the tool, its cwd and its arguments); its terraform writes a module
+/// manifest holding the folder init ran in. Returns the worktree, the cache
+/// and the log. The real bash and git run: fetch.sh is outside the Tools seam.
+fn fetch(files: &[(&str, &str)]) -> (TempDir, TempDir, String) {
+    let (repo, cache, log, out) = run_fetch(files, "", 0);
     assert!(
         out.status.success(),
         "fetch.sh: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    (repo, log)
+    (repo, cache, log)
 }
 
 /// fetch.sh run as in `fetch`, with each stub tool printing `stub_out` and
-/// exiting with `stub_status`; returns fetch.sh's output too.
+/// exiting with `stub_status`; returns the cache and fetch.sh's output too.
 fn run_fetch(
     files: &[(&str, &str)],
     stub_out: &str,
     stub_status: i32,
-) -> (TempDir, String, std::process::Output) {
+) -> (TempDir, TempDir, String, std::process::Output) {
     let (repo, cache, stubs) = (TempDir::new(), TempDir::new(), TempDir::new());
     git(repo.path(), &["init", "-q", "-b", "main"]);
     write_file(&repo.path().join("README.md"), "infra\n");
@@ -140,6 +143,8 @@ fn run_fetch(
         write_file(
             &stub,
             "#!/bin/sh\necho \"$(basename \"$0\") $(pwd -P) $*\" >> \"$STUB_LOG\"\n\
+             if [ \"$(basename \"$0\") $1\" = 'terraform init' ]; then \
+             mkdir -p .terraform/modules && pwd -P > .terraform/modules/modules.json; fi\n\
              printf '%s' \"$STUB_OUT\"\nexit \"$STUB_STATUS\"\n",
         );
         fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
@@ -163,7 +168,8 @@ fn run_fetch(
         .env_remove("GITHUB_TOKEN")
         .output()
         .unwrap();
-    (repo, fs::read_to_string(&log).unwrap_or_default(), out)
+    let log = fs::read_to_string(&log).unwrap_or_default();
+    (repo, cache, log, out)
 }
 
 /// A touched Terraform root is initialised in a temp copy, never in the
@@ -171,7 +177,7 @@ fn run_fetch(
 /// token; the worktree is left clean.
 #[test]
 fn fetch_inits_a_touched_terraform_root_in_a_temp_copy() {
-    let (repo, log) = fetch(&[
+    let (repo, _, log) = fetch(&[
         ("infra/main.tf", "resource \"null_resource\" \"a\" {}\n"),
         (
             ".tflint.hcl",
@@ -216,14 +222,33 @@ fn fetch_inits_a_touched_terraform_root_in_a_temp_copy() {
 /// A diff that touches nothing fetch.sh fetches for calls no tool.
 #[test]
 fn fetch_calls_no_tool_for_a_readme() {
-    let (_, log) = fetch(&[("docs/README.md", "how\n")]);
+    let (_, _, log) = fetch(&[("docs/README.md", "how\n")]);
     assert_eq!(log, "");
+}
+
+/// The modules init installed in a touched root's temp copy (registry and
+/// git modules, which the offline review cannot fetch) are kept in the
+/// cache, mirroring the tree: modules/<root>/.terraform/modules.
+#[test]
+fn fetch_keeps_a_roots_modules_in_the_cache() {
+    let (repo, cache, log) = fetch(&[("infra/main.tf", "module \"m\" { source = \"x/y/z\" }\n")]);
+    let manifest = cache
+        .path()
+        .join("modules/infra/.terraform/modules/modules.json");
+    let ran_in = fs::read_to_string(&manifest)
+        .unwrap_or_else(|err| panic!("no {}: {err}\n{log}", manifest.display()));
+    let worktree = fs::canonicalize(repo.path()).unwrap();
+    assert!(
+        !ran_in.starts_with(worktree.to_str().unwrap()),
+        "init ran in the worktree: {ran_in}"
+    );
+    assert_eq!(git(repo.path(), &["status", "--porcelain"]), "");
 }
 
 /// A manifest fetch.sh validates with kubeconform, which prints `out` and
 /// exits with `status`; returns whether fetch.sh succeeded, and its stderr.
 fn fetch_kube(out: &str, status: i32) -> (bool, String) {
-    let (_, log, run) = run_fetch(
+    let (_, _, log, run) = run_fetch(
         &[("k8s/app.yaml", "kind: Deployment\nmetadata:\n  name: web\n")],
         out,
         status,
