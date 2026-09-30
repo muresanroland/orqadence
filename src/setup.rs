@@ -1076,10 +1076,16 @@ pub(crate) fn preflight(
                     "orqa:infra's Extra review needs {tool}, which is not on PATH"
                 ));
             } else if tool == "terraform" {
-                if let Err(why) = terraform_version(repo, tools) {
-                    missing.push(format!(
-                        "orqa:infra's Extra review needs terraform 1.7 or newer (for mock_provider): {why}"
-                    ));
+                let version = tools
+                    .run(repo, &["terraform", "version", "-json"])
+                    .ok()
+                    .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                    .and_then(|doc| major_minor(doc["terraform_version"].as_str()?));
+                if !version.is_some_and(|found| found >= (1, 7)) {
+                    missing.push(
+                        "orqa:infra's Extra review needs terraform 1.7 or newer (for mock_provider)"
+                            .to_string(),
+                    );
                 }
             }
         }
@@ -1114,21 +1120,6 @@ fn major_minor(version: &str) -> Option<(u32, u32)> {
     let mut parts = version.splitn(3, '.');
     let mut next = || parts.next()?.parse().ok();
     Some((next()?, next()?))
-}
-
-/// Checks the terraform on PATH is 1.7 or newer, by `terraform version
-/// -json`; Err says why not, an unreadable version included.
-fn terraform_version(repo: &Path, tools: &dyn Tools) -> Result<(), String> {
-    let json = tools
-        .run(repo, &["terraform", "version", "-json"])
-        .map_err(|err| format!("its version could not be read: {err}"))?;
-    let doc: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
-    let version = doc["terraform_version"].as_str().unwrap_or_default();
-    match major_minor(version) {
-        Some(found) if found >= (1, 7) => Ok(()),
-        Some(_) => Err(format!("{version} is on PATH")),
-        None => Err("its version could not be read from terraform version -json".to_string()),
-    }
 }
 
 /// What the preflight warns of without failing: the superpowers plugin, an

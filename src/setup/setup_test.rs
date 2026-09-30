@@ -821,7 +821,7 @@ fn preflight_blocks_on_orqa_infra_tools() {
     let (got, _) = infra_missing(repo.path(), true, "1.6.2");
     assert_eq!(
         got,
-        ["orqa:infra's Extra review needs terraform 1.7 or newer (for mock_provider): 1.6.2 is on PATH"]
+        ["orqa:infra's Extra review needs terraform 1.7 or newer (for mock_provider)"]
     );
     let (got, _) = infra_missing(repo.path(), true, "1.9.0");
     assert_eq!(got, Vec::<String>::new());
