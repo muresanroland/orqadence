@@ -2,8 +2,8 @@
 //! effort, read when the Stage starts.
 
 use super::app::{
-    app, canonical, checks, debate_inputs, fallback_row, floor_in, labels, row, ExtraReview, Floor,
-    Label, IF_LIMITED,
+    app, canonical, checks, debate_inputs, extra_review, fallback_row, floor_in, labels, row,
+    ExtraReview, Floor, Label, IF_LIMITED,
 };
 use super::world::{new_world, spawn_ticket, succeed, BdTicket, World};
 use super::write_file;
@@ -774,6 +774,24 @@ fn repo_with(body: &Value) -> TempDir {
 /// The Ticket's labels, by name.
 fn names(labels: &[&str]) -> Vec<String> {
     labels.iter().map(|l| l.to_string()).collect()
+}
+
+/// The Extra review is the Area label's: a Modifier's extra_review is not
+/// read, so a Ticket with no Area label runs none.
+#[test]
+fn only_an_area_label_brings_an_extra_review() {
+    let review = json!({"skill": "security-review"});
+    let repo = repo_with(&json!({"labels": {
+        "security": {"kind": "area", "extra_review": review},
+        "fast": {"kind": "modifier", "extra_review": review},
+    }}));
+    let skill =
+        |labels: &[&str]| extra_review(repo.path(), &names(labels)).map(|e| e.map(|e| e.skill));
+    assert_eq!(skill(&["fast"]), Ok(None));
+    assert_eq!(
+        skill(&["fast", "security"]),
+        Ok(Some("security-review".to_string()))
+    );
 }
 
 /// A Ticket label's row field wins over config.json's row; an empty one

@@ -320,3 +320,44 @@ fn an_unreviewed_round_skips_the_extra_review_and_the_fix_is_told() {
         "{fix}"
     );
 }
+
+/// The limit Question's answer stands for every Ticket: one with an Extra
+/// review holding for it while another asked puts the Question anew, by
+/// the Ticket that asked, naming the Extra review.
+#[test]
+fn a_ticket_with_an_extra_review_joining_the_limit_question_names_it() {
+    let two = BdTicket {
+        labels: vec!["orqa:security".to_string()],
+        ..BdTicket::new("hx-2")
+    };
+    let (w, mut o) = new_world(vec![BdTicket::new("hx-1"), two]);
+    config(&w, json!({}));
+    set_clock(
+        &mut o.cfg,
+        chrono::Local
+            .with_ymd_and_hms(2026, 9, 25, 14, 0, 0)
+            .unwrap(),
+    );
+    write_file(&o.run_dir("hx-2").join("implement.md"), "STATUS: done\n");
+    hits(&w, "hx-1", "review", "idle", CODEX);
+    let o = Arc::new(o);
+    let _one = spawn_ticket(o.clone(), "hx-1");
+    wait_until("the Review's limit Question", || {
+        !limit_questions(&w).is_empty()
+    });
+    assert_eq!(limit_questions(&w), [("codex".to_string(), false)]);
+
+    let _two = spawn_ticket(o.clone(), "hx-2");
+    wait_until("the Question put anew", || limit_questions(&w).len() == 2);
+    assert_eq!(limit_questions(&w)[1], ("codex".to_string(), true));
+    let asker: Vec<_> = w
+        .events()
+        .into_iter()
+        .filter(|e| matches!(e.ask, Some(Ask::Limited { .. })))
+        .filter_map(|e| e.ticket)
+        .collect();
+    assert_eq!(asker, ["hx-1", "hx-1"]);
+    o.review("codex", Review::Unreviewed);
+    w.await_line("hx-2 extra review 1 skipped: codex was limited until 3:05pm");
+    assert_eq!(limit_questions(&w).len(), 2, "asked again after the answer");
+}

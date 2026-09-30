@@ -212,7 +212,8 @@ impl Orchestrator {
     /// How a Review on `app` goes while it is Limited: the answer to the
     /// Review's limit Question, which stands until the reset. Asked once
     /// for the run, by the first Ticket that needs it, which holds, as does
-    /// every other, until the answer. None once the limit is over; Park on
+    /// every other, until the answer; one joining with an Extra review puts
+    /// the Question anew naming it. None once the limit is over; Park on
     /// /park, Stopped on /stop-work.
     fn review_answer(&self, ticket: &str, label: &str, app: &str) -> Result<Option<Review>, Held> {
         let answered = || self.state.lock().unwrap().reviews.get(app).copied();
@@ -228,22 +229,47 @@ impl Orchestrator {
             &format!("{label} holds: {app} limited until {when}"),
         );
         self.update(ticket, |ts| ts.limited = app.to_string());
+        // the answer stands for every Ticket, each running its own: the
+        // Question names the Extra review once any waiting Ticket has one
+        let labels = self.labels(ticket).unwrap_or_default();
+        let extra = extra_review(&self.cfg.repo, &labels)
+            .ok()
+            .flatten()
+            .is_some();
         let mut asked = false;
         let answer = loop {
-            if !asked && self.asked.lock().unwrap().insert(app.to_string()) {
-                asked = true;
-                // the fallback the asking Ticket would run; the answer
-                // stands for every Ticket, each running its own
-                let labels = self.labels(ticket).unwrap_or_default();
-                let fallback = fallback_row(&self.cfg.repo, &labels).ok().flatten();
-                let extra = extra_review(&self.cfg.repo, &labels).ok().flatten();
-                let ask = Ask::Limited {
-                    app: app.to_string(),
-                    fallback: fallback.filter(|f| f.app.name != app).map(|f| f.said()),
-                    extra_review: extra.is_some(),
-                };
-                let text = format!("{app} limited until {when}: how do Reviews go until then?");
-                self.ask_only(ticket, &text, ask);
+            let put = {
+                let mut out = self.asked.lock().unwrap();
+                match out.get_mut(app) {
+                    // answered meanwhile: review holds `asked` as it answers
+                    _ if answered().is_some() => None,
+                    None => {
+                        asked = true;
+                        // the fallback the asking Ticket would run
+                        let fallback = fallback_row(&self.cfg.repo, &labels).ok().flatten();
+                        let ask = Ask::Limited {
+                            app: app.to_string(),
+                            fallback: fallback.filter(|f| f.app.name != app).map(|f| f.said()),
+                            extra_review: extra,
+                        };
+                        let text =
+                            format!("{app} limited until {when}: how do Reviews go until then?");
+                        let put = (ticket.to_string(), text, ask);
+                        out.insert(app.to_string(), put.clone());
+                        Some(put)
+                    }
+                    Some(put) => match &mut put.2 {
+                        Ask::Limited { extra_review, .. } if extra && !*extra_review => {
+                            *extra_review = true;
+                            Some(put.clone())
+                        }
+                        _ => None,
+                    },
+                }
+            };
+            // put anew by the Ticket that asked, so it replaces the Question
+            if let Some((by, text, ask)) = put {
+                self.ask_only(&by, &text, ask);
             }
             if self.consume(&format!("park-{ticket}")) {
                 break Err(Held::Park);
@@ -306,6 +332,7 @@ impl Orchestrator {
     /// The user's answer to the Review's limit Question for `app`: it stands
     /// for every Review on it until the reset.
     pub(crate) fn review(&self, app: &str, answer: Review) {
+        let _out = self.asked.lock().unwrap(); // no Question put anew once answered
         self.change_state(|state| {
             state.reviews.insert(app.to_string(), answer);
         });

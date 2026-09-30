@@ -132,8 +132,8 @@ pub(crate) enum Ask {
     },
     /// The Review's App at its usage limit: how Reviews go until the reset,
     /// asked once for the run. The fallback row, as said, when one is set,
-    /// and whether the asking Ticket has an Extra review, skipped too when
-    /// the PR opens unreviewed.
+    /// and whether a Ticket holding for the answer has an Extra review,
+    /// skipped too when the PR opens unreviewed.
     Limited {
         app: String,
         fallback: Option<String>,
@@ -256,9 +256,9 @@ pub(crate) struct Orchestrator {
     pub(crate) answers: Mutex<Vec<(String, String, Answer)>>,
     /// The Tickets running on a thread of this process.
     pub(crate) active: Mutex<BTreeSet<String>>,
-    /// The Apps whose Review limit Question is out, asked by a Ticket still
-    /// holding for its answer.
-    pub(super) asked: Mutex<BTreeSet<String>>,
+    /// The Review limit Questions out, by App, each asked by a Ticket
+    /// still holding for its answer: that Ticket, the text and the Ask.
+    pub(super) asked: Mutex<BTreeMap<String, (String, String, Ask)>>,
     /// Each Ticket's live session's deadline, which a wait keeps.
     deadlines: Mutex<BTreeMap<String, Instant>>,
     /// The plan last judged for each Ticket's Implement session: a plan.md
@@ -302,7 +302,7 @@ impl Orchestrator {
             commands: Mutex::new(Vec::new()),
             answers: Mutex::new(Vec::new()),
             active: Mutex::new(BTreeSet::new()),
-            asked: Mutex::new(BTreeSet::new()),
+            asked: Mutex::new(BTreeMap::new()),
             deadlines: Mutex::new(BTreeMap::new()),
             plans: Mutex::new(BTreeMap::new()),
             shadows: Mutex::new(BTreeMap::new()),

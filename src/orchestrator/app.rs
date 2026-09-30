@@ -712,6 +712,7 @@ impl Default for ExtraReview {
 pub(crate) fn extra_review(repo: &Path, names: &[String]) -> Result<Option<ExtraReview>, String> {
     Ok(ticket_labels(repo, names)?
         .into_iter()
+        .filter(|(_, label)| label.kind == "area")
         .map(|(_, label)| label.extra_review)
         .find(|extra| !extra.skill.is_empty()))
 }
@@ -725,13 +726,11 @@ pub(crate) fn extra_row(repo: &Path, names: &[String], extra: &ExtraReview) -> R
             .ok_or_else(|| format!("no App named {:?} for the Extra review", extra.app))?;
         runs_on("review", row.app)?;
     }
-    for (field, value) in [
-        (&mut row.model, &extra.model),
-        (&mut row.effort, &extra.effort),
-    ] {
-        if !value.is_empty() {
-            *field = value.clone();
-        }
+    if !extra.model.is_empty() {
+        row.model = extra.model.clone();
+    }
+    if !extra.effort.is_empty() {
+        row.effort = extra.effort.clone();
     }
     Ok(row)
 }
