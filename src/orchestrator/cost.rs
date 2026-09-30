@@ -1,9 +1,10 @@
 //! What each Ticket of an Epic cost, for the Epic summary: the tokens and
 //! API-equivalent dollars of every session started in its worktree or its
 //! Run directory, read from the transcripts claude, codex and pi keep under
-//! home, and its time, read from the orchestrator log. TypeSafe's
-//! Judgments are not counted. Prices come from prices.json alone, which the
-//! update check keeps from LiteLLM's catalog.
+//! home, and its time and TypeSafe's Judgments, read from the orchestrator
+//! log; the Debate Moderator's own TypeSafe calls are not counted. Prices
+//! come from prices.json, which the update check keeps from LiteLLM's
+//! catalog, and TypeSafe's from TYPESAFE.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File};
@@ -78,6 +79,24 @@ const KINDS: [&str; 5] = [
     "cache_read",
     "output",
 ];
+
+/// TypeSafe's prices per model, as docs.typesafe.ai/models lists them:
+/// LiteLLM's catalog has no TypeSafe. Input alone is charged.
+// ponytail: by hand; a Jev version not here is unpriced until it is added.
+const TYPESAFE: [(&str, [f64; 5]); 1] = [("jev-1.13.0", [0.042, 0.0, 0.0, 0.0, 0.0])];
+
+/// The log line of a TypeSafe reply's model and tokens.
+pub(crate) fn typesafe_line(model: &str, input: u64, output: u64) -> String {
+    format!("TypeSafe {model}: {input} input, {output} output tokens")
+}
+
+/// A typesafe_line's model and tokens, in charge's order.
+fn typesafe_tokens(text: &str) -> Option<(&str, [u64; 5])> {
+    let (model, rest) = text.strip_prefix("TypeSafe ")?.split_once(": ")?;
+    let (input, rest) = rest.split_once(" input, ")?;
+    let output = rest.strip_suffix(" output tokens")?;
+    Some((model, [input.parse().ok()?, 0, 0, 0, output.parse().ok()?]))
+}
 
 pub(crate) fn prices_file(repo: &Path) -> PathBuf {
     repo.join(LOCAL).join("prices.json")
@@ -344,6 +363,9 @@ pub(crate) struct Logged {
     pub(crate) span: Option<Span>,
     /// The Apps its Stages started on, from each started line.
     pub(crate) apps: BTreeSet<String>,
+    /// Its TypeSafe Judgments, from each typesafe_line, before or after
+    /// its PR.
+    pub(crate) typesafe: Cost,
 }
 
 /// Every Ticket in .orqadence-local/orchestrator.log by its id, the third
@@ -379,6 +401,10 @@ pub(crate) fn logged(repo: &Path) -> HashMap<String, Logged> {
             logged
                 .apps
                 .extend(row.split(' ').next().map(str::to_string));
+        }
+        if let Some((model, tokens)) = typesafe_tokens(text) {
+            let per = TYPESAFE.iter().find(|(m, _)| *m == model).map(|(_, per)| *per);
+            logged.typesafe.charge(per, tokens);
         }
     }
     out

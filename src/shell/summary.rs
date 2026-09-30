@@ -140,8 +140,9 @@ impl Summary {
 
 /// One Ticket from its Run directory: a Round per verdict-N.md, the PR from
 /// the final Fix's result or the last Round's, merged and parked from bd and
-/// the State. Its Apps are its transcripts', its log's, its State sessions'
-/// and, once it has had a Debate, the sides'.
+/// the State. Its cost is its transcripts' and its TypeSafe Judgments'. Its
+/// Apps are its transcripts', its log's, its State sessions' and, once it
+/// has had a Debate, the sides'.
 fn ticket(
     repo: &Path,
     state: &State,
@@ -186,6 +187,7 @@ fn ticket(
     };
     let ts = state.tickets.get(&t.id);
     let (mut cost, logged) = (cost.unwrap_or_default(), logged.unwrap_or_default());
+    cost.add(&logged.typesafe);
     cost.apps.extend(logged.apps);
     cost.apps.extend(
         ts.iter()
