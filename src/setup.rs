@@ -262,9 +262,14 @@ pub(crate) fn install_skills(
             }
             let write = match mode {
                 Mode::Overwrite => true,
-                Mode::Refresh => record
-                    .get(&rel)
-                    .is_some_and(|wrote| fs::read_to_string(&dest).is_ok_and(|now| now == *wrote)),
+                // A file not there yet, as a skill newer than the install, is
+                // installed; one there is rewritten only when unedited.
+                Mode::Refresh => {
+                    !dest.exists()
+                        || record.get(&rel).is_some_and(|wrote| {
+                            fs::read_to_string(&dest).is_ok_and(|now| now == *wrote)
+                        })
+                }
                 Mode::Fresh => !dest.exists(),
             };
             if write {

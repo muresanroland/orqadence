@@ -468,6 +468,32 @@ fn install_skills_refresh_treats_a_file_without_a_record_as_edited() {
 }
 
 #[test]
+fn install_skills_refresh_installs_a_skill_newer_than_the_install() {
+    // An install from before orqa-infra-review: neither its folder nor its
+    // record entries exist, and refresh must not need overwrite to add it.
+    let repo = TempDir::new();
+    install(repo.path(), "");
+    fs::remove_dir_all(repo.path().join(".orqadence/skills/orqa-infra-review")).unwrap();
+    let mut rec = record(repo.path());
+    rec.retain(|key, _| !key.contains("orqa-infra-review"));
+    fs::write(
+        repo.path().join(RECORD),
+        serde_json::to_string(&rec).unwrap(),
+    )
+    .unwrap();
+
+    install(repo.path(), "2");
+    for file in ["SKILL.md", "fetch.sh"] {
+        let rel = format!(".agents/skills/orqa-infra-review/{file}");
+        assert_eq!(
+            record(repo.path()).get(&rel).map(String::as_str),
+            Some(read(repo.path(), &rel).as_str()),
+            "refresh did not install {file}"
+        );
+    }
+}
+
+#[test]
 fn install_skills_cancel_and_a_closed_stdin_touch_nothing() {
     for answer in ["1", "\r", "", "\x1b[B\x1b[A\r"] {
         let repo = TempDir::new();
