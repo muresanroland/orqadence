@@ -181,6 +181,28 @@ pub(crate) struct Question {
     pub(crate) opened: OnceCell<chrono::DateTime<chrono::Local>>,
 }
 
+/// A Notice modal's kind: red and titled ERROR, or green and titled NOTICE.
+pub(crate) enum NoticeKind {
+    Error,
+    Info,
+}
+
+/// A Notice modal: a message over whatever is open until Enter or Esc
+/// closes it. Unlike the one-line notice it never goes by itself, but for
+/// an autoclose no key has stopped.
+pub(crate) struct Notice {
+    pub(crate) kind: NoticeKind,
+    pub(crate) text: String,
+    /// How long it stands once it shows, if it closes by itself.
+    autoclose: Option<Duration>,
+    /// When it closes by itself: set as it shows, cleared for good by any
+    /// key but Enter or Esc.
+    pub(crate) closes: Option<chrono::DateTime<chrono::Local>>,
+    /// The first row of a message longer than the box shown, which ↑↓
+    /// move; the draw, which knows the height, keeps it inside.
+    pub(crate) scroll: Cell<usize>,
+}
+
 /// What the screen shows, with no terminal in it.
 pub(crate) struct Screen {
     pub(crate) folder: String,
@@ -207,6 +229,9 @@ pub(crate) struct Screen {
     pub(crate) recent: Cell<usize>,
     /// One line above the input, and when it goes.
     pub(crate) notice: Option<(String, Instant)>,
+    /// The Notice modals waiting, oldest first; the first shows over
+    /// everything and takes every key.
+    pub(crate) notices: Vec<Notice>,
     ctrl_c: Option<Instant>,
     pub(crate) ticks: u64,
     /// A run is live: the header's panes step, the status row spins.
@@ -308,6 +333,7 @@ impl Screen {
             scroll: Cell::new(0),
             recent: Cell::new(0),
             notice: None,
+            notices: Vec::new(),
             ctrl_c: None,
             ticks: 0,
             running: false,
@@ -389,11 +415,25 @@ impl Screen {
         match update::exe_path() {
             Ok(exe) => {
                 screen.cfg.exe = exe;
+                screen.notify_updated();
                 screen.check_updates(Arc::new(update::GitHub), update::EVERY);
             }
             Err(err) => screen.say(&format!("update check failed: {err}")),
         }
         screen
+    }
+
+    /// The update notice: an install that put this version in place, the
+    /// last Shell's or init's, left its marker beside the exe.
+    pub(crate) fn notify_updated(&mut self) {
+        if update::take_marker(&self.cfg.exe, &self.version) {
+            let text = format!(
+                "Updated to version {}. See release notes: {}",
+                self.version,
+                update::release_notes(&self.version)
+            );
+            self.notify(NoticeKind::Info, &text, Some(Duration::from_secs(30)));
+        }
     }
 
     /// The updater thread: one check now, then one every `every`, each handed
@@ -649,6 +689,14 @@ impl Screen {
             .is_some_and(|(_, until)| Instant::now() >= *until)
         {
             self.notice = None;
+        }
+        if self
+            .notices
+            .first()
+            .and_then(|n| n.closes)
+            .is_some_and(|at| (self.cfg.clock)() >= at)
+        {
+            self.close_notice();
         }
         if self.run.is_none() && self.update.is_some() && Instant::now() >= self.retry {
             self.install(true);
@@ -1082,7 +1130,25 @@ impl Screen {
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
         // a cleared or taken line leaves the cursor past its start
         self.back = self.back.min(self.input.chars().count());
-        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        let ctrl_c =
+            key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
+        // A Notice modal takes every key before the summary, /config, a
+        // Question or the input: Enter or Esc closes it, ↑↓ scroll a long
+        // one; any other key stops its countdown for good and is swallowed,
+        // but Ctrl-C goes on to exit.
+        if let Some(n) = self.notices.first_mut() {
+            match key.code {
+                KeyCode::Enter | KeyCode::Esc => return self.close_notice(),
+                KeyCode::Up => scroll_by(&n.scroll, -1),
+                KeyCode::Down => scroll_by(&n.scroll, 1),
+                _ => {}
+            }
+            n.closes = None;
+            if !ctrl_c {
+                return;
+            }
+        }
+        if ctrl_c {
             if self.ctrl_c.is_some_and(|at| at.elapsed() < CTRL_C_WINDOW) {
                 self.quit();
             } else {
@@ -1237,14 +1303,17 @@ impl Screen {
 
     /// The wheel scrolls the box under the pointer a row: the Epic summary,
     /// the docked plan, Wake or Stage's question, RECENT or TICKETS. It
-    /// never moves a Question's answer or a list's cursor, and /config takes
-    /// none of it. Clicks do nothing.
+    /// never moves a Question's answer or a list's cursor, and /config and a
+    /// Notice modal take none of it. Clicks do nothing.
     pub(crate) fn mouse(&mut self, m: MouseEvent) {
         let down = match m.kind {
             MouseEventKind::ScrollUp => -1,
             MouseEventKind::ScrollDown => 1,
             _ => return,
         };
+        if !self.notices.is_empty() {
+            return;
+        }
         let pointer = Position::new(m.column, m.row);
         let under = |area: &Cell<Rect>| area.get().contains(pointer);
         // RECENT and a Wake's tail count their rows up from the newest.
@@ -2051,6 +2120,35 @@ impl Screen {
 
     fn notice(&mut self, text: &str, span: Duration) {
         self.notice = Some((text.to_string(), Instant::now() + span));
+    }
+
+    /// Raises a Notice modal; one raised while another shows waits behind it.
+    /// An autoclose counts down only while it shows.
+    pub(crate) fn notify(&mut self, kind: NoticeKind, text: &str, autoclose: Option<Duration>) {
+        self.notices.push(Notice {
+            kind,
+            text: text.to_string(),
+            autoclose,
+            closes: None,
+            scroll: Cell::new(0),
+        });
+        if self.notices.len() == 1 {
+            self.show_notice();
+        }
+    }
+
+    /// Closes the front Notice modal; the next one waiting shows.
+    fn close_notice(&mut self) {
+        self.notices.remove(0);
+        self.show_notice();
+    }
+
+    /// The front Notice modal shows: its autoclose, if any, counts from now.
+    fn show_notice(&mut self) {
+        let now = (self.cfg.clock)();
+        if let Some(n) = self.notices.first_mut() {
+            n.closes = n.autoclose.map(|length| now + length);
+        }
     }
 
     /// The title of a Ticket on the idle tree, for the RECENT Ticket column.

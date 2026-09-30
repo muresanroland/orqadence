@@ -18,7 +18,7 @@ use super::{bold, cut, fg, shell};
 use crate::orchestrator::judgment::{Action, WAITS};
 use crate::orchestrator::stage::{plural, Ask};
 use crate::shell::brand::{lerp, BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT};
-use crate::shell::{About, Question, Screen};
+use crate::shell::{About, NoticeKind, Question, Screen};
 
 /// Under this many columns the dock folds over the Shell.
 const FOLD: u16 = 110;
@@ -75,6 +75,78 @@ pub(super) fn dock(f: &mut Frame, s: &Screen) -> (Rect, Block<'static>) {
         .border_style(fg(PURPLE))
         .padding(Padding::horizontal(1));
     (rect, block)
+}
+
+/// A Notice modal is this many columns wide, wider only for a longer word
+/// (a URL) so it stays on one row: it fits 80.
+const NOTICE_W: u16 = 60;
+
+/// The front Notice modal over whatever else shows: a box centred over a
+/// Clear, its border and title red and ' ERROR ' or green and ' NOTICE ';
+/// the message wrapped whole to the box, which is as tall as it up to the
+/// screen, a longer one from its scroll row; one [ OK ], focused; at its
+/// foot the time left while it closes by itself.
+pub(super) fn notice(f: &mut Frame, s: &Screen) {
+    let n = &s.notices[0];
+    let (title, c) = match n.kind {
+        NoticeKind::Error => (" ERROR ", RED),
+        NoticeKind::Info => (" NOTICE ", GREEN),
+    };
+    let area = f.area();
+    let longest = n.text.split_whitespace().map(|w| w.chars().count()).max();
+    let width = NOTICE_W
+        .max(longest.unwrap_or(0) as u16 + 4)
+        .min(area.width);
+    // The border and padding take 4 columns; the border, a blank row and
+    // the button 4 rows.
+    let rows: Vec<Line> = n
+        .text
+        .lines()
+        .flat_map(|line| {
+            wrap_spans(
+                vec![(line.to_string(), fg(TEXT))],
+                width.saturating_sub(4) as usize,
+                "",
+                "",
+                fg(TEXT),
+            )
+        })
+        .collect();
+    let height = (rows.len() as u16 + 4).min(area.height);
+    let shown = height.saturating_sub(4) as usize;
+    let mut foot = Vec::new();
+    if rows.len() > shown {
+        foot.push("↑↓ scrolls".to_string());
+    }
+    if let Some(closes) = n.closes {
+        let ms = (closes - (s.cfg.clock)()).num_milliseconds().max(0);
+        foot.push(format!("closes in {}s", (ms + 999) / 1000));
+    }
+    let mut block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(fg(c))
+        .padding(Padding::horizontal(1))
+        .title(Span::styled(title, bold(c)));
+    if !foot.is_empty() {
+        let foot = format!(" {} ", foot.join(" · "));
+        block = block.title_bottom(Span::styled(foot, fg(MUTED)));
+    }
+    let rect = area.centered(Constraint::Length(width), Constraint::Length(height));
+    let inner = block.inner(rect);
+    f.render_widget(Clear, rect);
+    f.render_widget(block, rect);
+    let [text, _, button] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    let from = n.scroll.get().min(rows.len().saturating_sub(shown));
+    n.scroll.set(from);
+    let rows: Vec<Line> = rows.into_iter().skip(from).take(shown).collect();
+    f.render_widget(Paragraph::new(rows), text);
+    let ok = Span::styled("[ OK ]", bold(Color::Black).bg(c));
+    f.render_widget(Line::from(ok).centered(), button);
 }
 
 /// A dock's badges joined by a muted " · ".
@@ -633,7 +705,8 @@ fn inline(text: &str, base: Style) -> Vec<(String, Style)> {
 
 /// Word-wraps styled pieces to `width`, `first` leading the first row and
 /// `hang` the rest, both in `lead`; a word longer than the row is cut at
-/// the row's end and goes on under it, as fenced code does.
+/// the row's end and goes on under it, as fenced code does. Widths are
+/// terminal columns, so a wide character takes two.
 pub(super) fn wrap_spans(
     pieces: Vec<(String, Style)>,
     width: usize,
@@ -641,16 +714,17 @@ pub(super) fn wrap_spans(
     hang: &str,
     lead: Style,
 ) -> Vec<Line<'static>> {
+    let cols = |s: &str| Span::raw(s).width();
     let mut lines = Vec::new();
     let mut row = vec![Span::styled(first.to_string(), lead)];
-    let (mut used, mut fresh) = (first.chars().count(), true);
+    let (mut used, mut fresh) = (cols(first), true);
     for (text, style) in pieces {
         for mut word in text.split_inclusive(' ') {
             loop {
-                if !fresh && used + word.trim_end().chars().count() > width {
+                if !fresh && used + cols(word.trim_end()) > width {
                     let next = vec![Span::styled(hang.to_string(), lead)];
                     lines.push(Line::from(std::mem::replace(&mut row, next)));
-                    used = hang.chars().count();
+                    used = cols(hang);
                     fresh = true;
                 }
                 if fresh {
@@ -660,12 +734,31 @@ pub(super) fn wrap_spans(
                     break;
                 }
                 let room = width.saturating_sub(used).max(1);
-                let at = match word.trim_end().chars().count() > room {
-                    true => word.char_indices().nth(room).map_or(word.len(), |(i, _)| i),
+                let at = match cols(word.trim_end()) > room {
+                    true => {
+                        // Cut before the character that overflows the row,
+                        // measuring the whole prefix as the renderer does (❤
+                        // takes one column, ❤️ two), and back over zero-width
+                        // marks so ❤ keeps its U+FE0F. Take at least one
+                        // character so a narrow row still moves on.
+                        let one = word.chars().next().map_or(0, char::len_utf8);
+                        let mut at = word
+                            .char_indices()
+                            .find(|&(i, c)| cols(&word[..i + c.len_utf8()]) > room)
+                            .map_or(word.len(), |(i, _)| i);
+                        while word[at..]
+                            .chars()
+                            .next()
+                            .is_some_and(|c| at > 0 && cols(c.encode_utf8(&mut [0; 4])) == 0)
+                        {
+                            at = word[..at].char_indices().last().map_or(0, |(i, _)| i);
+                        }
+                        at.max(one)
+                    }
                     false => word.len(),
                 };
                 let (piece, rest) = word.split_at(at);
-                used += piece.chars().count();
+                used += cols(piece);
                 row.push(Span::styled(piece.to_string(), style));
                 fresh = false;
                 word = rest;

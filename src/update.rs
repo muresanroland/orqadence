@@ -5,7 +5,9 @@
 //! keeps the prices of the models in use from LiteLLM's catalog in
 //! .orqadence-local/prices.json, for the Epic summary. A dev build never
 //! checks. The check and the downloads sit behind `Releases`, with the ureq
-//! `GitHub` behind it and a fake in tests.
+//! `GitHub` behind it and a fake in tests. A done rename leaves
+//! `<exe>.updated` holding the tag, which the next Shell takes for its
+//! update notice.
 
 use std::collections::BTreeSet;
 use std::fs::{self, File};
@@ -69,12 +71,15 @@ pub(crate) struct Ready {
 
 impl Ready {
     /// The rename over the exe: atomic, and the running image keeps its old
-    /// inode. The temp file goes on a refusal.
+    /// inode. The temp file goes on a refusal. A done rename leaves the
+    /// marker; a marker that cannot be written loses only the notice.
     pub(crate) fn install(self) -> Result<(), String> {
         fs::rename(&self.tmp, &self.exe).map_err(|err| {
             self.discard();
             format!("rename refused: {err}")
-        })
+        })?;
+        let _ = fs::write(marker(&self.exe), &self.tag);
+        Ok(())
     }
 
     pub(crate) fn discard(&self) {
@@ -146,6 +151,30 @@ fn sweep(exe: &Path, name: &str) {
             let _ = fs::remove_file(entry.path());
         }
     }
+}
+
+/// `<exe>.updated`, holding the tag the last install put in place.
+fn marker(exe: &Path) -> PathBuf {
+    let mut path = exe.as_os_str().to_owned();
+    path.push(".updated");
+    path.into()
+}
+
+/// Whether an install put `version` in place, once: the marker beside `exe`
+/// is deleted whatever it names. One naming another version (an install
+/// undone since, or a dev build) is false, as is a missing or unreadable one.
+pub(crate) fn take_marker(exe: &Path, version: &str) -> bool {
+    let marker = marker(exe);
+    let Ok(tag) = fs::read(&marker) else {
+        return false;
+    };
+    let _ = fs::remove_file(marker);
+    tag == version.as_bytes()
+}
+
+/// The release's page on github.com.
+pub(crate) fn release_notes(tag: &str) -> String {
+    format!("https://github.com/{REPO}/releases/tag/{tag}")
 }
 
 /// The Shell's check of the prices: the catalog's for the models the rows
@@ -429,12 +458,15 @@ mod tests {
         let dir = TempDir::new();
         let exe = exe(&dir);
         fs::write(dir.path().join("orqa.new.1"), b"left by a dead process").unwrap();
+        let marker = dir.path().join("orqa.updated");
+        fs::write(&marker, "v1.0.0").unwrap();
         let releases = FakeReleases::new("v1.1.0", &binary(b"new"));
         let ready = check(&releases, "v1.0.0", &exe)
             .unwrap()
             .expect("no update");
         assert_eq!(ready.tag, "v1.1.0");
         assert_eq!(fs::read(&exe).unwrap(), b"old", "swapped before install");
+        assert_eq!(fs::read(&marker).unwrap(), b"v1.0.0", "the sweep took it");
         assert_eq!(
             temp_files(&dir),
             [format!("orqa.new.{}", std::process::id())]
@@ -444,6 +476,7 @@ mod tests {
         ready.install().unwrap();
         assert_eq!(fs::read(&exe).unwrap(), binary(b"new"));
         assert!(temp_files(&dir).is_empty());
+        assert_eq!(fs::read(&marker).unwrap(), b"v1.1.0");
     }
 
     #[test]
@@ -498,6 +531,23 @@ mod tests {
         let err = ready.install().unwrap_err();
         assert!(err.starts_with("rename refused: "), "{err}");
         assert!(temp_files(&dir).is_empty());
+        assert!(!dir.path().join("orqa.updated").exists());
+    }
+
+    /// The marker goes whatever it names; only the running version's
+    /// counts.
+    #[test]
+    fn taking_the_marker_returns_the_running_version_and_deletes_it() {
+        let dir = TempDir::new();
+        let exe = exe(&dir);
+        let marker = dir.path().join("orqa.updated");
+        fs::write(&marker, "v1.1.0").unwrap();
+        assert!(take_marker(&exe, "v1.1.0"));
+        assert!(!marker.exists());
+        fs::write(&marker, "v1.1.0").unwrap();
+        assert!(!take_marker(&exe, "v1.0.0"), "an undone install");
+        assert!(!marker.exists());
+        assert!(!take_marker(&exe, "v1.1.0"), "no marker");
     }
 
     #[test]
