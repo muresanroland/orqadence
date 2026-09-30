@@ -108,6 +108,16 @@ fn an_area_labels_extra_review_runs_after_the_review_each_round_on_its_row() {
     let splits = w.called("herdr pane split");
     let run_dir = format!("--cwd {}", o.run_dir("hx-1").display());
     assert!(splits[1].contains(&run_dir), "{}", splits[1]);
+    // the Fix that opens the PR gets every Extra review file, for the PR
+    let dir = o.run_dir("hx-1");
+    let files = format!(
+        "- Extra review files: {}, {}\n",
+        dir.join("extra-review-1.md").display(),
+        dir.join("extra-review-2.md").display()
+    );
+    let fix = w.prompt("fix-2.md");
+    assert!(fix.contains(&files), "{fix}");
+    assert!(!w.prompt("fix-1.md").contains("- Extra review files:"));
 
     // an empty row falls back to the Review's: codex, from config.json
     let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
@@ -409,6 +419,12 @@ fn before_pr_the_last_fix_holds_the_pr_for_the_extra_review_its_debate_and_a_fin
     );
     assert!(fin.contains("verdict-1.md, "), "{fin}");
     assert!(fin.contains("verdict-final.md\n"), "{fin}");
+    let files = format!(
+        "- Extra review files: {}\n",
+        o.run_dir("hx-1").join("extra-review-final.md").display()
+    );
+    assert!(fin.contains(&files), "{fin}");
+    assert!(!last.contains("- Extra review files:"), "{last}");
 }
 
 /// No Findings: the final Fix still runs, with nothing to fix, and opens

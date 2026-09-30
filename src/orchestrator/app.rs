@@ -716,6 +716,16 @@ pub(crate) fn extra_review(repo: &Path, names: &[String]) -> Result<Option<Extra
         .find(|extra| !extra.skill.is_empty()))
 }
 
+/// The Ticket's Area label's pr_template, a file name in
+/// .github/PULL_REQUEST_TEMPLATE/; empty for the default.
+pub(crate) fn pr_template(repo: &Path, names: &[String]) -> Result<String, String> {
+    Ok(ticket_labels(repo, names)?
+        .into_iter()
+        .find(|(_, label)| label.kind == "area")
+        .map(|(_, label)| label.pr_template)
+        .unwrap_or_default())
+}
+
 /// The Extra review's row: the Review's, the Ticket's labels' over
 /// config.json's, with each field the Extra review sets over that.
 pub(crate) fn extra_row(repo: &Path, names: &[String], extra: &ExtraReview) -> Result<Row, String> {

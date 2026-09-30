@@ -6,17 +6,18 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// A shipped skill's text by its name.
+fn skill(name: &str) -> &'static str {
+    SKILLS.iter().find(|(n, _)| *n == name).unwrap().1
+}
+
 /// infra-review names the Inputs and the section the Review Stage and the
 /// Orchestrator rely on.
 #[test]
 fn infra_review_is_shipped_with_its_not_run_section() {
-    let skill = SKILLS
-        .iter()
-        .find(|(s, _)| *s == "orqa-infra-review")
-        .unwrap()
-        .1;
+    let infra = skill("orqa-infra-review");
     for text in ["name: orqa-infra-review", "## Not run", "**Cache**"] {
-        assert!(skill.contains(text), "infra-review lacks {text:?}");
+        assert!(infra.contains(text), "infra-review lacks {text:?}");
     }
 }
 
@@ -225,7 +226,6 @@ fn fetch_leaves_invalid_manifests_and_missing_schemas_to_the_review() {
 /// and stage-fix knows the not-debated fix items and the Unreviewed wording.
 #[test]
 fn the_stage_skills_know_the_extra_review() {
-    let skill = |name| SKILLS.iter().find(|(n, _)| *n == name).unwrap().1;
     assert!(skill("orqa-stage-moderate").contains(
         "Take every Finding from the **Review file**, and from the **Extra review file** when Inputs carry one"
     ));
@@ -233,4 +233,35 @@ fn the_stage_skills_know_the_extra_review() {
     assert!(fix.contains("| not debated | extra review`"));
     assert!(fix.contains("`the extra review skipped too`"));
     assert!(skill("orqa-stage-review").contains("`extra-review-*.md`"));
+}
+
+/// create-pr fills a template it is given before any it finds itself, and
+/// replaces each section's comment with content.
+#[test]
+fn create_pr_prefers_a_given_template() {
+    let create_pr = skill("orqa-create-pr");
+    assert!(create_pr.contains("A template you are given comes before any you find yourself"));
+    assert!(create_pr.contains("replace each section's HTML comment"));
+}
+
+/// stage-fix fills the PR template, then puts Orqadence's run parts under
+/// one heading after the template's own, in order; Unreviewed stays first.
+#[test]
+fn stage_fix_names_the_orqadence_run_heading_and_its_parts_in_order() {
+    let fix = skill("orqa-stage-fix");
+    assert!(fix.contains("**PR template**"));
+    assert!(fix.contains("**Extra review files**"));
+    let at = |part: &str| fix.find(part).unwrap_or_else(|| panic!("no {part:?}"));
+    let parts = [
+        "**Unreviewed**",
+        "`## Orqadence run`",
+        "**Verdict history**",
+        "**Leftovers never re-checked**",
+        "**Extra review skipped**",
+        "**Extra review Findings still open at the cap**",
+        "`## Not run`",
+    ];
+    for pair in parts.windows(2) {
+        assert!(at(pair[0]) < at(pair[1]), "{} before {}", pair[0], pair[1]);
+    }
 }
