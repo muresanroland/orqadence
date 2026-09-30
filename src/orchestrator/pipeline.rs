@@ -149,33 +149,9 @@ impl Orchestrator {
                         not_debated = not_debated_items(&found);
                     }
                 }
-                let verdict = self.run_read_only(
-                    ticket,
-                    &DEBATE,
-                    round,
-                    &inputs,
-                    ResultRequirements {
-                        review_findings: findings,
-                        ..Default::default()
-                    },
-                )?;
-                self.report(
-                    ticket,
-                    &format!(
-                        "debate {round} settled: {} to fix, {} skipped",
-                        verdict.fixes.len(),
-                        verdict.skips.len()
-                    ),
-                );
-                verdicts.push(
-                    self.run_dir(ticket)
-                        .join(result_name(&DEBATE, round))
-                        .display()
-                        .to_string(),
-                );
+                let mut fixes = self.debate(ticket, round, &inputs, findings, &mut verdicts)?;
                 // the Extra review's, after the Verdict's: they keep the
                 // Rounds going too
-                let mut fixes = verdict.fixes;
                 fixes.extend(not_debated);
                 fixes
             };
@@ -189,8 +165,9 @@ impl Orchestrator {
             let held = last && unreviewed.is_empty() && before_pr.is_some();
             let items = fix_items(&fixes);
             let history = verdicts.join(", ");
+            let open_pr = last && !held;
             let mut inputs = vec![("Open PR", "no"), ("Fix items", items.as_str())];
-            if last && !held {
+            if open_pr {
                 inputs[0].1 = "yes";
                 inputs.push(("Verdict history", history.as_str()));
             }
@@ -203,7 +180,7 @@ impl Orchestrator {
                 round,
                 &inputs,
                 ResultRequirements {
-                    require_pr: last && !held,
+                    require_pr: open_pr,
                     ..Default::default()
                 },
             )?;
@@ -253,8 +230,6 @@ impl Orchestrator {
         extra: &ExtraReview,
         verdicts: &mut Vec<String>,
     ) -> Result<StageResult, StageError> {
-        let dir = self.run_dir(ticket);
-        let file = dir.join(result_name(&EXTRA_REVIEW, FINAL));
         let found = self.run_read_only(
             ticket,
             &EXTRA_REVIEW,
@@ -270,27 +245,10 @@ impl Orchestrator {
             ),
         );
         let fixes = if extra.debate {
+            let file = self.run_dir(ticket).join(result_name(&EXTRA_REVIEW, FINAL));
             let file = file.display().to_string();
-            let verdict = self.run_read_only(
-                ticket,
-                &DEBATE,
-                FINAL,
-                &[("Review file", file.as_str())],
-                ResultRequirements {
-                    review_findings: found.found.len(),
-                    ..Default::default()
-                },
-            )?;
-            self.report(
-                ticket,
-                &format!(
-                    "debate final settled: {} to fix, {} skipped",
-                    verdict.fixes.len(),
-                    verdict.skips.len()
-                ),
-            );
-            verdicts.push(dir.join(result_name(&DEBATE, FINAL)).display().to_string());
-            verdict.fixes
+            let inputs = [("Review file", file.as_str())];
+            self.debate(ticket, FINAL, &inputs, found.found.len(), verdicts)?
         } else {
             not_debated_items(&found)
         };
@@ -312,6 +270,40 @@ impl Orchestrator {
         )?;
         self.report(ticket, "final fix done");
         Ok(fix)
+    }
+
+    /// A Debate over `findings` Findings, reported as settled; its Verdict
+    /// file joins the history and its fix items are returned.
+    fn debate(
+        &self,
+        ticket: &str,
+        round: usize,
+        inputs: &[(&str, &str)],
+        findings: usize,
+        verdicts: &mut Vec<String>,
+    ) -> Result<Vec<String>, StageError> {
+        let verdict = self.run_read_only(
+            ticket,
+            &DEBATE,
+            round,
+            inputs,
+            ResultRequirements {
+                review_findings: findings,
+                ..Default::default()
+            },
+        )?;
+        self.report(
+            ticket,
+            &format!(
+                "{} settled: {} to fix, {} skipped",
+                stage_label(&DEBATE, round),
+                verdict.fixes.len(),
+                verdict.skips.len()
+            ),
+        );
+        let file = self.run_dir(ticket).join(result_name(&DEBATE, round));
+        verdicts.push(file.display().to_string());
+        Ok(verdict.fixes)
     }
 
     /// Runs a Stage that must leave the worktree as it found it: the Review
