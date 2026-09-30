@@ -10,14 +10,14 @@ use serde::Deserialize;
 /// not their size.
 pub(crate) const QUERY: &str = "query($url:URI!){resource(url:$url){...on PullRequest{
   state mergeable headRefOid
-  statusCheckRollup{commit{oid} state contexts(first:100){nodes{__typename
+  statusCheckRollup{commit{oid} state contexts(first:100){nodes{
     ...on CheckRun{name status conclusion startedAt
       checkSuite{app{slug} workflowRun{event workflow{name}}}}
     ...on StatusContext{context state description creator{login}}}}}
-  reviewThreads(first:100){nodes{id isResolved isOutdated path line
+  reviewThreads(first:100){nodes{id isResolved path line
     comments(first:50){nodes{databaseId author{login __typename} body}}}}
-  reviews(last:50){nodes{databaseId url author{login __typename} submittedAt commit{oid} body}}
-  comments(last:100){nodes{databaseId url author{login __typename} lastEditedAt body}}}}}";
+  reviews(last:50){nodes{databaseId url author{login __typename} body}}
+  comments(last:100){nodes{databaseId url author{login __typename} body}}}}}";
 
 /// The PR, the reply's `resource`.
 #[derive(Debug, Default, Deserialize)]
@@ -125,7 +125,8 @@ pub(crate) fn parse(reply: &str) -> Result<Pr, String> {
 impl Pr {
     /// The rollup's contexts if they are the head's: a rollup of another
     /// commit holds nothing, nor does a bot seen only on an earlier one.
-    /// Like gh, only the newest run of a check counts.
+    /// Like gh, only the newest run of a check counts; a queued run, not
+    /// started yet, is the newest.
     fn contexts(&self) -> Vec<&Context> {
         let mut newest: Vec<&Context> = Vec::new();
         let Some(rollup) = &self.status_check_rollup else {
@@ -140,7 +141,12 @@ impl Pr {
         }
         for c in &rollup.contexts.nodes {
             match newest.iter_mut().find(|n| n.key() == c.key()) {
-                Some(n) if c.started_at > n.started_at => *n = c,
+                Some(n)
+                    if n.started_at.is_some()
+                        && (c.started_at.is_none() || c.started_at > n.started_at) =>
+                {
+                    *n = c
+                }
                 Some(_) => {}
                 None => newest.push(c),
             }
@@ -388,19 +394,16 @@ fn rank(rating: &str) -> u8 {
 }
 
 impl Context {
-    fn name(&self) -> &str {
-        if self.name.is_empty() {
-            &self.context
-        } else {
-            &self.name
-        }
-    }
-
     /// What gh tells runs of one check apart by: name, workflow and event.
     fn key(&self) -> (&str, &str, &str) {
         let run = &self.check_suite["workflowRun"];
         let workflow = run["workflow"]["name"].as_str().unwrap_or("");
-        (self.name(), workflow, run["event"].as_str().unwrap_or(""))
+        let name = if self.name.is_empty() {
+            &self.context
+        } else {
+            &self.name
+        };
+        (name, workflow, run["event"].as_str().unwrap_or(""))
     }
 
     /// The app that ran a check, or who set a status.

@@ -292,6 +292,20 @@ fn only_the_newest_run_of_a_check_counts() {
     let failed = checks(&pr);
     assert_eq!(failed.len(), 1, "one item for the check: {failed:?}");
     assert_eq!(failed[0].author, "github-actions");
+
+    let mut queued = run("", "");
+    queued["status"] = json!("QUEUED");
+    queued["conclusion"] = Value::Null;
+    queued["startedAt"] = Value::Null;
+    let done = run("SUCCESS", "2026-09-28T10:05:00Z");
+    for order in [[&done, &queued], [&queued, &done]] {
+        pr["statusCheckRollup"]["contexts"]["nodes"] = json!(order);
+        let reply: Pr = serde_json::from_value(pr.clone()).unwrap();
+        assert!(
+            reply.busy(),
+            "a queued re-run, not started yet, is the newest"
+        );
+    }
 }
 
 #[test]
