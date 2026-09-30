@@ -10,7 +10,7 @@ use super::app;
 use super::result::{read_stage_result, ResultRequirements, StageResult};
 use super::stage::{
     plural, pr_ref, result_name, stage_label, Ask, Orchestrator, Stage, StageError, ADDRESS, AWAY,
-    DEBATE, EXTRA_REVIEW, FIX, IMPLEMENT, REVIEW,
+    DEBATE, EXTRA_REVIEW, FINAL, FIX, IMPLEMENT, REVIEW,
 };
 use super::state::{STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 use crate::skills::manifest::{placeholder, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS};
@@ -21,6 +21,12 @@ pub(crate) const MAX_ROUNDS: usize = 3;
 /// What a run keeps for whoever reads it later: the Stages' result files,
 /// diffs and debate transcripts, all flat text.
 const EVIDENCE: [&str; 5] = ["md", "txt", "patch", "json", "sh"];
+
+/// An Extra review's Findings as fix items that skipped the Debate.
+fn not_debated_items(found: &StageResult) -> Vec<String> {
+    let mark = |item: &String| format!("- [fix] {} | not debated | extra review", &item[2..]);
+    found.found.iter().map(mark).collect()
+}
 
 impl Orchestrator {
     /// Moves one Ticket through the Pipeline: Implement, then Rounds of
@@ -62,23 +68,19 @@ impl Orchestrator {
             let review =
                 self.run_read_only(ticket, &REVIEW, round, &[], ResultRequirements::default())?;
             // The Area label's Extra review, after the Review in every Round
-            // or in Round 1 only.
-            // ponytail: before_pr runs as every; the last Fix without a PR,
-            // then the Extra review, its Debate and a final Fix
-            // (docs/design/extra-review.md) once harness-brd.7 builds them.
+            // or in Round 1 only; one before the PR runs once, after the
+            // last Round's Fix.
             let labels = self
                 .labels(ticket)
                 .map_err(|err| StageError::Parked(format!("Ticket labels not read: {err}")))?;
             let extra = app::extra_review(&self.cfg.repo, &labels).map_err(StageError::Parked)?;
-            let extra = extra.filter(|extra| {
-                if extra.position == "before_pr" {
-                    self.log(
-                        ticket,
-                        "extra review before the PR is not built yet: runs every Round",
-                    );
-                }
-                extra.position != "first" || round == 1
-            });
+            let (before_pr, extra) = match extra {
+                Some(extra) if extra.position == "before_pr" => (Some(extra), None),
+                extra => (
+                    None,
+                    extra.filter(|extra| extra.position != "first" || round == 1),
+                ),
+            };
             // Its App Limited and the PR to open unreviewed: this Round's
             // Review, Extra review and Debate are skipped, and nothing is
             // left to fix.
@@ -88,11 +90,13 @@ impl Orchestrator {
                     ticket,
                     &format!("review {round} and debate {round} skipped: {unreviewed}"),
                 );
-                if extra.is_some() {
-                    self.report(
-                        ticket,
-                        &format!("extra review {round} skipped: {unreviewed}"),
-                    );
+                let skipped = match (&extra, &before_pr) {
+                    (Some(_), _) => Some(format!("extra review {round}")),
+                    (_, Some(_)) => Some("extra review before the PR".to_string()),
+                    _ => None,
+                };
+                if let Some(skipped) = skipped {
+                    self.report(ticket, &format!("{skipped} skipped: {unreviewed}"));
                     unreviewed += ", the extra review skipped too";
                 }
                 Vec::new()
@@ -133,42 +137,12 @@ impl Orchestrator {
                         inputs.push(("Extra review file", extra_file.as_str()));
                         findings += found.found.len();
                     } else {
-                        not_debated = found
-                            .found
-                            .iter()
-                            .map(|item| {
-                                format!("- [fix] {} | not debated | extra review", &item[2..])
-                            })
-                            .collect();
+                        not_debated = not_debated_items(&found);
                     }
                 }
-                let verdict = self.run_read_only(
-                    ticket,
-                    &DEBATE,
-                    round,
-                    &inputs,
-                    ResultRequirements {
-                        review_findings: findings,
-                        ..Default::default()
-                    },
-                )?;
-                self.report(
-                    ticket,
-                    &format!(
-                        "debate {round} settled: {} to fix, {} skipped",
-                        verdict.fixes.len(),
-                        verdict.skips.len()
-                    ),
-                );
-                verdicts.push(
-                    self.run_dir(ticket)
-                        .join(result_name(&DEBATE, round))
-                        .display()
-                        .to_string(),
-                );
+                let mut fixes = self.debate(ticket, round, &inputs, findings, &mut verdicts)?;
                 // the Extra review's, after the Verdict's: they keep the
                 // Rounds going too
-                let mut fixes = verdict.fixes;
                 fixes.extend(not_debated);
                 fixes
             };
@@ -176,35 +150,16 @@ impl Orchestrator {
             // The Fix session always runs, even with nothing to fix, because
             // the last one opens the pull request. It is given only the fix
             // items; the last one also gets the Verdict files, for the PR
-            // description.
+            // description. After a reviewed last Round, an Extra review
+            // before the PR holds the PR for a final Fix.
             let last = fixes.is_empty() || round == MAX_ROUNDS;
-            let items = if fixes.is_empty() {
-                "none".to_string()
-            } else {
-                format!("\n  {}", fixes.join("\n  "))
-            };
-            let history = verdicts.join(", ");
-            let mut inputs = vec![("Open PR", "no"), ("Fix items", items.as_str())];
-            if last {
-                inputs[0].1 = "yes";
-                inputs.push(("Verdict history", history.as_str()));
-            }
-            if !unreviewed.is_empty() {
-                inputs.push(("Unreviewed", unreviewed.as_str()));
-            }
-            let fix = self.run_stage(
-                ticket,
-                &FIX,
-                round,
-                &inputs,
-                ResultRequirements {
-                    require_pr: last,
-                    ..Default::default()
-                },
-            )?;
-            self.report(ticket, &format!("fix {round} done"));
+            let held = last && unreviewed.is_empty() && before_pr.is_some();
+            let mut fix = self.fix(ticket, round, &fixes, last && !held, &unreviewed, &verdicts)?;
             if !last {
                 continue;
+            }
+            if let Some(extra) = before_pr.filter(|_| held) {
+                fix = self.final_fix(ticket, extra.debate, &mut verdicts)?;
             }
 
             let tab = self.ticket(ticket).tab;
@@ -233,6 +188,117 @@ impl Orchestrator {
             return Ok(());
         }
         Ok(())
+    }
+
+    /// What follows a last Round's Fix that held the PR: the Extra review
+    /// once on the finished branch, its Debate when its switch is on (off,
+    /// its Findings are fix items not debated), and a final Fix with the
+    /// Verdict history, which opens the PR even with no fix items.
+    fn final_fix(
+        &self,
+        ticket: &str,
+        debate: bool,
+        verdicts: &mut Vec<String>,
+    ) -> Result<StageResult, StageError> {
+        let found = self.run_read_only(
+            ticket,
+            &EXTRA_REVIEW,
+            FINAL,
+            &[],
+            ResultRequirements::default(),
+        )?;
+        self.report(
+            ticket,
+            &format!(
+                "extra review before the PR found {}",
+                plural(found.found.len(), "finding")
+            ),
+        );
+        let fixes = if debate {
+            let file = self.run_dir(ticket).join(result_name(&EXTRA_REVIEW, FINAL));
+            let file = file.display().to_string();
+            let inputs = [("Review file", file.as_str())];
+            self.debate(ticket, FINAL, &inputs, found.found.len(), verdicts)?
+        } else {
+            not_debated_items(&found)
+        };
+        self.fix(ticket, FINAL, &fixes, true, "", verdicts)
+    }
+
+    /// A Fix given only the fix items ("none" without any); one that opens
+    /// the PR also gets the Verdict files, for the PR description.
+    fn fix(
+        &self,
+        ticket: &str,
+        round: usize,
+        fixes: &[String],
+        open_pr: bool,
+        unreviewed: &str,
+        verdicts: &[String],
+    ) -> Result<StageResult, StageError> {
+        let items = if fixes.is_empty() {
+            "none".to_string()
+        } else {
+            format!("\n  {}", fixes.join("\n  "))
+        };
+        let history = verdicts.join(", ");
+        let mut inputs = vec![("Open PR", "no"), ("Fix items", items.as_str())];
+        if open_pr {
+            inputs[0].1 = "yes";
+            inputs.push(("Verdict history", history.as_str()));
+        }
+        if !unreviewed.is_empty() {
+            inputs.push(("Unreviewed", unreviewed));
+        }
+        let fix = self.run_stage(
+            ticket,
+            &FIX,
+            round,
+            &inputs,
+            ResultRequirements {
+                require_pr: open_pr,
+                ..Default::default()
+            },
+        )?;
+        match round {
+            FINAL => self.report(ticket, "final fix done"),
+            _ => self.report(ticket, &format!("fix {round} done")),
+        }
+        Ok(fix)
+    }
+
+    /// A Debate over `findings` Findings, reported as settled; its Verdict
+    /// file joins the history and its fix items are returned.
+    fn debate(
+        &self,
+        ticket: &str,
+        round: usize,
+        inputs: &[(&str, &str)],
+        findings: usize,
+        verdicts: &mut Vec<String>,
+    ) -> Result<Vec<String>, StageError> {
+        let verdict = self.run_read_only(
+            ticket,
+            &DEBATE,
+            round,
+            inputs,
+            ResultRequirements {
+                review_findings: findings,
+                ..Default::default()
+            },
+        )?;
+        self.report(
+            ticket,
+            &format!(
+                "{} settled: {} to fix, {} skipped",
+                stage_label(&DEBATE, round),
+                verdict.fixes.len(),
+                verdict.skips.len()
+            ),
+        );
+        let file = self.run_dir(ticket).join(result_name(&DEBATE, round));
+        verdicts.push(file.display().to_string());
+        Ok(verdict.fixes)
     }
 
     /// Runs a Stage that must leave the worktree as it found it: the Review

@@ -18,6 +18,7 @@ use super::app::{
 use super::herdr::{agent_name, split_target};
 use super::judgment::{offered, Action, Judged, PlanJudged, TypeSafe, WAKE_FLOOR};
 use super::limit::{codex_review, until, Limit, LAST_LINES};
+use super::pipeline::MAX_ROUNDS;
 use super::result::{
     read_question, read_stage_result, stage_prompt, ResultRequirements, StageResult, ASKED, PLANNED,
 };
@@ -60,6 +61,9 @@ pub(crate) const REVIEW: Stage = stage("review", "orqa-stage-review", 30);
 pub(crate) const EXTRA_REVIEW: Stage = stage("extra-review", "orqa-stage-review", 30);
 pub(crate) const DEBATE: Stage = stage("debate", "orqa-stage-moderate", 30);
 pub(crate) const FIX: Stage = stage("fix", "orqa-stage-fix", 60);
+/// The Round number of the steps after the last Round, when an Extra review
+/// runs before the PR: its files and labels say "final".
+pub(crate) const FINAL: usize = MAX_ROUNDS + 1;
 pub(crate) const ADDRESS: Stage = stage("address", "orqa-stage-address", 60);
 
 /// How a Stage ends other than with an accepted result.
@@ -563,10 +567,10 @@ pub(crate) fn run_dir(repo: &Path, ticket: &str) -> PathBuf {
 /// "extra review 1".
 pub(crate) fn stage_label(st: &Stage, round: usize) -> String {
     let name = st.name.replace('-', " ");
-    if round == 0 {
-        name
-    } else {
-        format!("{name} {round}")
+    match round {
+        0 => name,
+        FINAL => format!("{name} final"),
+        _ => format!("{name} {round}"),
     }
 }
 
@@ -584,6 +588,11 @@ pub(crate) fn pr_ref(url: &str) -> String {
 
 /// The name of a Stage's result file in the run directory.
 pub(crate) fn result_name(st: &Stage, round: usize) -> String {
+    let round = if round == FINAL {
+        "final".to_string()
+    } else {
+        round.to_string()
+    };
     match st.name {
         "debate" => format!("verdict-{round}.md"),
         "review" | "fix" | "extra-review" => format!("{}-{round}.md", st.name),

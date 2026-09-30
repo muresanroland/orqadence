@@ -13,7 +13,7 @@ use crate::orchestrator::cost::{self, Cost, Logged, Span};
 use crate::orchestrator::pipeline::MAX_ROUNDS;
 use crate::orchestrator::result::{read_stage_result, ResultRequirements, StageResult};
 use crate::orchestrator::scheduler::BdIssue;
-use crate::orchestrator::stage::{plural, result_name, run_dir, DEBATE, FIX};
+use crate::orchestrator::stage::{plural, result_name, run_dir, DEBATE, EXTRA_REVIEW, FINAL, FIX};
 use crate::orchestrator::state::{State, STATUS_MERGED, STATUS_PARKED};
 
 /// One Epic's or Ticket run's summary, as it stood when built.
@@ -49,8 +49,8 @@ pub(crate) struct Ticket {
     pub(crate) fixed: usize,
     /// Every Verdict's skip items, as shown.
     pub(crate) skipped: Vec<String>,
-    /// The fix items of the cap's Verdict, which no Review re-checked, on a
-    /// Ticket whose PR opened: listed on the PR.
+    /// The fix items of the cap's Verdict and of the final Fix, which no
+    /// Review re-checked, on a Ticket whose PR opened: listed on the PR.
     pub(crate) left: Vec<String>,
     /// Why it is Parked.
     pub(crate) parked: Option<String>,
@@ -139,9 +139,9 @@ impl Summary {
 }
 
 /// One Ticket from its Run directory: a Round per verdict-N.md, the PR from
-/// the last Round's Fix result, merged and parked from bd and the State.
-/// Its Apps are its transcripts', its log's, its State sessions' and, once
-/// it has had a Debate, the sides'.
+/// the final Fix's result or the last Round's, merged and parked from bd and
+/// the State. Its Apps are its transcripts', its log's, its State sessions'
+/// and, once it has had a Debate, the sides'.
 fn ticket(
     repo: &Path,
     state: &State,
@@ -151,15 +151,38 @@ fn ticket(
 ) -> Ticket {
     let dir = run_dir(repo, &t.id);
     let read = |name: String| read_stage_result(&dir.join(name), ResultRequirements::default()).0;
-    let verdicts: Vec<StageResult> = (1..)
+    let verdicts: Vec<StageResult> = (1..=MAX_ROUNDS)
         .take_while(|n| dir.join(result_name(&DEBATE, *n)).exists())
         .map(|n| read(result_name(&DEBATE, n)))
         .collect();
     let rounds = verdicts.len();
-    let pr = read(result_name(&FIX, rounds)).pr;
-    let left = match verdicts.last() {
-        Some(last) if rounds == MAX_ROUNDS && !pr.is_empty() => last.fixes.clone(),
-        _ => Vec::new(),
+    // An Extra review before the PR, after the last Round: its Verdict, or
+    // with its Debate off its Findings as the final Fix's items.
+    let before_pr = if dir.join(result_name(&DEBATE, FINAL)).exists() {
+        read(result_name(&DEBATE, FINAL))
+    } else {
+        StageResult {
+            fixes: read(result_name(&EXTRA_REVIEW, FINAL)).found,
+            ..Default::default()
+        }
+    };
+    let pr = [FINAL, rounds]
+        .map(|n| read(result_name(&FIX, n)).pr)
+        .into_iter()
+        .find(|pr| !pr.is_empty())
+        .unwrap_or_default();
+    // Once the PR opened: the cap's fix items and the final Fix's, which no
+    // Review re-checked.
+    let left: Vec<String> = if pr.is_empty() {
+        Vec::new()
+    } else {
+        verdicts
+            .last()
+            .filter(|_| rounds == MAX_ROUNDS)
+            .into_iter()
+            .chain([&before_pr])
+            .flat_map(|v| v.fixes.clone())
+            .collect()
     };
     let ts = state.tickets.get(&t.id);
     let (mut cost, logged) = (cost.unwrap_or_default(), logged.unwrap_or_default());
@@ -181,6 +204,7 @@ fn ticket(
         fixed: verdicts.iter().rev().skip(1).map(|v| v.fixes.len()).sum(),
         skipped: verdicts
             .iter()
+            .chain([&before_pr])
             .flat_map(|v| &v.skips)
             .map(|l| finding(l))
             .collect(),
@@ -194,9 +218,11 @@ fn ticket(
 }
 
 /// A Verdict item as the summary shows it: its severity, place and problem,
-/// without the mark, the reason or how it was settled.
+/// without the mark, the reason or how it was settled; a Finding not
+/// debated is as the Review wrote it.
 fn finding(line: &str) -> String {
-    let item = line.split_once("] ").map_or(line, |(_, rest)| rest);
+    let bare = line.strip_prefix("- ").unwrap_or(line);
+    let item = line.split_once("] ").map_or(bare, |(_, rest)| rest);
     item.split_once(" | reason:")
         .map_or(item, |(f, _)| f)
         .to_string()
