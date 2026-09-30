@@ -54,12 +54,12 @@ pub(crate) fn at_dialog(run: &Path, plan: &str) -> (String, String) {
     (String::new(), "plan".to_string())
 }
 
-/// Implement plans; approved, it finishes ("idle") or settles in `then`;
+/// Implement plans `plan`; approved, it finishes ("idle") or settles in `then`;
 /// feedback brings the revised plan; every other Stage succeeds.
-fn plans(w: &World, then: &'static str) {
+fn plans(w: &World, plan: &'static str, then: &'static str) {
     let run = w.repo.join(".orqadence-local/runs/hx-1");
     w.session(move |p: &Prompt| match (p.stage.as_str(), p.approved) {
-        ("implement", false) => at_dialog(&run, PLAN),
+        ("implement", false) => at_dialog(&run, plan),
         ("implement", true) if then != "idle" => (String::new(), then.to_string()),
         ("", _) if p.text == FEEDBACK => at_dialog(&run, REVISED),
         _ => succeed(p),
@@ -69,9 +69,9 @@ fn plans(w: &World, then: &'static str) {
 /// What Orqadence prompts a two-step Plan's session with on approval.
 const APPROVED: &str = "implement the approved plan";
 
-/// Implement runs on codex, whose session writes plan.md and STATUS: plan
+/// Implement runs on codex, whose session writes `plan` to plan.md and STATUS: plan
 /// and waits; feedback brings the revised plan, approval the implementation.
-fn writes(w: &World) {
+fn writes(w: &World, plan: &'static str) {
     write_file(
         &w.repo.join(".orqadence/config.json"),
         r#"{"implement": {"app": "codex"}}"#,
@@ -79,7 +79,7 @@ fn writes(w: &World) {
     let run = w.repo.join(".orqadence-local/runs/hx-1");
     w.session(move |p: &Prompt| {
         let plan = match (p.stage.as_str(), p.text.as_str()) {
-            ("implement", _) => PLAN,
+            ("implement", _) => plan,
             ("", FEEDBACK) => REVISED,
             ("", APPROVED) => {
                 write_file(&run.join("implement.md"), "STATUS: done\n");
@@ -192,7 +192,7 @@ fn implement_starts_in_plan_mode_with_the_hook_in_the_run_directory() {
 #[test]
 fn implement_on_codex_starts_with_no_plan_mode_and_is_told_to_write_its_plan() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    writes(&w);
+    writes(&w, PLAN);
     w.hook(|_, argv| (argv == ["bd", "show", "hx-1"]).then(|| Ok("hx-1 · the Ticket\n".into())));
     let o = Arc::new(o);
     let _run = spawn_ticket(o.clone(), "hx-1");
@@ -237,7 +237,7 @@ fn implement_on_codex_starts_with_no_plan_mode_and_is_told_to_write_its_plan() {
 fn status_plan_is_judged_and_approval_prompts_implement_the_approved_plan() {
     for score in [0.9, 0.5] {
         let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-        writes(&w);
+        writes(&w, PLAN);
         o.cfg.typesafe = typesafe(move |_| Ok(covers(score)));
         let o = Arc::new(o);
         let mut run = spawn_ticket(o.clone(), "hx-1");
@@ -279,7 +279,7 @@ fn status_plan_is_judged_and_approval_prompts_implement_the_approved_plan() {
 #[test]
 fn feedback_on_a_written_plan_is_a_prompt_and_the_next_status_plan_is_judged_again() {
     let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-    writes(&w);
+    writes(&w, PLAN);
     let fake = typesafe(|n| Ok(covers([0.3, 0.95][n])));
     o.cfg.typesafe = fake.clone();
     let o = Arc::new(o);
@@ -319,7 +319,7 @@ fn feedback_on_a_written_plan_is_a_prompt_and_the_next_status_plan_is_judged_aga
 fn a_worktree_changed_before_approval_fails_the_written_plan() {
     for case in ["HEAD moved", "a dirty tree"] {
         let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-        writes(&w);
+        writes(&w, PLAN);
         let run = o.run_dir("hx-1");
         let planned = run.join("plan.md");
         // changed while the first plan is written, put back with the revision
@@ -370,7 +370,7 @@ fn a_worktree_changed_before_approval_fails_the_written_plan() {
 #[test]
 fn a_fresh_plan_at_its_dialog_reaches_the_nouls_and_clearing_each_approves_it() {
     let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-    plans(&w, "idle");
+    plans(&w, PLAN, "idle");
     bd_show(&w);
     let fake = typesafe(|_| Ok(nouls(0.65, 0.65, 0.49)));
     o.cfg.typesafe = fake.clone();
@@ -451,7 +451,7 @@ fn a_noul_short_a_question_asked_or_no_judgment_raises_the_plan_question() {
         ("TypeSafe off", Ok((1.0, 1.0, 0.0)), None),
     ] {
         let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-        plans(&w, "idle");
+        plans(&w, PLAN, "idle");
         let fake = typesafe(move |_| {
             answer
                 .map(|(c, i, a)| nouls(c, i, a))
@@ -538,7 +538,7 @@ fn config_jsons_plan_floor_moves_the_approval_and_a_bad_one_asks() {
         (r#"{"plan_floor": null}"#, (1.0, 1.0, 0.0), false),
     ] {
         let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-        plans(&w, "idle");
+        plans(&w, PLAN, "idle");
         if !config.is_empty() {
             write_file(&w.repo.join(".orqadence/config.json"), config);
         }
@@ -572,7 +572,7 @@ fn config_jsons_plan_floor_moves_the_approval_and_a_bad_one_asks() {
 #[test]
 fn feedback_reads_the_pane_before_each_key_and_the_revised_plan_is_judged_again() {
     let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-    plans(&w, "idle");
+    plans(&w, PLAN, "idle");
     let fake = typesafe(|n| Ok(covers([0.3, 0.95][n])));
     o.cfg.typesafe = fake.clone();
     let o = Arc::new(o);
@@ -652,7 +652,7 @@ fn feedback_enters_only_on_tell_claude_what_to_change() {
         "no dialog on screen",
     ] {
         let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-        plans(&w, "idle");
+        plans(&w, PLAN, "idle");
         o.cfg.api_key = String::new();
         match case {
             "an extra first option" => {
@@ -747,7 +747,7 @@ fn a_split_starts_opusplan_and_approves_by_clearing_the_context() {
     ] {
         let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
         write_file(&w.repo.join(".orqadence/config.json"), config);
-        plans(&w, "idle");
+        plans(&w, PLAN, "idle");
         bd_show(&w);
         o.cfg.typesafe = typesafe(|_| Ok(covers(0.9)));
         w.lock().options = options.map(str::to_string).to_vec();
@@ -807,7 +807,7 @@ fn a_split_with_no_clear_context_option_is_a_plan_failure() {
         &w.repo.join(".orqadence/config.json"),
         r#"{"implement": {"model": "claude-opus-5-5", "plan_model": "claude-fable-5-1"}}"#,
     );
-    plans(&w, "idle");
+    plans(&w, PLAN, "idle");
     o.cfg.typesafe = typesafe(|_| Ok(covers(0.9)));
     let o = Arc::new(o);
     let mut run = spawn_ticket(o.clone(), "hx-1");
@@ -828,7 +828,7 @@ fn a_split_with_no_clear_context_option_is_a_plan_failure() {
 #[test]
 fn a_plan_changed_during_its_judgment_gets_no_enter_for_the_old_one() {
     let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-    plans(&w, "idle");
+    plans(&w, PLAN, "idle");
     let (world, run) = (w.clone(), o.run_dir("hx-1"));
     let before_second = Arc::new(AtomicUsize::new(usize::MAX));
     let seen = before_second.clone();
@@ -863,7 +863,7 @@ fn a_plan_changed_during_its_judgment_gets_no_enter_for_the_old_one() {
 #[test]
 fn feedback_for_a_replaced_plan_sends_no_key() {
     let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-    plans(&w, "idle");
+    plans(&w, PLAN, "idle");
     o.cfg.api_key = String::new();
     let o = Arc::new(o);
     let mut run = spawn_ticket(o.clone(), "hx-1");
@@ -914,7 +914,7 @@ fn a_prompt_that_is_not_the_plan_dialog_is_the_ordinary_blocked_question() {
     );
 
     let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-    plans(&w, "blocked"); // approved, it stops at a permission prompt
+    plans(&w, PLAN, "blocked"); // approved, it stops at a permission prompt
     o.cfg.typesafe = typesafe(|_| Ok(covers(0.3)));
     let o = Arc::new(o);
     let (pane, _, _, _) = {
@@ -949,7 +949,7 @@ fn a_prompt_that_is_not_the_plan_dialog_is_the_ordinary_blocked_question() {
 #[test]
 fn stop_during_the_plan_judgment_takes_no_action_and_park_parks() {
     let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-    plans(&w, "idle");
+    plans(&w, PLAN, "idle");
     let (entered, release) = (
         Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicBool::new(false)),
@@ -983,7 +983,7 @@ fn stop_during_the_plan_judgment_takes_no_action_and_park_parks() {
     assert_eq!(o.ticket("hx-1").status, STATUS_RUNNING);
 
     let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-    plans(&w, "idle");
+    plans(&w, PLAN, "idle");
     o.cfg.api_key = String::new();
     let o = Arc::new(o);
     let mut run = spawn_ticket(o.clone(), "hx-1");
@@ -1003,7 +1003,7 @@ fn stop_during_the_plan_judgment_takes_no_action_and_park_parks() {
 #[test]
 fn a_plan_failure_is_the_users_question_not_the_wake_judgment() {
     let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-    plans(&w, "idle");
+    plans(&w, PLAN, "idle");
     w.fail_once("herdr agent send-keys", "pane gone");
     let fake = typesafe(|_| Ok(covers(0.9)));
     o.cfg.typesafe = fake.clone();
@@ -1032,7 +1032,7 @@ fn a_plan_failure_is_the_users_question_not_the_wake_judgment() {
 fn planning_does_not_use_up_the_implement_deadline() {
     for in_pane in [false, true] {
         let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-        plans(&w, "working");
+        plans(&w, PLAN, "working");
         let timeout = Duration::from_millis(60);
         o.cfg.timeout = Some(timeout);
         o.cfg.api_key = String::new();
@@ -1066,28 +1066,6 @@ fn planning_does_not_use_up_the_implement_deadline() {
 /// and a section after it.
 const ASKING: &str = "# Plan\n\n- change src/x.rs\n\n## Open question\n\nWhich parser stays?\n- ours\n- theirs\n\n## Decisions I made\n\n- kept the old flag\n";
 
-/// Implement presents `plan`: at its plan dialog on claude, in plan.md and
-/// STATUS: plan on codex; every other Stage succeeds.
-fn presents(w: &World, app: &str, plan: &'static str) {
-    let codex = app == "codex";
-    if codex {
-        write_file(
-            &w.repo.join(".orqadence/config.json"),
-            r#"{"implement": {"app": "codex"}}"#,
-        );
-    }
-    let run = w.repo.join(".orqadence-local/runs/hx-1");
-    w.session(move |p: &Prompt| match (p.stage.as_str(), codex) {
-        ("implement", false) => at_dialog(&run, plan),
-        ("implement", true) => {
-            write_file(&run.join("plan.md"), plan);
-            write_file(&run.join("implement.md"), "STATUS: plan\n");
-            (String::new(), "idle".to_string())
-        }
-        _ => succeed(p),
-    });
-}
-
 /// Away, a plan below the floor with an Open question parks its Ticket as
 /// a Stage's question does: a bd comment with the question, its pane left
 /// open, no Question. /continue @hx-1 puts the plan to the user, from the
@@ -1096,8 +1074,18 @@ fn presents(w: &World, app: &str, plan: &'static str) {
 fn away_parks_a_plan_with_an_open_question_until_continue_puts_it_to_you() {
     for app in ["claude", "codex"] {
         let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-        presents(&w, app, ASKING);
-        o.cfg.typesafe = typesafe(|_| Ok(nouls(0.9, 0.9, 0.9)));
+        match app {
+            "codex" => writes(&w, ASKING),
+            _ => plans(&w, ASKING, "idle"),
+        }
+        // below the floor, then approving: /continue asks all the same
+        o.cfg.typesafe = typesafe(|n| {
+            Ok(if n == 0 {
+                nouls(0.9, 0.9, 0.9)
+            } else {
+                covers(0.9)
+            })
+        });
         o.cfg.away.store(true, Ordering::SeqCst);
         let o = Arc::new(o);
         o.run_ticket("hx-1");
@@ -1153,8 +1141,8 @@ fn away_parks_a_plan_with_an_open_question_until_continue_puts_it_to_you() {
 #[test]
 fn away_off_asks_a_plans_open_question_and_away_turned_on_parks_it() {
     let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-    presents(&w, "claude", ASKING);
-    o.cfg.typesafe = typesafe(|_| Ok(nouls(0.9, 0.9, 0.9)));
+    plans(&w, ASKING, "idle");
+    o.cfg.typesafe = typesafe(|_| Ok(covers(0.9))); // approving, but for the Open question
     let o = Arc::new(o);
     let mut run = spawn_ticket(o.clone(), "hx-1");
     let (_, plan, _, _) = plan_question(&w, 1);
@@ -1169,22 +1157,25 @@ fn away_off_asks_a_plans_open_question_and_away_turned_on_parks_it() {
     assert!(w.called("herdr pane close").is_empty());
 }
 
-/// Away, a plan below the floor with no Open question still waits on the
-/// plan Question.
+/// Away, a plan below the floor with no Open question, or one only inside
+/// a code block, still waits on the plan Question.
 #[test]
 fn away_leaves_a_plan_without_an_open_question_waiting_for_you() {
-    let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
-    presents(&w, "claude", PLAN);
-    o.cfg.typesafe = typesafe(|_| Ok(covers(0.5)));
-    o.cfg.away.store(true, Ordering::SeqCst);
-    let o = Arc::new(o);
-    let mut run = spawn_ticket(o.clone(), "hx-1");
-    let (pane, plan, _, _) = plan_question(&w, 1);
-    assert_eq!(plan, PLAN);
-    thread::sleep(Duration::from_millis(50));
-    assert_eq!(o.ticket("hx-1").status, STATUS_RUNNING);
-    o.answer("hx-1", &pane, Answer::Act(Action::Park));
-    run.wait();
-    assert_eq!(o.ticket("hx-1").reason, "by you at implement");
-    assert!(w.called("bd comments add").is_empty());
+    const FENCED: &str = "# Plan\n\n```md\n## Open question\n\nfixture\n```\n";
+    for plan_md in [PLAN, FENCED] {
+        let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
+        plans(&w, plan_md, "idle");
+        o.cfg.typesafe = typesafe(|_| Ok(covers(0.5)));
+        o.cfg.away.store(true, Ordering::SeqCst);
+        let o = Arc::new(o);
+        let mut run = spawn_ticket(o.clone(), "hx-1");
+        let (pane, plan, _, _) = plan_question(&w, 1);
+        assert_eq!(plan, plan_md);
+        thread::sleep(Duration::from_millis(50));
+        assert_eq!(o.ticket("hx-1").status, STATUS_RUNNING);
+        o.answer("hx-1", &pane, Answer::Act(Action::Park));
+        run.wait();
+        assert_eq!(o.ticket("hx-1").reason, "by you at implement");
+        assert!(w.called("bd comments add").is_empty());
+    }
 }

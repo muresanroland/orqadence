@@ -24,7 +24,7 @@ use std::thread;
 use serde_json::{json, Value};
 
 use super::app::Row;
-use super::judgment::{Action, PlanJudged};
+use super::judgment::Action;
 use super::result::{read_stage_result, ResultRequirements, PLANNED};
 use super::stage::{result_name, Answer, Ask, Held, Orchestrator, Stage, IMPLEMENT, SETTLE_TICKS};
 use super::state::LOCAL;
@@ -250,8 +250,11 @@ impl Orchestrator {
             if let Some(judged) = judged {
                 self.report(ticket, &format!("judged: {}", judged.said()));
             }
-            // Clearing the floor the Judgment approves, as the user would.
-            let mut approved = judged.filter(PlanJudged::approves).map(|_| Answer::Approve);
+            // Clearing the floor the Judgment approves, as the user would;
+            // an Open question always goes to the user.
+            let mut approved = judged
+                .filter(|j| j.approves() && open_question(&plan).is_none())
+                .map(|_| Answer::Approve);
             let mut kept = None;
             loop {
                 let answer = match approved.take() {
@@ -665,17 +668,25 @@ impl Orchestrator {
 }
 
 /// The text under a plan's Open question heading, the Implement Stage
-/// skill's own, of any level: to the next heading as high, trimmed.
-// ponytail: a line starting with # inside a code block reads as a heading.
+/// skill's own, of any level: to the next heading as high, trimmed. A line
+/// inside a fenced code block is never a heading.
 fn open_question(plan: &str) -> Option<String> {
-    let level = |line: &str| line.len() - line.trim_start_matches('#').len();
-    let mut lines = plan.lines();
-    let at = lines.by_ref().find_map(|line| {
+    let mut fenced = false;
+    let mut lines = plan.lines().map(|line| {
+        fenced ^= line.trim_start().starts_with("```");
+        let level = match fenced {
+            true => 0,
+            false => line.len() - line.trim_start_matches('#').len(),
+        };
+        (line, level)
+    });
+    let at = lines.by_ref().find_map(|(line, level)| {
         let text = line.trim_start_matches('#').trim().to_lowercase();
-        (level(line) > 0 && text.starts_with("open question")).then(|| level(line))
+        (level > 0 && text.starts_with("open question")).then_some(level)
     })?;
     let question: Vec<&str> = lines
-        .take_while(|line| !(1..=at).contains(&level(line)))
+        .take_while(|&(_, level)| !(1..=at).contains(&level))
+        .map(|(line, _)| line)
         .collect();
     Some(question.join("\n").trim().to_string())
 }
