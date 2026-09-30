@@ -786,3 +786,90 @@ fn yes_selects_on_a_key_and_answers_on_enter() {
         Some(false)
     );
 }
+
+/// The preflight messages about orqa:infra, with `hadolint` on PATH or not
+/// and `terraform version -json` answering `version`.
+fn infra_missing(repo: &Path, hadolint: bool, version: &str) -> (Vec<String>, Vec<String>) {
+    let version = version.to_string();
+    let tools = Fake::new(move |_, argv| match argv.join(" ").as_str() {
+        "which hadolint" if !hadolint => Err("hadolint not found".to_string()),
+        "terraform version -json" => Ok(format!(r#"{{"terraform_version": "{version}"}}"#)),
+        _ => Ok(String::new()),
+    });
+    let home = TempDir::new();
+    let got = preflight(repo, &*tools, &home_env(home.path()))
+        .into_iter()
+        .filter(|m| m.contains("orqa:infra"))
+        .collect();
+    (got, tools.calls())
+}
+
+/// With orqa:infra configured the preflight refuses to start while one of
+/// the Extra review's tools is missing, or terraform is older than 1.7;
+/// without the entry none of them is looked for.
+#[test]
+fn preflight_blocks_on_orqa_infra_tools() {
+    let repo = TempDir::new();
+    let config = repo.path().join(".orqadence/config.json");
+    write_file(&config, r#"{"labels": {"infra": {"kind": "area"}}}"#);
+
+    let (got, _) = infra_missing(repo.path(), false, "1.9.0");
+    assert_eq!(
+        got,
+        ["orqa:infra's Extra review needs hadolint, which is not on PATH"]
+    );
+    let (got, _) = infra_missing(repo.path(), true, "1.6.2");
+    assert_eq!(
+        got,
+        ["orqa:infra's Extra review needs terraform 1.7 or newer (for mock_provider): 1.6.2 is on PATH"]
+    );
+    let (got, _) = infra_missing(repo.path(), true, "1.9.0");
+    assert_eq!(got, Vec::<String>::new());
+
+    fs::remove_file(&config).unwrap();
+    let (got, calls) = infra_missing(repo.path(), false, "1.6.2");
+    assert_eq!(got, Vec::<String>::new());
+    assert!(
+        !calls
+            .iter()
+            .any(|c| c == "which hadolint" || c.starts_with("terraform")),
+        "{calls:?}"
+    );
+}
+
+/// The warnings with `gh --version` answering `version`.
+fn gh_warnings(repo: &Path, version: &str) -> (Vec<String>, Vec<String>) {
+    let version = version.to_string();
+    let tools = Fake::new(move |_, argv| {
+        match argv.join(" ").as_str() {
+        "gh --version" => Ok(format!(
+            "gh version {version} (2026-01-01)\nhttps://github.com/cli/cli/releases/tag/v{version}\n"
+        )),
+        _ => Ok(String::new()),
+    }
+    });
+    (warnings(repo, &*tools), tools.calls())
+}
+
+/// With orqa:fe configured, a gh older than 2.99 cannot attach the
+/// screenshots: a warning names 2.99, and nothing blocks.
+#[test]
+fn warnings_of_an_old_gh_when_orqa_fe_is_configured() {
+    let repo = TempDir::new();
+    let (got, calls) = gh_warnings(repo.path(), "2.98.0");
+    assert_eq!(got, Vec::<String>::new());
+    assert!(!calls.contains(&"gh --version".to_string()), "{calls:?}");
+
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"labels": {"fe": {"kind": "area"}}}"#,
+    );
+    let (got, _) = gh_warnings(repo.path(), "2.98.0");
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(
+        got[0].contains("2.99") && got[0].contains("2.98.0") && got[0].contains("screenshots"),
+        "{got:?}"
+    );
+    let (got, _) = gh_warnings(repo.path(), "2.101.0");
+    assert_eq!(got, Vec::<String>::new());
+}
