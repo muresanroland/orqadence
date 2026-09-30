@@ -1237,8 +1237,11 @@ fn the_labels_checklist_turns_auto_wrap_off_and_back_on() {
     let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
     assert_eq!(code, 0, "{out}");
     let list = &out[out.find(LABELS_STEP).expect("no labels step")..];
-    let (off, on) = (list.find("\x1b[?7l"), list.find("\x1b[?7h"));
-    assert!(off.is_some() && on > off, "{list:?}");
-    assert!(list[off.unwrap()..].find("[x] 1. fe") < on.map(|on| on - off.unwrap()));
+    let (off, row, on) = (
+        list.find("\x1b[?7l").unwrap(),
+        list.find("[x] 1. fe").unwrap(),
+        list.find("\x1b[?7h").unwrap(),
+    );
+    assert!(off < row && row < on, "{list:?}");
     assert!(list.contains("✓ fe, be, db"), "{list:?}");
 }
