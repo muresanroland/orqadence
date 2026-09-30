@@ -26,7 +26,7 @@ touched=$(git -c core.quotePath=false diff --name-only "$ORQA_BASE...HEAD")
 roots='' charts='' manifests=''
 for f in $touched; do
 	case $f in
-	*.tf | *.tf.json | *.tfvars | *.tftest.hcl | *.terraform.lock.hcl)
+	*.tf | *.tf.json | *.tfvars | *.tfvars.json | *.tftest.hcl | *.tftest.json | *.terraform.lock.hcl)
 		dir=$(dirname "$f")
 		if [ "$(basename "$dir")" = tests ]; then dir=$(dirname "$dir"); fi
 		if compgen -G "$dir/*.tf" >/dev/null || compgen -G "$dir/*.tf.json" >/dev/null; then
