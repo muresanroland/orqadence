@@ -723,34 +723,47 @@ pub(crate) fn renamed(skill: &str, name: &str) -> String {
         .collect()
 }
 
+/// Each (old name, new name).
+type Renames = Vec<(String, String)>;
+
 /// Renames each skill the manifest names without PREFIX, as an init from
 /// before it left them, to its name with it: its folder in
 /// .orqadence/skills and the name in its SKILL.md, its links, its entry and
 /// each pick of it. The shipped create-pr an init put beside the repo's own
-/// as orqadence-create-pr becomes CREATE_PR. Gives each (old, new).
-pub(crate) fn prefix(repo: &Path, manifest: &mut Manifest) -> io::Result<Vec<(String, String)>> {
+/// as orqadence-create-pr becomes CREATE_PR. One the manifest names already
+/// with it (a merge, or create-pr and orqadence-create-pr both) is stale:
+/// its folder, links and entry go, its picks turn to the new one. Gives
+/// each (old, new) renamed, then each left for the user: a stale one in a
+/// .orqadence/skills not the checkout's own (own).
+pub(crate) fn prefix(repo: &Path, manifest: &mut Manifest) -> io::Result<(Renames, Renames)> {
     let old: Vec<String> = manifest
         .skills
         .keys()
         .filter(|name| !name.starts_with(PREFIX) && safe_name(name))
         .cloned()
         .collect();
-    let mut renamed = Vec::new();
+    let (mut renamed, mut left) = (Vec::new(), Vec::new());
     for name in old {
         let new = match name.as_str() {
             "orqadence-create-pr" => CREATE_PR.to_string(),
             _ => format!("{PREFIX}{name}"),
         };
-        if manifest.skills.contains_key(&new) {
+        let (from, to) = (skill_dir(repo, &name), skill_dir(repo, &new));
+        let stale = manifest.skills.contains_key(&new);
+        let had = fs::symlink_metadata(&from).is_ok();
+        if stale && had && !own(repo, FILES) {
+            left.push((name, new));
             continue;
         }
-        let (from, to) = (skill_dir(repo, &name), skill_dir(repo, &new));
-        if own(repo, FILES)
-            && fs::symlink_metadata(&from).is_ok()
-            && fs::symlink_metadata(&to).is_err()
-        {
-            fs::rename(&from, &to)?;
-            rename(&to, &new)?;
+        if own(repo, FILES) && had {
+            match (fs::symlink_metadata(&to).is_ok(), stale) {
+                (false, _) => {
+                    fs::rename(&from, &to)?;
+                    rename(&to, &new)?;
+                }
+                (true, true) => fs::remove_dir_all(&from)?,
+                (true, false) => {}
+            }
         }
         for link in links(repo, &name) {
             if fs::read_link(&link).is_ok_and(|to| to == target(&name)) {
@@ -761,13 +774,13 @@ pub(crate) fn prefix(repo: &Path, manifest: &mut Manifest) -> io::Result<Vec<(St
             link(repo, &new)?;
         }
         let entry = manifest.skills.remove(&name).unwrap();
-        manifest.skills.insert(new.clone(), entry);
+        manifest.skills.entry(new.clone()).or_insert(entry);
         for pick in manifest.picks.values_mut().filter(|pick| **pick == name) {
             *pick = new.clone();
         }
         renamed.push((name, new));
     }
-    Ok(renamed)
+    Ok((renamed, left))
 }
 
 /// Whether the user has turned on their personal skills (PERSONAL) for

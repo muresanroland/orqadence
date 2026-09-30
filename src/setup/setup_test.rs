@@ -164,6 +164,53 @@ fn an_install_from_before_the_prefix_is_renamed_to_it() {
     );
 }
 
+/// A skill in .orqadence/skills, linked from both links folders.
+fn put_linked(root: &Path, name: &str, body: &str) {
+    write_file(
+        &root.join(format!(".orqadence/skills/{name}/SKILL.md")),
+        body,
+    );
+    for dir in [".agents/skills", ".claude/skills"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+        std::os::unix::fs::symlink(
+            format!("../../.orqadence/skills/{name}"),
+            root.join(dir).join(name),
+        )
+        .unwrap();
+    }
+}
+
+/// A skill installed under both names (a merge of a branch from before the
+/// prefix): the unprefixed one is stale, and its folder, links and entry
+/// go; its pick turns to the prefixed one, which is kept as it is.
+#[test]
+fn a_skill_installed_under_both_names_loses_the_unprefixed_one() {
+    let repo = TempDir::new();
+    let root = repo.path();
+    put_linked(root, "tdd", "---\nname: tdd\n---\nold\n");
+    put_linked(root, "orqa-tdd", "---\nname: orqa-tdd\n---\nkept\n");
+    write_file(
+        &root.join(".orqadence/skills.json"),
+        r#"{"skills": {"tdd": {"repo": "https://github.com/mattpocock/skills"},
+            "orqa-tdd": {"repo": "https://github.com/mattpocock/skills"}},
+            "picks": {"test-first": "tdd"}}"#,
+    );
+
+    install(root, "");
+
+    for dir in [".orqadence/skills", ".agents/skills", ".claude/skills"] {
+        let at = root.join(dir).join("tdd");
+        assert!(fs::symlink_metadata(&at).is_err(), "{} left", at.display());
+    }
+    assert_eq!(
+        read(root, ".claude/skills/orqa-tdd/SKILL.md"),
+        "---\nname: orqa-tdd\n---\nkept\n"
+    );
+    let manifest = Manifest::load(root).unwrap();
+    assert!(!manifest.skills.contains_key("tdd"));
+    assert_eq!(manifest.pick("test-first"), "orqa-tdd");
+}
+
 /// A checkout an older init set up at user level, run without HOME: its
 /// skills cannot be copied, so init stops rather than install afresh.
 #[test]

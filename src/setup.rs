@@ -195,12 +195,20 @@ pub(crate) fn install_skills(
     }
     manifest::settle(repo, home, &manifest)?;
     unhide_links(repo)?;
-    let renamed = manifest::prefix(repo, &mut manifest)?;
+    let (renamed, left) = manifest::prefix(repo, &mut manifest)?;
     for (old, new) in &renamed {
         if let Some(wrote) = record.remove(&record_key(old)) {
-            record.insert(record_key(new), manifest::renamed(&wrote, new));
+            record
+                .entry(record_key(new))
+                .or_insert_with(|| manifest::renamed(&wrote, new));
         }
         write!(out, "init: renamed {old} to {new}\r\n")?;
+    }
+    for (old, new) in &left {
+        write!(
+            out,
+            "init: {old} is not renamed: {new} is there too; remove one of them\r\n"
+        )?;
     }
     // Saved now: a cancel at the gate must not leave the folders renamed
     // and the manifest naming the old ones.
