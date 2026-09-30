@@ -669,14 +669,24 @@ impl Orchestrator {
 
 /// The text under a plan's Open question heading, the Implement Stage
 /// skill's own, of any level: to the next heading as high, trimmed. A line
-/// inside a fenced code block is never a heading.
-fn open_question(plan: &str) -> Option<String> {
-    let mut fenced = false;
+/// inside a fenced code block is never a heading: the block, of backticks
+/// or tildes, closes only on a bare fence of its character at least as long.
+pub(super) fn open_question(plan: &str) -> Option<String> {
+    let mut fence: Option<(char, usize)> = None;
     let mut lines = plan.lines().map(|line| {
-        fenced ^= line.trim_start().starts_with("```");
-        let level = match fenced {
-            true => 0,
-            false => line.len() - line.trim_start_matches('#').len(),
+        let trimmed = line.trim_start();
+        if let Some(mark) = trimmed.chars().next().filter(|c| matches!(c, '`' | '~')) {
+            let rest = trimmed.trim_start_matches(mark);
+            let run = trimmed.len() - rest.len();
+            match fence {
+                None if run >= 3 => fence = Some((mark, run)),
+                Some((c, n)) if c == mark && run >= n && rest.trim().is_empty() => fence = None,
+                _ => {}
+            }
+        }
+        let level = match fence {
+            Some(_) => 0,
+            None => line.len() - line.trim_start_matches('#').len(),
         };
         (line, level)
     });

@@ -1,5 +1,6 @@
 use super::judgment::fake::Fake;
 use super::judgment::{Action, PlanJudged, PLAN_FLOOR};
+use super::plan::open_question;
 use super::stage::{Answer, Ask, Config, Orchestrator, AWAY};
 use super::state::{load_state, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 use super::world::{new_world, spawn_ticket, succeed, BdTicket, Prompt, World};
@@ -1066,8 +1067,8 @@ fn planning_does_not_use_up_the_implement_deadline() {
 /// and a section after it.
 const ASKING: &str = "# Plan\n\n- change src/x.rs\n\n## Open question\n\nWhich parser stays?\n- ours\n- theirs\n\n## Decisions I made\n\n- kept the old flag\n";
 
-/// Away, a plan below the floor with an Open question parks its Ticket as
-/// a Stage's question does: a bd comment with the question, its pane left
+/// Away, a plan with an Open question parks its Ticket, even one the
+/// Judgment approves, as a Stage's question does: a bd comment with the question, its pane left
 /// open, no Question. /continue @hx-1 puts the plan to the user, from the
 /// same session.
 #[test]
@@ -1078,14 +1079,7 @@ fn away_parks_a_plan_with_an_open_question_until_continue_puts_it_to_you() {
             "codex" => writes(&w, ASKING),
             _ => plans(&w, ASKING, "idle"),
         }
-        // below the floor, then approving: /continue asks all the same
-        o.cfg.typesafe = typesafe(|n| {
-            Ok(if n == 0 {
-                nouls(0.9, 0.9, 0.9)
-            } else {
-                covers(0.9)
-            })
-        });
+        o.cfg.typesafe = typesafe(|_| Ok(covers(0.9))); // approving, but for the Open question
         o.cfg.away.store(true, Ordering::SeqCst);
         let o = Arc::new(o);
         o.run_ticket("hx-1");
@@ -1158,11 +1152,12 @@ fn away_off_asks_a_plans_open_question_and_away_turned_on_parks_it() {
 }
 
 /// Away, a plan below the floor with no Open question, or one only inside
-/// a code block, still waits on the plan Question.
+/// a code block of backticks or tildes, still waits on the plan Question.
 #[test]
 fn away_leaves_a_plan_without_an_open_question_waiting_for_you() {
     const FENCED: &str = "# Plan\n\n```md\n## Open question\n\nfixture\n```\n";
-    for plan_md in [PLAN, FENCED] {
+    const TILDES: &str = "# Plan\n\n~~~md\n## Open question\n\nfixture\n~~~\n";
+    for plan_md in [PLAN, FENCED, TILDES] {
         let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
         plans(&w, plan_md, "idle");
         o.cfg.typesafe = typesafe(|_| Ok(covers(0.5)));
@@ -1178,4 +1173,14 @@ fn away_leaves_a_plan_without_an_open_question_waiting_for_you() {
         assert_eq!(o.ticket("hx-1").reason, "by you at implement");
         assert!(w.called("bd comments add").is_empty());
     }
+}
+
+/// A fence closes only on a bare fence of its own character at least as
+/// long: a literal ``` inside a four-backtick block, or a ~~~ inside a
+/// backtick one, leaves the block open, and the heading after it counts.
+#[test]
+fn an_open_question_after_a_longer_fence_is_still_found() {
+    let plan = "# Plan\n\n````md\n```\n## Open question\n~~~\n```rust\n````\n\n## Open question\n\nWhich parser stays?\n";
+    assert_eq!(open_question(plan).as_deref(), Some("Which parser stays?"));
+    assert_eq!(open_question("```\n## Open question\n```rust\n"), None);
 }
