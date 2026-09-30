@@ -840,13 +840,12 @@ fn preflight_blocks_on_orqa_infra_tools() {
 /// The warnings with `gh --version` answering `version`.
 fn gh_warnings(repo: &Path, version: &str) -> (Vec<String>, Vec<String>) {
     let version = version.to_string();
-    let tools = Fake::new(move |_, argv| {
-        match argv.join(" ").as_str() {
+    let tools = Fake::new(move |_, argv| match argv.join(" ").as_str() {
         "gh --version" => Ok(format!(
-            "gh version {version} (2026-01-01)\nhttps://github.com/cli/cli/releases/tag/v{version}\n"
+            "gh version {version} (2026-01-01)\n\
+             https://github.com/cli/cli/releases/tag/v{version}\n"
         )),
         _ => Ok(String::new()),
-    }
     });
     (warnings(repo, &*tools), tools.calls())
 }
