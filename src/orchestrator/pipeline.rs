@@ -154,12 +154,19 @@ impl Orchestrator {
             // description. After a reviewed last Round, an Extra review
             // before the PR holds the PR for a final Fix.
             let last = fixes.is_empty() || round == MAX_ROUNDS;
-            let held = last && unreviewed.is_empty() && before_pr.is_some();
-            let mut fix = self.fix(ticket, round, &fixes, last && !held, &unreviewed, &verdicts)?;
+            let held = before_pr.filter(|_| last && unreviewed.is_empty());
+            let mut fix = self.fix(
+                ticket,
+                round,
+                &fixes,
+                last && held.is_none(),
+                &unreviewed,
+                &verdicts,
+            )?;
             if !last {
                 continue;
             }
-            if let Some(extra) = before_pr.filter(|_| held) {
+            if let Some(extra) = held {
                 fix = self.final_fix(ticket, extra.debate, &mut verdicts)?;
             }
 
@@ -216,8 +223,11 @@ impl Orchestrator {
             ),
         );
         let fixes = if debate {
-            let file = self.run_dir(ticket).join(result_name(&EXTRA_REVIEW, FINAL));
-            let file = file.display().to_string();
+            let file = self
+                .run_dir(ticket)
+                .join(result_name(&EXTRA_REVIEW, FINAL))
+                .display()
+                .to_string();
             let inputs = [("Review file", file.as_str())];
             self.debate(ticket, FINAL, &inputs, found.found.len(), verdicts)?
         } else {
