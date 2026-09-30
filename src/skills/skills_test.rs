@@ -114,10 +114,10 @@ fn run_fetch(
 
 /// A touched Terraform root is initialised in a temp copy, never in the
 /// worktree, and the plugins its .tflint.hcl names are fetched with gh's
-/// token; the worktree is left clean.
+/// token; the worktree is left clean and the cache's lock released.
 #[test]
 fn fetch_inits_a_touched_terraform_root_in_a_temp_copy() {
-    let (repo, _, log) = fetch(&[
+    let (repo, cache, log) = fetch(&[
         ("infra/main.tf", "resource \"null_resource\" \"a\" {}\n"),
         (
             ".tflint.hcl",
@@ -146,6 +146,10 @@ fn fetch_inits_a_touched_terraform_root_in_a_temp_copy() {
         assert!(!cwd.starts_with(worktree), "ran in the worktree: {call}");
     }
     assert_eq!(git(repo.path(), &["status", "--porcelain"]), "");
+    assert!(
+        !cache.path().join("providers.lock").exists(),
+        "lock left behind"
+    );
 }
 
 /// A diff that touches nothing fetch.sh fetches for calls no tool.

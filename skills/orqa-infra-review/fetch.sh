@@ -55,6 +55,13 @@ if [ -n "$roots" ]; then
 	head=$(git rev-parse HEAD)
 	git archive "$head" | tar -xf - -C "$copy"
 	mkdir -p "$ORQA_CACHE/providers" "$ORQA_CACHE/tflint"
+	# Terraform calls two inits sharing a plugin cache undefined, and the
+	# scheduler runs Tickets at once: one fetch holds the cache until it exits.
+	# mkdir is atomic everywhere; macOS has no flock.
+	# ponytail: a fetch killed with SIGKILL leaves the lock; rmdir it by hand.
+	lock=$ORQA_CACHE/providers.lock
+	until mkdir "$lock" 2>/dev/null; do sleep 1; done
+	trap 'rm -rf "$copy" "$lock"' EXIT
 	for root in $(printf '%s' "$roots" | sort -u); do
 		# The copy's lock file is thrown away, so the cache may disagree with it.
 		(cd "$copy/$root" && TF_PLUGIN_CACHE_DIR="$ORQA_CACHE/providers" \
