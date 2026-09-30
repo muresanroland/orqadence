@@ -737,16 +737,39 @@ fn put_rows(doc: &mut Value, label: &Label) {
     }
 }
 
-/// doc with the rows of the Ticket's labels, by name, put over its own, a
-/// Modifier's field over the Area's. Two Area labels, two Modifiers setting
-/// one field, or a label with no entry is refused, not guessed at.
-fn labelled(doc: &Value, names: &[String]) -> Result<Value, String> {
+/// Ticket labels that clash: what a Ticket cannot run with until the user
+/// says which stays. The names carry their orqa: prefix.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Clash {
+    /// Two Area labels (or more): a Ticket takes one.
+    Areas(Vec<String>),
+    /// Two Modifiers setting the same row field, "<row> <field>".
+    Setters { labels: Vec<String>, field: String },
+    /// An orqa: label with no entry in config.json's labels: a typo.
+    Unknown(String),
+}
+
+impl Clash {
+    /// The labels in it, the Question's options: the ones to keep one of,
+    /// or the one to remove.
+    pub(crate) fn labels(&self) -> &[String] {
+        match self {
+            Clash::Areas(labels) | Clash::Setters { labels, .. } => labels,
+            Clash::Unknown(label) => std::slice::from_ref(label),
+        }
+    }
+}
+
+/// The first clash among the Ticket's labels, by name: an entry missing,
+/// then two Areas, then two Modifiers on one field. None for a clean set,
+/// and for an entry that cannot be read: that is the row's to refuse.
+pub(crate) fn clash(doc: &Value, names: &[String]) -> Option<Clash> {
     let mut picked = Vec::new();
     for name in names {
         let label = match &doc["labels"][name.as_str()] {
-            Value::Null => Err(format!("orqa:{name} has no entry in config.json's labels")),
-            value => entry(name, value),
-        }?;
+            Value::Null => return Some(Clash::Unknown(format!("orqa:{name}"))),
+            value => entry(name, value).ok()?,
+        };
         picked.push((name, label));
     }
     let areas: Vec<String> = picked
@@ -755,25 +778,48 @@ fn labelled(doc: &Value, names: &[String]) -> Result<Value, String> {
         .map(|(name, _)| format!("orqa:{name}"))
         .collect();
     if areas.len() > 1 {
-        return Err(format!(
-            "Area labels {}: a Ticket takes one",
-            areas.join(" and ")
-        ));
+        return Some(Clash::Areas(areas));
     }
     let mut setters = BTreeMap::new();
     for (name, label) in picked.iter().filter(|(_, label)| label.kind == "modifier") {
         for (key, field, _) in set(label) {
             if let Some(other) = setters.insert((key, field), name) {
-                return Err(format!(
-                    "orqa:{other} and orqa:{name} both set {key} {field}"
-                ));
+                return Some(Clash::Setters {
+                    labels: vec![format!("orqa:{other}"), format!("orqa:{name}")],
+                    field: format!("{key} {field}"),
+                });
             }
         }
     }
+    None
+}
+
+/// doc with the rows of the Ticket's labels, by name, put over its own, a
+/// Modifier's field over the Area's. A clash is refused, not guessed at.
+fn labelled(doc: &Value, names: &[String]) -> Result<Value, String> {
+    match clash(doc, names) {
+        Some(Clash::Areas(areas)) => {
+            return Err(format!(
+                "Area labels {}: a Ticket takes one",
+                areas.join(" and ")
+            ))
+        }
+        Some(Clash::Setters { labels, field }) => {
+            return Err(format!("{} both set {field}", labels.join(" and ")))
+        }
+        Some(Clash::Unknown(label)) => {
+            return Err(format!("{label} has no entry in config.json's labels"))
+        }
+        None => {}
+    }
+    let mut picked = Vec::new();
+    for name in names {
+        picked.push(entry(name, &doc["labels"][name.as_str()])?);
+    }
     // The Area's first, so a Modifier's field wins.
-    picked.sort_by_key(|(_, label)| label.kind == "modifier");
+    picked.sort_by_key(|label| label.kind == "modifier");
     let mut doc = doc.clone();
-    for (_, label) in &picked {
+    for label in &picked {
         put_rows(&mut doc, label);
     }
     Ok(doc)

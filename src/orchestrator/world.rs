@@ -499,6 +499,10 @@ impl World {
             }
             return Ok(String::new());
         }
+        if cmd.starts_with("bd label remove") {
+            w.find(argv[3]).labels.retain(|l| l != argv[4]);
+            return Ok(String::new());
+        }
         if cmd.starts_with("bd update") {
             w.find(argv[2]).status = "in_progress".to_string();
             return Ok(String::new());

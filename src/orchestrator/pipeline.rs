@@ -9,7 +9,7 @@ use serde_json::json;
 use super::app;
 use super::result::{read_stage_result, ResultRequirements, StageResult};
 use super::stage::{
-    plural, pr_ref, result_name, stage_label, Orchestrator, Stage, StageError, ADDRESS, AWAY,
+    plural, pr_ref, result_name, stage_label, Ask, Orchestrator, Stage, StageError, ADDRESS, AWAY,
     DEBATE, FIX, IMPLEMENT, REVIEW,
 };
 use super::state::{STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
@@ -49,6 +49,8 @@ impl Orchestrator {
         });
         self.prepare_worktree(ticket)?;
         self.ask_unmerged_picks(ticket)?;
+        // labels that cannot be read Wake the Stage that reads them
+        self.ask_labels(ticket, &mut self.labels(ticket).unwrap_or_default())?;
         self.ask_shadowed(ticket)?;
 
         self.run_stage(ticket, &IMPLEMENT, 0, &[], ResultRequirements::default())?;
@@ -408,7 +410,10 @@ impl Orchestrator {
                 format!("park: commit and merge {pick}, then /continue @{ticket}"),
                 format!("run without it: the {job} line is left out"),
             ];
-            if self.ask_at_start(ticket, &text, options)? == 0 {
+            let picked = self.ask_at_start(ticket, &text, options, |options| Ask::TicketStart {
+                options,
+            });
+            if picked? == 0 {
                 return Err(StageError::Parked(format!(
                     "{pick} not merged: commit and merge it, then /continue @{ticket}"
                 )));
@@ -516,7 +521,9 @@ impl Orchestrator {
                     "go on with yours".to_string(),
                     format!("park: rename yours, then /continue @{ticket}"),
                 ];
-                let picked = self.ask_at_start(ticket, &text, options);
+                let picked = self.ask_at_start(ticket, &text, options, |options| {
+                    Ask::TicketStart { options }
+                });
                 let mut shadows = self.shadows.lock().unwrap();
                 match picked {
                     Ok(0) => shadows.insert(yours.clone(), true),
