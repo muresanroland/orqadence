@@ -5352,6 +5352,67 @@ fn fixed_leaves_out_the_last_verdicts_fix_items() {
     assert_eq!(got, [(1, 0, 0), (3, 2, 0)]);
 }
 
+/// An Extra review before the PR: the Rounds stop at the cap, the PR is
+/// the final Fix's, its Verdict's skips are shown and its fix items left
+/// with the cap's; with its Debate off, its Findings are the ones left.
+#[test]
+fn the_extra_review_before_the_pr_is_no_round_and_its_fix_items_are_left() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    let runs = w.repo.join(".orqadence-local/runs");
+    let one = verdict(&["(low) src/a.rs:1 — one"], &[]);
+    let done = "STATUS: done\n".to_string();
+    let pr = |n: u8| format!("STATUS: done\nPR: https://example.test/pr/{n}\n");
+    let files = [
+        ("hx-1/verdict-1.md", one.clone()),
+        ("hx-1/verdict-2.md", one.clone()),
+        ("hx-1/verdict-3.md", one),
+        ("hx-1/fix-3.md", done.clone()),
+        (
+            "hx-1/verdict-final.md",
+            verdict(&["(high) src/b.rs:2 — infra"], &["(low) src/c.rs:3 — nit"]),
+        ),
+        ("hx-1/fix-final.md", pr(1)),
+        ("hx-2/verdict-1.md", verdict(&[], &[])),
+        ("hx-2/fix-1.md", done),
+        (
+            "hx-2/extra-review-final.md",
+            "STATUS: done\n\n- (medium) src/d.rs:4 — open port\n".to_string(),
+        ),
+        ("hx-2/fix-final.md", pr(2)),
+    ];
+    for (path, body) in files {
+        write_file(&runs.join(path), &body);
+    }
+    let mut s = shell(&w);
+    s.command("/summary hx");
+    let sum = s.summary.as_ref().expect("no summary");
+    let got: Vec<_> = sum
+        .tickets
+        .iter()
+        .map(|t| (t.pr.as_str(), t.rounds, t.skipped.clone(), t.left.clone()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (
+                "https://example.test/pr/1",
+                3,
+                vec!["(low) src/c.rs:3 — nit".to_string()],
+                vec![
+                    "(low) src/a.rs:1 — one".to_string(),
+                    "(high) src/b.rs:2 — infra".to_string()
+                ]
+            ),
+            (
+                "https://example.test/pr/2",
+                1,
+                vec![],
+                vec!["(medium) src/d.rs:4 — open port".to_string()]
+            ),
+        ]
+    );
+}
+
 /// The summary takes the whole terminal: the title bar, the Epic's cost and
 /// time, the lead and the totals, a TICKETS outline from 100 columns, the
 /// cost table, a section per Ticket then PARKED, and the position line. Read
