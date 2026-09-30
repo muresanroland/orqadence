@@ -18,7 +18,7 @@ use super::{bold, cut, fg, shell};
 use crate::orchestrator::judgment::{Action, WAITS};
 use crate::orchestrator::stage::{plural, Ask};
 use crate::shell::brand::{lerp, BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT};
-use crate::shell::{About, Question, Screen};
+use crate::shell::{About, NoticeKind, Question, Screen};
 
 /// Under this many columns the dock folds over the Shell.
 const FOLD: u16 = 110;
@@ -75,6 +75,74 @@ pub(super) fn dock(f: &mut Frame, s: &Screen) -> (Rect, Block<'static>) {
         .border_style(fg(PURPLE))
         .padding(Padding::horizontal(1));
     (rect, block)
+}
+
+/// A Notice modal is this many columns wide at most: it fits 80.
+const NOTICE_W: u16 = 60;
+
+/// The front Notice modal over whatever else shows: a box centred over a
+/// Clear, its border and title red and ' ERROR ' or green and ' NOTICE ';
+/// the message wrapped whole to the box, which is as tall as it up to the
+/// screen, a longer one from its scroll row; one [ OK ], focused; at its
+/// foot the time left while it closes by itself.
+pub(super) fn notice(f: &mut Frame, s: &Screen) {
+    let n = &s.notices[0];
+    let (title, c) = match n.kind {
+        NoticeKind::Error => (" ERROR ", RED),
+        NoticeKind::Info => (" NOTICE ", GREEN),
+    };
+    let area = f.area();
+    let width = NOTICE_W.min(area.width);
+    // The border and padding take 4 columns; the border, a blank row and
+    // the button 4 rows.
+    let rows: Vec<Line> = n
+        .text
+        .lines()
+        .flat_map(|line| {
+            wrap_spans(
+                vec![(line.to_string(), fg(TEXT))],
+                width.saturating_sub(4) as usize,
+                "",
+                "",
+                fg(TEXT),
+            )
+        })
+        .collect();
+    let height = (rows.len() as u16 + 4).min(area.height);
+    let shown = height.saturating_sub(4) as usize;
+    let mut foot = Vec::new();
+    if rows.len() > shown {
+        foot.push("↑↓ scrolls".to_string());
+    }
+    if let Some(closes) = n.closes {
+        let ms = (closes - (s.cfg.clock)()).num_milliseconds().max(0);
+        foot.push(format!("closes in {}s", (ms + 999) / 1000));
+    }
+    let mut block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(fg(c))
+        .padding(Padding::horizontal(1))
+        .title(Span::styled(title, bold(c)));
+    if !foot.is_empty() {
+        let foot = format!(" {} ", foot.join(" · "));
+        block = block.title_bottom(Span::styled(foot, fg(MUTED)));
+    }
+    let rect = area.centered(Constraint::Length(width), Constraint::Length(height));
+    let inner = block.inner(rect);
+    f.render_widget(Clear, rect);
+    f.render_widget(block, rect);
+    let [text, _, button] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    let from = n.scroll.get().min(rows.len().saturating_sub(shown));
+    n.scroll.set(from);
+    let rows: Vec<Line> = rows.into_iter().skip(from).take(shown).collect();
+    f.render_widget(Paragraph::new(rows), text);
+    let ok = Span::styled("[ OK ]", bold(Color::Black).bg(c));
+    f.render_widget(Line::from(ok).centered(), button);
 }
 
 /// A dock's badges joined by a muted " · ".
