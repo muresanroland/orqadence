@@ -786,13 +786,15 @@ pub(crate) fn row(repo: &Path, key: &str, labels: &[String]) -> Result<Row, Stri
     let (path, doc) = read(repo)?;
     let doc = labelled(&doc, labels)?;
     let row = row_in(&doc, key, &path)?;
-    let broken = match labels.is_empty() {
-        true => None,
-        false => rules(&doc)
+    if !labels.is_empty() {
+        if let Some(c) = rules(&doc)
             .into_iter()
-            .find(|c| !c.holds && c.rows.contains(&key)),
-    };
-    broken.map_or(Ok(row), |c| Err(c.text))
+            .find(|c| !c.holds && c.rows.contains(&key))
+        {
+            return Err(c.text);
+        }
+    }
+    Ok(row)
 }
 
 /// .orqadence/config.json and its path; a missing file is Null.
