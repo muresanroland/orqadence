@@ -408,6 +408,32 @@ fn rebase_command_on_a_mergeable_pr_is_refused() {
     assert!(w.called("herdr agent start h-hx-1-rebase").is_empty());
 }
 
+/// /rebase goes by the last poll only: a conflict reported, then UNKNOWN
+/// (as GitHub says right after a push), refuses it.
+#[test]
+fn rebase_command_after_conflicting_then_unknown_is_refused() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    let pr = "https://example.test/pr/hx-1".to_string();
+    w.lock().prs.insert(
+        pr.clone(),
+        r#"{"state":"OPEN","mergeable":"CONFLICTING"}"#.to_string(),
+    );
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+    w.await_line("hx-1 PR #hx-1 conflicts with main, /rebase resolves it");
+    w.lock()
+        .prs
+        .insert(pr, r#"{"state":"OPEN","mergeable":"UNKNOWN"}"#.to_string());
+    thread::sleep(Duration::from_millis(30)); // many more polls
+
+    o.command("rebase-hx-1");
+    w.await_line("hx-1 refused: PR #hx-1 does not conflict with main");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+    assert!(w.called("herdr agent start h-hx-1-rebase").is_empty());
+}
+
 /// /address-pr-comments: a fresh session fed the PR and gh's view of its
 /// comments; the Ticket stays pr-open.
 #[test]

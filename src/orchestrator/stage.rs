@@ -67,9 +67,10 @@ pub(crate) const FINAL: usize = MAX_ROUNDS + 1;
 /// Rebase and Address PR comments: outside the Pipeline, each on its
 /// Ticket's open PR in the kept worktree, on the user's command.
 pub(crate) const REBASE: Stage = stage("rebase", "orqa-stage-rebase", 60);
-/// See REBASE.
 pub(crate) const ADDRESS_PR_COMMENTS: Stage =
     stage("address-pr-comments", "orqa-stage-address-pr-comments", 60);
+/// The code-editing Stages: the ones given the Ticket's labels.
+pub(crate) const EDITING: [&Stage; 4] = [&IMPLEMENT, &FIX, &REBASE, &ADDRESS_PR_COMMENTS];
 
 /// How a Stage ends other than with an accepted result.
 #[derive(Debug, PartialEq)]
@@ -910,13 +911,7 @@ impl Orchestrator {
         let (skill, mut lacking) = manifest.fill_jobs(&skill, &have, runs.built_in, runs.mention);
         // The code-editing Stages get the Ticket's labels, their skills the
         // App loads (the rest join Not installed) and their guidance.
-        let editing = [
-            IMPLEMENT.name,
-            FIX.name,
-            REBASE.name,
-            ADDRESS_PR_COMMENTS.name,
-        ];
-        let edits = editing.contains(&st.name);
+        let edits = EDITING.iter().any(|e| e.name == st.name);
         let entries = match edits {
             true => match ticket_labels(&self.cfg.repo, &labels) {
                 Ok(entries) => entries,

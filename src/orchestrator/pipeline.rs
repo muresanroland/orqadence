@@ -10,7 +10,8 @@ use super::app::{self, ExtraReview};
 use super::result::{read_stage_result, ResultRequirements, StageResult};
 use super::stage::{
     plural, pr_ref, result_name, stage_label, Ask, Orchestrator, Stage, StageError,
-    ADDRESS_PR_COMMENTS, AWAY, DEBATE, EXTRA_REVIEW, FINAL, FIX, IMPLEMENT, REBASE, REVIEW,
+    ADDRESS_PR_COMMENTS, AWAY, DEBATE, EDITING, EXTRA_REVIEW, FINAL, FIX, IMPLEMENT, REBASE,
+    REVIEW,
 };
 use super::state::{local_dir, LOCAL, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 use crate::setup::{DEFAULT_TEMPLATE, TEMPLATE_DIR};
@@ -824,7 +825,7 @@ impl Orchestrator {
         // the label skills, on the code-editing Stages' rows
         for (_, label) in &entries {
             for skill in &label.skills {
-                for st in [&IMPLEMENT, &FIX, &REBASE, &ADDRESS_PR_COMMENTS] {
+                for st in EDITING {
                     if !(implemented && st.name == IMPLEMENT.name) {
                         loaded.push((skill, app::row_key(st)));
                     }
