@@ -306,6 +306,22 @@ fn only_the_newest_run_of_a_check_counts() {
             "a queued re-run, not started yet, is the newest"
         );
     }
+
+    let mut skipped = run("SKIPPED", "");
+    skipped["startedAt"] = Value::Null;
+    let mut active = run("", "2026-09-28T10:05:00Z");
+    active["status"] = json!("IN_PROGRESS");
+    active["conclusion"] = Value::Null;
+    let failure = run("FAILURE", "2026-09-28T10:05:00Z");
+    for order in [[&skipped, &active], [&active, &skipped]] {
+        pr["statusCheckRollup"]["contexts"]["nodes"] = json!(order);
+        let reply: Pr = serde_json::from_value(pr.clone()).unwrap();
+        assert!(reply.busy(), "a skipped run never started hides no re-run");
+    }
+    for order in [[&skipped, &failure], [&failure, &skipped]] {
+        pr["statusCheckRollup"]["contexts"]["nodes"] = json!(order);
+        assert_eq!(checks(&pr).len(), 1, "the re-run's failure is an item");
+    }
 }
 
 #[test]

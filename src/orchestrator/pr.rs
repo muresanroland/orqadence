@@ -126,7 +126,8 @@ impl Pr {
     /// The rollup's contexts if they are the head's: a rollup of another
     /// commit holds nothing, nor does a bot seen only on an earlier one.
     /// Like gh, only the newest run of a check counts; a queued run, not
-    /// started yet, is the newest.
+    /// started yet, is the newest, but a skipped one never started is the
+    /// oldest.
     fn contexts(&self) -> Vec<&Context> {
         let mut newest: Vec<&Context> = Vec::new();
         let Some(rollup) = &self.status_check_rollup else {
@@ -141,12 +142,7 @@ impl Pr {
         }
         for c in &rollup.contexts.nodes {
             match newest.iter_mut().find(|n| n.key() == c.key()) {
-                Some(n)
-                    if n.started_at.is_some()
-                        && (c.started_at.is_none() || c.started_at > n.started_at) =>
-                {
-                    *n = c
-                }
+                Some(n) if c.age() > n.age() => *n = c,
                 Some(_) => {}
                 None => newest.push(c),
             }
@@ -404,6 +400,13 @@ impl Context {
             &self.name
         };
         (name, workflow, run["event"].as_str().unwrap_or(""))
+    }
+
+    /// Orders the runs of a check, the newest greatest: a run not started
+    /// and not completed is queued, so newer than any started run.
+    fn age(&self) -> (bool, Option<&str>) {
+        let queued = self.started_at.is_none() && self.status != "COMPLETED";
+        (queued, self.started_at.as_deref())
     }
 
     /// The app that ran a check, or who set a status.
