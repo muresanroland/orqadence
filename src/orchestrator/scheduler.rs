@@ -28,6 +28,8 @@ pub(crate) struct BdIssue {
     pub(crate) dependencies: Vec<BdDependency>,
     /// 'PR merged: <url>' on a Ticket poll_merges closed.
     pub(crate) close_reason: String,
+    /// Its own bd labels, never its Epic's.
+    pub(crate) labels: Vec<String>,
 }
 
 impl BdIssue {
@@ -70,6 +72,19 @@ impl Orchestrator {
             .unwrap_or_default()
             .into_iter()
             .filter(|issue| issue.issue_type != "epic")
+            .collect())
+    }
+
+    /// The Ticket's Ticket labels, by name: its own orqa: labels as bd
+    /// shows them now, read as each Stage starts, like the rows. Every other
+    /// bd label is ignored.
+    pub(super) fn labels(&self, ticket: &str) -> Result<Vec<String>, String> {
+        let issues = self.bd_issues(&["show", ticket, "--json"])?;
+        Ok(issues
+            .iter()
+            .flat_map(|issue| &issue.labels)
+            .filter_map(|label| label.strip_prefix("orqa:"))
+            .map(String::from)
             .collect())
     }
 

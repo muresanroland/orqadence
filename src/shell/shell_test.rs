@@ -303,7 +303,8 @@ fn live(half: u64) -> Screen {
 #[test]
 fn the_idle_header_at_104x8_lights_the_bottom_right_pane_and_holds_the_cursor() {
     let mut s = screen();
-    s.version = "v1.3.0-dev".to_string(); // the crate's own version would shift the frame
+    // pinned: a longer build version would push the border
+    s.version = "v1.3.0-dev".to_string();
     let buf = header(&s, 104, 8);
     assert_eq!(
         rows(&buf),

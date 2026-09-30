@@ -1045,7 +1045,7 @@ pub(crate) fn preflight(
             for (job, suggestions) in JOBS {
                 let pick = manifest.pick(job);
                 // A row that cannot be read is the Orchestrator's to refuse.
-                let Ok(row) = app::row(repo, manifest::job_row(job)) else {
+                let Ok(row) = app::row(repo, manifest::job_row(job), &[]) else {
                     continue;
                 };
                 let have: Vec<String> = found
@@ -1075,8 +1075,8 @@ pub(crate) fn preflight(
     // Review's fallback, unset, runs nothing.
     for key in app::ROWS {
         let row = match key {
-            app::IF_LIMITED => app::fallback_row(repo).ok().flatten(),
-            _ => app::row(repo, key).ok(),
+            app::IF_LIMITED => app::fallback_row(repo, &[]).ok().flatten(),
+            _ => app::row(repo, key, &[]).ok(),
         };
         let Some(row) = row else {
             continue;
