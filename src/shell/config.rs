@@ -6,9 +6,11 @@
 //! first, off the screen thread; it saves only if the App answers. Also each
 //! job's Delegate skill, the skills Orqadence installed (harness-0sx.7),
 //! cloned off the screen thread too, TypeSafe on or off with its key and
-//! the Judgments' floors, the Tickets a run takes at once, and On call's
-//! Moshi token, minutes and test push.
+//! the Judgments' floors, the Tickets a run takes at once, On call's
+//! Moshi token, minutes and test push, and the Ticket labels: each entry of
+//! config.json's labels, area or modifier, with its skills and guidance.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
@@ -21,7 +23,8 @@ use super::brand::{CYAN, GREEN, MUTED, ORANGE, RED};
 use super::{NoticeKind, Screen, NOTICE_WINDOW};
 use crate::on_call::{self, OnCall, DEFAULT_MINUTES};
 use crate::orchestrator::app::{
-    self, app, App, Check, Floor, Model, Row, APPS, DEFAULT_MAX_TICKETS, IF_LIMITED, MAX_TICKETS,
+    self, app, App, Check, Floor, Label, Model, Row, APPS, DEFAULT_MAX_TICKETS, IF_LIMITED,
+    MAX_TICKETS,
 };
 use crate::orchestrator::judgment::{PLAN_FLOOR, WAKE_FLOOR};
 use crate::orchestrator::stage::plural;
@@ -132,12 +135,15 @@ pub(crate) const SECTIONS: [(&str, &str, &str); 5] = [
 ];
 
 /// The Apps page's place on the left, after the Pipeline's sections, and
-/// the Skills, TypeSafe, Run and On call pages' after it.
+/// the Skills, Labels, TypeSafe, Run and On call pages' after it.
 pub(crate) const APPS_PAGE: usize = SECTIONS.len();
 pub(crate) const SKILLS_PAGE: usize = APPS_PAGE + 1;
-pub(crate) const TYPESAFE_PAGE: usize = APPS_PAGE + 2;
-pub(crate) const RUN_PAGE: usize = APPS_PAGE + 3;
-pub(crate) const ON_CALL_PAGE: usize = APPS_PAGE + 4;
+pub(crate) const LABELS_PAGE: usize = APPS_PAGE + 2;
+pub(crate) const TYPESAFE_PAGE: usize = APPS_PAGE + 3;
+pub(crate) const RUN_PAGE: usize = APPS_PAGE + 4;
+pub(crate) const ON_CALL_PAGE: usize = APPS_PAGE + 5;
+/// A label's own page's rows, in its order.
+pub(crate) const LABEL_FIELDS: [&str; 3] = ["kind", "skills", "guidance"];
 /// The Skills page's rows before its skills: the location and your
 /// personal skills' switch.
 pub(crate) const SKILL_ROWS: usize = 2;
@@ -165,6 +171,10 @@ pub(crate) enum Field {
     Same,
     /// A job's Delegate skill, of JOBS, kept in the Skill manifest.
     Job(usize),
+    /// The open label's skills, on the Labels page.
+    // ponytail: rides Pick with row 0, which it never reads; a list of its
+    // own when a second pick outside the rows comes.
+    Skills,
 }
 
 impl Field {
@@ -185,6 +195,7 @@ impl Field {
             Field::Plan => "plan_model",
             Field::Same => "same",
             Field::Job(j) => JOBS[j].0,
+            Field::Skills => "skills",
         }
     }
 }
@@ -300,6 +311,12 @@ pub(crate) enum Typing {
     Token,
     /// On call's minutes.
     Minutes,
+    /// A new label's name, on the Labels page.
+    LabelName,
+    /// A label's new name, the old one held.
+    Rename(String),
+    /// The open label's guidance line.
+    Guidance,
 }
 
 /// The skills of a source that holds several: each name, whether it is
@@ -314,6 +331,7 @@ pub(crate) struct Listing {
 pub(crate) enum Confirm {
     Remove(String),
     TypeSafeOff,
+    DeleteLabel(String),
 }
 
 /// A clone or an update going on its own thread, said in the foot.
@@ -368,6 +386,8 @@ pub(crate) struct Settings {
     pub(crate) listing: Option<Listing>,
     /// The foot's yes/no question.
     pub(crate) confirm: Option<(String, Confirm)>,
+    /// The label whose own page is open, on the Labels page.
+    pub(crate) label: Option<String>,
     /// The foot's line in place of the row's note: saved, refused, failed.
     pub(crate) note: Option<(String, Color)>,
     /// When this /config last saved.
@@ -621,6 +641,9 @@ impl Settings {
         if let Field::Job(j) = pick.field {
             return self.job_entries(pick, j);
         }
+        if pick.field == Field::Skills {
+            return self.skill_entries(pick);
+        }
         let current = match pick.app {
             Some(_) => String::new(),
             None => self.value(pick.row, pick.field),
@@ -668,7 +691,7 @@ impl Settings {
                     entry(a.name, detail.into(), Some(Picked::App(a)));
                 }
             }
-            (_, None) | (Field::Same | Field::Job(_), _) => {}
+            (_, None) | (Field::Same | Field::Job(_) | Field::Skills, _) => {}
             (Field::Plan, Some(app)) => {
                 for (id, _) in self.listed(app) {
                     entry(
@@ -824,6 +847,7 @@ impl Settings {
                 "The skill the Stage uses for {}: one not installed is installed first, as orqa-<name>; none leaves the Stage skill's own instructions. Your personal skills are listed once turned on, on the Skills page.",
                 job_name(j)
             ),
+            Field::Skills => return self.labels_note(),
             Field::App => "Changing the App leads into its model list; the pair saves together.",
             Field::Same => match self.split() {
                 Some(plan) => {
@@ -909,6 +933,152 @@ impl Settings {
             .map(|value| (value, set.is_null() || set == ""))
             .map_err(|_| set.to_string())
     }
+
+    /// config.json's labels, each entry by its name as read, or why it
+    /// cannot be.
+    pub(crate) fn labels(&self) -> BTreeMap<String, Result<Label, String>> {
+        app::labels(&self.doc)
+    }
+
+    /// The names of config.json's labels, sorted.
+    pub(crate) fn label_names(&self) -> Vec<String> {
+        self.labels().into_keys().collect()
+    }
+
+    /// A label's entry as read, or why it cannot be.
+    pub(crate) fn label_of(&self, name: &str) -> Result<Label, String> {
+        self.labels()
+            .remove(name)
+            .unwrap_or_else(|| Err(format!("no label orqa:{name}")))
+    }
+
+    /// The Labels line on the left: "2 labels".
+    pub(crate) fn labels_summary(&self) -> String {
+        plural(self.labels().len(), "label")
+    }
+
+    /// The foot's note on the Labels page: the list's keys, or the open
+    /// label's row under the cursor.
+    pub(crate) fn labels_note(&self) -> String {
+        if self.label.is_none() {
+            return "a adds a label, e or Enter opens it, r renames it (its PR template mapping follows), d deletes it (its PR template file stays). Every change saves at once, uncommitted, to .orqadence/config.json.".to_string();
+        }
+        match LABEL_FIELDS[self.setting] {
+            "kind" => "area: the one type of work a Ticket does, one per Ticket; modifier: only changes rows, and combines with an area. Enter or Space toggles.",
+            "skills" => "The skills its code-editing Stages load, from the ones installed: Enter picks them, or types a source to install one first.",
+            _ => "One line given to its code-editing Stages as an Input. Enter types it; nothing clears it.",
+        }
+        .to_string()
+    }
+
+    /// A label name as typed, as bd takes a label: not empty, no whitespace,
+    /// no comma (bd's list separator), and not one config.json has.
+    fn valid_label(&self, typed: &str) -> Result<String, String> {
+        let name = label_name(typed);
+        if name.is_empty() {
+            return Err("Refused: no name after orqa:. Nothing changed.".to_string());
+        }
+        if name.chars().any(|c| c.is_whitespace() || c == ',') {
+            return Err(format!(
+                "Refused: '{name}' is not a bd label: no spaces or commas. Nothing changed."
+            ));
+        }
+        if self.doc["labels"].get(name).is_some() {
+            return Err(format!(
+                "Refused: orqa:{name} is there already. Nothing changed."
+            ));
+        }
+        Ok(name.to_string())
+    }
+
+    /// The open label's skills pick list: each skill installed but the
+    /// Shipped ones, those on the label marked, then 'from a source…'.
+    /// Filtered as entries are.
+    fn skill_entries(&self, pick: &Pick) -> Vec<Entry> {
+        let on = self
+            .label
+            .as_deref()
+            .and_then(|name| self.label_of(name).ok())
+            .map(|label| label.skills)
+            .unwrap_or_default();
+        let filter = pick.filter.to_lowercase();
+        let mut out: Vec<Entry> = self
+            .manifest
+            .skills
+            .iter()
+            .filter(|(name, skill)| !skill.shipped && name.to_lowercase().contains(&filter))
+            .map(|(name, skill)| Entry {
+                name: name.clone(),
+                detail: short(&skill.repo).to_string(),
+                current: on.contains(name),
+                mark: on.contains(name).then_some(("on", GREEN)),
+                dim: false,
+                picks: Some(Picked::Value(name.clone())),
+            })
+            .collect();
+        out.push(Entry {
+            name: "from a source…".to_string(),
+            detail: "cloned and installed, then on the label".to_string(),
+            current: false,
+            mark: None,
+            dim: false,
+            picks: Some(Picked::Typed),
+        });
+        out
+    }
+}
+
+/// A label name as typed: trimmed, a typed orqa: dropped.
+fn label_name(typed: &str) -> &str {
+    let name = typed.trim();
+    name.strip_prefix("orqa:").unwrap_or(name)
+}
+
+/// A label's summary on the page: its skills, whether it has guidance and
+/// an Extra review.
+pub(crate) fn label_line(label: &Label) -> String {
+    let mut parts = Vec::new();
+    if !label.skills.is_empty() {
+        parts.push(format!("skills: {}", label.skills.join(", ")));
+    }
+    if !label.guidance.is_empty() {
+        parts.push("guidance".to_string());
+    }
+    if !label.extra_review.skill.is_empty() {
+        parts.push("extra review".to_string());
+    }
+    parts.join(" · ")
+}
+
+/// The entry under name in labels, to change; a missing one, one that is
+/// not an object, or one a Stage could not read, refuses.
+fn label_entry<'a>(
+    labels: &'a mut serde_json::Map<String, Value>,
+    name: &str,
+) -> Result<&'a mut Value, String> {
+    match labels.get_mut(name) {
+        Some(entry) if entry.is_object() => {
+            app::entry(name, entry)?;
+            Ok(entry)
+        }
+        Some(_) => Err(format!("labels {name} in config.json is not an object")),
+        None => Err(format!("config.json has no label orqa:{name}")),
+    }
+}
+
+/// A label's skills changed in place; a missing or null skills starts
+/// empty (label_entry refused one that is not a list of strings).
+fn put_skills(
+    labels: &mut serde_json::Map<String, Value>,
+    name: &str,
+    change: impl FnOnce(&mut Vec<String>),
+) -> Result<(), String> {
+    let entry = label_entry(labels, name)?;
+    let mut skills: Vec<String> =
+        serde_json::from_value(entry["skills"].take()).unwrap_or_default();
+    change(&mut skills);
+    entry["skills"] = json!(skills);
+    Ok(())
 }
 
 /// What an App said as it refused a probe: the last line it printed,
@@ -1045,6 +1215,7 @@ impl Screen {
             busy: None,
             listing: None,
             confirm: None,
+            label: None,
             note,
             saved: None,
         });
@@ -1077,6 +1248,7 @@ impl Screen {
                     match confirm {
                         Confirm::Remove(name) => self.remove_skill(&name),
                         Confirm::TypeSafeOff => self.typesafe_to(false),
+                        Confirm::DeleteLabel(name) => self.delete_label(&name),
                     }
                 }
                 KeyCode::Char('n') | KeyCode::Esc => st.confirm = None,
@@ -1096,12 +1268,15 @@ impl Screen {
                         (Typing::MaxTickets, text) => self.keep_max_tickets(text.to_string()),
                         (Typing::Token, token) => self.keep_token(token.to_string()),
                         (Typing::Minutes, text) => self.keep_minutes(text.to_string()),
+                        (Typing::Guidance, text) => self.keep_guidance(text.to_string()),
                         (_, "") => {
                             st.note = Some(("Nothing typed: nothing changed.".to_string(), MUTED))
                         }
                         (Typing::Model(pick), id) => self.pick_model(&pick, id),
                         (Typing::Source, source) => self.add_source(source.to_string()),
                         (Typing::Key, key) => self.keep_key(key.to_string()),
+                        (Typing::LabelName, name) => self.add_label(name.to_string()),
+                        (Typing::Rename(old), name) => self.rename_label(old, name.to_string()),
                     }
                 }
                 _ => {}
@@ -1187,6 +1362,53 @@ impl Screen {
                 KeyCode::Char('u') if skill.is_some() => self.update_skills(skill),
                 KeyCode::Char('d') | KeyCode::Delete if skill.is_some() => {
                     self.ask_remove(skill.unwrap())
+                }
+                _ => {}
+            }
+            return;
+        }
+        if st.section == LABELS_PAGE {
+            let names = st.label_names();
+            let label = st.label.clone();
+            let under = names.get(st.setting).cloned();
+            match (label, under, code) {
+                (_, _, KeyCode::Up) => st.setting = st.setting.saturating_sub(1),
+                (None, _, KeyCode::Down) => {
+                    st.setting = (st.setting + 1).min(names.len().saturating_sub(1))
+                }
+                (Some(_), _, KeyCode::Down) => {
+                    st.setting = (st.setting + 1).min(LABEL_FIELDS.len() - 1)
+                }
+                (None, _, KeyCode::Left | KeyCode::Esc) => st.open = false,
+                (Some(label), _, KeyCode::Left | KeyCode::Esc) => {
+                    st.label = None;
+                    st.setting = names.iter().position(|n| *n == label).unwrap_or(0);
+                }
+                (None, _, KeyCode::Char('a')) => {
+                    st.typing = Some((Typing::LabelName, String::new()))
+                }
+                (None, Some(name), KeyCode::Enter | KeyCode::Char('e')) => {
+                    st.label = Some(name);
+                    st.setting = 0;
+                }
+                (None, Some(name), KeyCode::Char('r')) => {
+                    st.typing = Some((Typing::Rename(name.clone()), name));
+                }
+                (None, Some(name), KeyCode::Char('d') | KeyCode::Delete) => {
+                    let text = format!("Delete orqa:{name}? A Ticket still carrying it wakes its next Stage; its PR template file stays.");
+                    st.confirm = Some((text, Confirm::DeleteLabel(name)));
+                }
+                (Some(label), _, KeyCode::Enter | KeyCode::Char(' '))
+                    if LABEL_FIELDS[st.setting] == "kind" =>
+                {
+                    self.toggle_kind(&label)
+                }
+                (Some(_), _, KeyCode::Enter) if LABEL_FIELDS[st.setting] == "skills" => {
+                    self.open_pick(0, Field::Skills, None)
+                }
+                (Some(label), _, KeyCode::Enter) => {
+                    let text = st.label_of(&label).map(|l| l.guidance).unwrap_or_default();
+                    st.typing = Some((Typing::Guidance, text));
                 }
                 _ => {}
             }
@@ -1323,6 +1545,9 @@ impl Screen {
                 Ok(()) => self.open_pick(pick.row, Field::Model, Some(a)),
                 Err(err) => st.note = Some((format!("Refused: {err}. Nothing changed."), RED)),
             },
+            Picked::Typed if pick.field == Field::Skills => {
+                st.typing = Some((Typing::Source, String::new()))
+            }
             Picked::Typed => st.typing = Some((Typing::Model(pick), String::new())),
             Picked::Install(name, source) => {
                 if let Field::Job(j) = pick.field {
@@ -1333,6 +1558,7 @@ impl Screen {
                 Field::Job(j) => {
                     self.set_pick(j, &value);
                 }
+                Field::Skills => self.toggle_skill(pick, &value),
                 Field::Model | Field::Plan => self.pick_model(&pick, &value),
                 _ => self.change(pick.row, vec![(Field::Effort, value)]),
             },
@@ -1848,7 +2074,10 @@ impl Screen {
         let st = self.settings.as_mut().unwrap();
         match done {
             Done::Added(_, Err(err)) | Done::ForJob(_, Err(err)) => self.refused(&err),
-            Done::Added(_, Ok(Added::Installed(name))) => self.done(self.installed(&name), SKILL),
+            Done::Added(_, Ok(Added::Installed(name))) => {
+                let said = self.installed(&name);
+                self.put_on_label(vec![name], said)
+            }
             Done::Added(source, Ok(Added::Choose(names))) => {
                 let repo = parse_source(&source).map(|s| s.repo).unwrap_or_default();
                 let names = names
@@ -1881,10 +2110,14 @@ impl Screen {
             }
             Done::Ticked(added) => {
                 let mut said = Vec::new();
+                let mut names = Vec::new();
                 let mut failed = false;
                 for (name, added) in added {
                     match added {
-                        Ok(Added::Installed(name)) => said.push(self.installed(&name)),
+                        Ok(Added::Installed(name)) => {
+                            said.push(self.installed(&name));
+                            names.push(name);
+                        }
                         Ok(Added::Choose(_)) => {}
                         Err(err) => {
                             failed = true;
@@ -1893,7 +2126,7 @@ impl Screen {
                     }
                 }
                 match failed {
-                    false => self.done(said.join("; "), SKILL),
+                    false => self.put_on_label(names, said.join("; ")),
                     true => self.refused(&said.join("; ")),
                 }
             }
@@ -1936,6 +2169,205 @@ impl Screen {
                 }
             }
         }
+    }
+
+    /// A change to config.json's labels, read afresh and written whole; the
+    /// foot says it, uncommitted. A labels key that is not an object
+    /// refuses. Whether it saved.
+    fn save_label(
+        &mut self,
+        change: impl FnOnce(&mut serde_json::Map<String, Value>) -> Result<(), String>,
+        text: String,
+    ) -> bool {
+        let saved = app::read_object(&self.cfg.repo).and_then(|(path, mut doc)| {
+            if doc["labels"].is_null() {
+                doc["labels"] = json!({});
+            }
+            let labels = doc["labels"]
+                .as_object_mut()
+                .ok_or_else(|| "labels in config.json is not an object".to_string())?;
+            change(labels)?;
+            app::write(&path, &doc).map(|()| doc)
+        });
+        match saved {
+            Ok(doc) => {
+                self.settings.as_mut().unwrap().doc = doc;
+                self.done(text, CONFIG);
+                true
+            }
+            Err(err) => {
+                self.refused(&err);
+                false
+            }
+        }
+    }
+
+    /// a's name typed: an invalid one or a clash is refused, the text kept
+    /// to mend; else the entry is written as an area label and its page
+    /// opens.
+    fn add_label(&mut self, typed: String) {
+        let st = self.settings.as_mut().unwrap();
+        let name = match st.valid_label(&typed) {
+            Ok(name) => name,
+            Err(err) => {
+                st.note = Some((err, RED));
+                st.typing = Some((Typing::LabelName, typed));
+                return;
+            }
+        };
+        let text = format!("added orqa:{name}, an area label");
+        let added = name.clone();
+        let saved = self.save_label(
+            move |labels| {
+                if labels.contains_key(&added) {
+                    return Err(format!("orqa:{added} is there already"));
+                }
+                labels.insert(added, json!({"kind": "area"}));
+                Ok(())
+            },
+            text,
+        );
+        if saved {
+            let st = self.settings.as_mut().unwrap();
+            st.label = Some(name);
+            st.setting = 0;
+        }
+    }
+
+    /// r's name typed: the entry moves whole under the new name, its
+    /// pr_template mapping with it; the same name changes nothing.
+    fn rename_label(&mut self, old: String, typed: String) {
+        let st = self.settings.as_mut().unwrap();
+        if label_name(&typed) == old {
+            st.note = Some(("Same name: nothing changed.".to_string(), MUTED));
+            return;
+        }
+        let name = match st.valid_label(&typed) {
+            Ok(name) => name,
+            Err(err) => {
+                st.note = Some((err, RED));
+                st.typing = Some((Typing::Rename(old), typed));
+                return;
+            }
+        };
+        let text = format!("renamed orqa:{old} to orqa:{name}");
+        let new = name.clone();
+        self.save_label(
+            move |labels| {
+                if labels.contains_key(&new) {
+                    return Err(format!("orqa:{new} is there already"));
+                }
+                let entry = labels
+                    .remove(&old)
+                    .ok_or_else(|| format!("config.json has no label orqa:{old}"))?;
+                labels.insert(new, entry);
+                Ok(())
+            },
+            text,
+        );
+        self.labels_cursor(&name);
+    }
+
+    /// A yes to deleting a label: its entry goes, its PR template file
+    /// stays.
+    fn delete_label(&mut self, name: &str) {
+        let gone = name.to_string();
+        self.save_label(
+            move |labels| {
+                labels.remove(&gone);
+                Ok(())
+            },
+            format!("deleted orqa:{name}"),
+        );
+        self.labels_cursor(name);
+    }
+
+    /// The list's cursor on name, or clamped to the list.
+    fn labels_cursor(&mut self, name: &str) {
+        let st = self.settings.as_mut().unwrap();
+        let names = st.label_names();
+        st.setting = names
+            .iter()
+            .position(|n| n == name)
+            .unwrap_or(st.setting.min(names.len().saturating_sub(1)));
+    }
+
+    /// Enter or Space on the kind row: area to modifier and back.
+    fn toggle_kind(&mut self, name: &str) {
+        let st = self.settings.as_ref().unwrap();
+        let (kind, a) = match st.label_of(name).map(|l| l.kind).as_deref() {
+            Ok("area") => ("modifier", "a modifier"),
+            _ => ("area", "an area"),
+        };
+        let label = name.to_string();
+        self.save_label(
+            move |labels| {
+                label_entry(labels, &label)?["kind"] = json!(kind);
+                Ok(())
+            },
+            format!("orqa:{name} is {a} label"),
+        );
+    }
+
+    /// A skill picked on the open label's list: on the label, or off it
+    /// again; the list stays open.
+    fn toggle_skill(&mut self, pick: Pick, skill: &str) {
+        let st = self.settings.as_ref().unwrap();
+        let name = st.label.clone().unwrap_or_default();
+        let on = st
+            .label_of(&name)
+            .is_ok_and(|l| l.skills.iter().any(|s| s == skill));
+        let text = format!("orqa:{name} {} {skill}", if on { "drops" } else { "takes" });
+        let skill = skill.to_string();
+        self.save_label(
+            move |labels| {
+                put_skills(labels, &name, |skills| match on {
+                    true => skills.retain(|s| *s != skill),
+                    false => skills.push(skill),
+                })
+            },
+            text,
+        );
+        self.settings.as_mut().unwrap().pick = Some(pick);
+    }
+
+    /// Skills installed: put on the open label when one is, and said; said
+    /// alone otherwise.
+    fn put_on_label(&mut self, names: Vec<String>, said: String) {
+        let Some(name) = self.settings.as_ref().unwrap().label.clone() else {
+            return self.done(said, SKILL);
+        };
+        let it = if names.len() == 1 { "it" } else { "them" };
+        let text = format!("{said}; orqa:{name} takes {it}");
+        self.save_label(
+            move |labels| {
+                put_skills(labels, &name, |skills| {
+                    for name in names {
+                        if !skills.contains(&name) {
+                            skills.push(name);
+                        }
+                    }
+                })
+            },
+            text,
+        );
+    }
+
+    /// The guidance line typed: saved as it is, nothing clearing it.
+    fn keep_guidance(&mut self, text: String) {
+        let st = self.settings.as_ref().unwrap();
+        let name = st.label.clone().unwrap_or_default();
+        let said = match text.is_empty() {
+            true => format!("orqa:{name} guidance cleared"),
+            false => format!("orqa:{name} guidance set"),
+        };
+        self.save_label(
+            move |labels| {
+                label_entry(labels, &name)?["guidance"] = json!(text);
+                Ok(())
+            },
+            said,
+        );
     }
 
     /// Writes the change into config.json, read afresh; during a run RECENT

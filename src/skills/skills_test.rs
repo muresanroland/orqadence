@@ -6,10 +6,18 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// infra-review is a Shipped skill.
+/// infra-review names the Inputs and the section the Review Stage and the
+/// Orchestrator rely on.
 #[test]
-fn infra_review_is_shipped() {
-    assert!(SKILLS.iter().any(|(n, _)| *n == "orqa-infra-review"));
+fn infra_review_is_shipped_with_its_not_run_section() {
+    let skill = SKILLS
+        .iter()
+        .find(|(s, _)| *s == "orqa-infra-review")
+        .unwrap()
+        .1;
+    for text in ["name: orqa-infra-review", "## Not run", "**Cache**"] {
+        assert!(skill.contains(text), "infra-review lacks {text:?}");
+    }
 }
 
 /// infra-review's fetch.sh, as it is shipped.
@@ -37,16 +45,17 @@ fn git(repo: &Path, args: &[&str]) -> String {
 
 /// A worktree whose branch t, off main, commits `files`; fetch.sh run in it
 /// as the Orchestrator runs it, with stub tools first on PATH that log each
-/// call (the tool, its cwd and its arguments). Returns the worktree and the
-/// log. The real bash and git run: fetch.sh is outside the Tools seam.
-fn fetch(files: &[(&str, &str)]) -> (TempDir, String) {
-    let (repo, log, out) = run_fetch(files, "", 0);
+/// call (the tool, its cwd and its arguments); its terraform writes a module
+/// manifest holding the folder init ran in. Returns the worktree, the cache
+/// and the log. The real bash and git run: fetch.sh is outside the Tools seam.
+fn fetch(files: &[(&str, &str)]) -> (TempDir, TempDir, String) {
+    let (repo, cache, log, out) = run_fetch(files, "", 0);
     assert!(
         out.status.success(),
         "fetch.sh: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    (repo, log)
+    (repo, cache, log)
 }
 
 /// fetch.sh run as in `fetch`, with each stub tool printing `stub_out` and
@@ -55,7 +64,7 @@ fn run_fetch(
     files: &[(&str, &str)],
     stub_out: &str,
     stub_status: i32,
-) -> (TempDir, String, std::process::Output) {
+) -> (TempDir, TempDir, String, std::process::Output) {
     let (repo, cache, stubs) = (TempDir::new(), TempDir::new(), TempDir::new());
     git(repo.path(), &["init", "-q", "-b", "main"]);
     write_file(&repo.path().join("README.md"), "infra\n");
@@ -74,6 +83,8 @@ fn run_fetch(
         write_file(
             &stub,
             "#!/bin/sh\necho \"$(basename \"$0\") $(pwd -P) $*\" >> \"$STUB_LOG\"\n\
+             if [ \"$(basename \"$0\") $1\" = 'terraform init' ]; then \
+             mkdir -p .terraform/modules && pwd -P > .terraform/modules/modules.json; fi\n\
              printf '%s' \"$STUB_OUT\"\nexit \"$STUB_STATUS\"\n",
         );
         fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
@@ -97,15 +108,16 @@ fn run_fetch(
         .env_remove("GITHUB_TOKEN")
         .output()
         .unwrap();
-    (repo, fs::read_to_string(&log).unwrap_or_default(), out)
+    let log = fs::read_to_string(&log).unwrap_or_default();
+    (repo, cache, log, out)
 }
 
 /// A touched Terraform root is initialised in a temp copy, never in the
 /// worktree, and the plugins its .tflint.hcl names are fetched with gh's
-/// token; the worktree is left clean.
+/// token; the worktree is left clean and the cache's lock released.
 #[test]
 fn fetch_inits_a_touched_terraform_root_in_a_temp_copy() {
-    let (repo, log) = fetch(&[
+    let (repo, cache, log) = fetch(&[
         ("infra/main.tf", "resource \"null_resource\" \"a\" {}\n"),
         (
             ".tflint.hcl",
@@ -134,19 +146,37 @@ fn fetch_inits_a_touched_terraform_root_in_a_temp_copy() {
         assert!(!cwd.starts_with(worktree), "ran in the worktree: {call}");
     }
     assert_eq!(git(repo.path(), &["status", "--porcelain"]), "");
+    assert!(
+        !cache.path().join("providers.lock").exists(),
+        "lock left behind"
+    );
 }
 
 /// A diff that touches nothing fetch.sh fetches for calls no tool.
 #[test]
 fn fetch_calls_no_tool_for_a_readme() {
-    let (_, log) = fetch(&[("docs/README.md", "how\n")]);
+    let (_, _, log) = fetch(&[("docs/README.md", "how\n")]);
     assert_eq!(log, "");
+}
+
+/// The modules init installed in a touched root's temp copy (registry and
+/// git modules, which the offline review cannot fetch) are kept in the
+/// cache by commit: modules/<HEAD>/<root>/.terraform/modules.
+#[test]
+fn fetch_keeps_a_roots_modules_in_the_cache() {
+    let (repo, cache, log) = fetch(&[("infra/main.tf", "module \"m\" { source = \"x/y/z\" }\n")]);
+    let head = git(repo.path(), &["rev-parse", "HEAD"]);
+    let manifest = cache.path().join(format!(
+        "modules/{}/infra/.terraform/modules/modules.json",
+        head.trim()
+    ));
+    assert!(manifest.exists(), "no {}\n{log}", manifest.display());
 }
 
 /// A manifest fetch.sh validates with kubeconform, which prints `out` and
 /// exits with `status`; returns whether fetch.sh succeeded, and its stderr.
 fn fetch_kube(out: &str, status: i32) -> (bool, String) {
-    let (_, log, run) = run_fetch(
+    let (_, _, log, run) = run_fetch(
         &[("k8s/app.yaml", "kind: Deployment\nmetadata:\n  name: web\n")],
         out,
         status,

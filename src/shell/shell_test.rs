@@ -3873,6 +3873,65 @@ fn a_stage_question_docks_its_text_from_the_start_and_takes_an_answer_in_the_ban
     );
 }
 
+/// The Ticket's label Question docks as a Stage's own question does, with
+/// no session: the question in the box, one option per label and park,
+/// the band saying what each does; a label picked goes to the Ticket word
+/// for word.
+#[test]
+fn a_label_question_docks_with_one_option_per_label_and_park() {
+    let repo = TempDir::new();
+    let mut s = screen_at(Fake::quiet(), repo.path());
+    let text = "harness-kqe.11 has orqa:fe and orqa:be: keep which?";
+    s.push(asking(
+        "harness-kqe.11",
+        text,
+        Ask::Labels {
+            options: ["orqa:fe", "orqa:be", "park"].map(str::to_string).to_vec(),
+        },
+    ));
+    assert_eq!(s.options(), ["orqa:fe", "orqa:be", "park"]);
+    assert!(s.modal(), "a label Question did not dock");
+    let buf = render(&s, 160, 30);
+    let (x, _) = find(&buf, "┏").unwrap_or_else(|| panic!("{:#?}", rows(&buf)));
+    assert!(
+        row(&buf, 0).contains("┏ QUESTION · 11 Questions "),
+        "{:?}",
+        row(&buf, 0)
+    );
+    assert_eq!(
+        cols(&buf, 2, x as usize + 2, 158).trim_end(),
+        "fix, round 1 · asked 12:04:44 · no session yet: the Ticket waits for your answer"
+    );
+    assert_eq!(boxed_body(&buf, "╭ the Ticket's labels ")[0], text);
+    for want in [
+        "› does: keeps orqa:fe: runs bd label remove harness-kqe.11 for each other label asked about",
+        "› does: keeps orqa:be: runs bd label remove harness-kqe.11 for each other label asked about",
+        "› does: parks the Ticket where it is; /continue @harness-kqe.11 asks again",
+    ] {
+        assert_eq!(band(&render(&s, 160, 30)), want);
+        s.key(key(KeyCode::Down));
+    }
+    let typo = asking(
+        "harness-kqe.12",
+        "harness-kqe.12 has orqa:typo, which no label entry names",
+        Ask::Labels {
+            options: ["remove orqa:typo", "park"].map(str::to_string).to_vec(),
+        },
+    );
+
+    pick(&mut s, 2);
+    assert!(s.questions.is_empty(), "the answered Question stayed");
+    assert_eq!(
+        s.events.last().map(line).as_deref(),
+        Some("harness-kqe.11 you answered: orqa:be")
+    );
+    s.push(typo);
+    assert_eq!(
+        band(&render(&s, 160, 30)),
+        "› does: runs bd label remove harness-kqe.12 orqa:typo"
+    );
+}
+
 /// Of the waiting lines, only a trust dialog blocks a Ticket on the user; a
 /// Judgment's wait does not.
 #[test]

@@ -357,10 +357,11 @@ fn option_row(i: usize, option: &str, on: bool, w: usize) -> Line<'static> {
 pub(super) fn asked(f: &mut Frame, s: &Screen) {
     let q = &s.questions[0];
     let (kind, pane, text, wake) = match &q.about {
-        About::Asked(Ask::Wake { pane, tail, .. }) => ("WAKE", pane, tail, true),
+        About::Asked(Ask::Wake { pane, tail, .. }) => ("WAKE", pane.as_str(), tail, true),
         About::Asked(Ask::StageQuestion { pane, question, .. }) => {
-            ("QUESTION", pane, question, false)
+            ("QUESTION", pane.as_str(), question, false)
         }
+        About::Asked(Ask::Labels { .. }) => ("QUESTION", "", &q.text, false),
         _ => return,
     };
     // where the session is, as the Question's line names it: "(pane 2-1)"
@@ -422,9 +423,10 @@ pub(super) fn asked(f: &mut Frame, s: &Screen) {
     .areas(inner);
     f.render_widget(Paragraph::new(head), head_a);
 
-    let title = match wake {
-        true => format!(" pane {at}, its last lines "),
-        false => " the session asks ".to_string(),
+    let title = match &q.about {
+        _ if wake => format!(" pane {at}, its last lines "),
+        About::Asked(Ask::Labels { .. }) => " the Ticket's labels ".to_string(),
+        _ => " the session asks ".to_string(),
     };
     let frame = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -509,6 +511,9 @@ fn facts(s: &Screen, q: &Question, at: &str) -> String {
                 facts.push(format!("left for this session: {}", left.join(", ")));
             }
         }
+        About::Asked(Ask::Labels { .. }) => {
+            facts.push("no session yet: the Ticket waits for your answer".to_string())
+        }
         _ => facts.push(format!("the session in pane {at} waits for your answer")),
     }
     facts.retain(|fact| !fact.is_empty());
@@ -562,6 +567,18 @@ fn sends(s: &Screen, q: &Question, at: &str) -> (String, String) {
                 (None, _) => park(),
             }
         }
+        About::Asked(Ask::Labels { options }) => match options.get(q.cursor) {
+            Some(_) if q.cursor + 1 == options.len() => does(format!(
+                "parks the Ticket where it is; /continue @{id} asks again"
+            )),
+            Some(option) => match option.strip_prefix("remove ") {
+                Some(label) => does(format!("runs bd label remove {id} {label}")),
+                None => does(format!(
+                    "keeps {option}: runs bd label remove {id} for each other label asked about"
+                )),
+            },
+            None => (String::new(), String::new()),
+        },
         _ => (String::new(), String::new()),
     }
 }

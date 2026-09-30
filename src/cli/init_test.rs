@@ -1,12 +1,14 @@
 use super::run;
+use crate::orchestrator::app::{self, Label};
 use crate::orchestrator::write_file;
 use crate::setup::setup_test::snapshot;
-use crate::setup::TYPESAFE_SKILL;
-use crate::skills::manifest::{Manifest, JOBS};
+use crate::setup::{DEFAULT_TEMPLATE, LABELS, PR_TEMPLATE, TEMPLATE_DIR, TYPESAFE_SKILL};
+use crate::skills::manifest::{Installed, Manifest, JOBS};
 use crate::skills::SKILLS;
 use crate::tempdir::TempDir;
 use crate::tools::fake::Fake;
 use crate::tools::Tools;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
@@ -24,8 +26,8 @@ pub(super) fn prepared_repo() -> TempDir {
 }
 
 /// Every prerequisite there, and a git whose every clone holds every job's
-/// default and the typesafe-ai skill at its path in the source, at commit
-/// abc123.
+/// default, the typesafe-ai skill and every shipped label's skills at their
+/// paths in the source, at commit abc123; terraform 1.9.0 is on PATH.
 pub(super) fn ok_tools() -> Arc<Fake> {
     Fake::new(ok)
 }
@@ -35,20 +37,25 @@ fn ok(_: &Path, argv: &[&str]) -> Result<String, String> {
     if argv.contains(&"clone") {
         let dest = Path::new(argv.last().unwrap());
         let defaults = JOBS.iter().map(|(_, suggestions)| suggestions[0]);
-        for (name, source) in defaults.chain([TYPESAFE_SKILL]) {
-            if let Some(path) = source.splitn(3, '/').nth(2) {
-                // named upstream without the prefix
-                let name = name.strip_prefix("orqa-").unwrap_or(name);
-                write_file(
-                    &dest.join(path).join("SKILL.md"),
-                    &format!("---\nname: {name}\n---\n"),
-                );
+        let labels = LABELS.iter().flat_map(|label| label.sources());
+        for (name, source) in defaults.chain([TYPESAFE_SKILL]).chain(labels) {
+            if source.is_empty() {
+                continue; // built in, or Shipped
             }
+            // The skill's folder, the clone's root when the source is the repo alone.
+            let path = source.splitn(3, '/').nth(2).unwrap_or("");
+            // named upstream without the prefix
+            let name = name.strip_prefix("orqa-").unwrap_or(name);
+            write_file(
+                &dest.join(path).join("SKILL.md"),
+                &format!("---\nname: {name}\n---\n"),
+            );
         }
     }
     Ok(match argv.join(" ").as_str() {
         "git remote" => "origin\n",
         "git rev-parse HEAD" => "abc123\n",
+        "terraform version -json" => r#"{"terraform_version": "1.9.0"}"#,
         _ => "",
     }
     .to_string())
@@ -725,14 +732,15 @@ codex: outdated (v7) (/h/.codex/herdr-agent-state.sh)
             .filter(|c| c.starts_with("herdr integration install"))
             .collect()
     };
-    // The docs/agents setup, TypeSafe no, On call no, then the integrations: yes.
+    // The docs/agents setup, TypeSafe no, the labels, On call no, then the
+    // integrations: yes.
     let (repo, home) = (bare_repo(), TempDir::new());
     let tools = herdr(true);
     let (_, out) = init_with(
         repo.path(),
         home.path(),
         tools.clone(),
-        &["\n", "n\n", "\n", "\n"],
+        &["\n", "n\n", "\n", "\n", "\n"],
         "",
     );
     assert_eq!(
@@ -899,9 +907,9 @@ fn on_call(repo: &Path) -> Option<serde_json::Value> {
 /// readable only by you; enter alone, or nobody answering, keeps none.
 #[test]
 fn init_asks_on_call_and_keeps_the_moshi_token_readable_only_by_you() {
-    // The docs/agents setup, TypeSafe no, On call yes, the token.
+    // The docs/agents setup, TypeSafe no, the labels, On call yes, the token.
     let (repo, home) = (bare_repo(), TempDir::new());
-    let keys = ["\n", "n\n", "y\n", "moshi-tok\n"];
+    let keys = ["\n", "n\n", "\n", "y\n", "moshi-tok\n"];
     let (code, out) = init_keys(repo.path(), home.path(), &keys);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains(ON_CALL) && out.contains("› 2. No"), "{out}");
@@ -922,7 +930,7 @@ fn init_asks_on_call_and_keeps_the_moshi_token_readable_only_by_you() {
     );
 
     // Enter alone is no; nobody answering changes nothing.
-    for keys in [&["\n", "n\n", "\n"][..], &[][..]] {
+    for keys in [&["\n", "n\n", "\n", "\n"][..], &[][..]] {
         let (repo, home) = (bare_repo(), TempDir::new());
         let (code, out) = init_keys(repo.path(), home.path(), keys);
         assert_eq!(code, 0, "{out}");
@@ -959,4 +967,472 @@ fn a_committed_checkout_asks_on_call() {
     assert!(out.contains(COMMITTED), "{out}");
     assert!(out.contains(ON_CALL), "{out}");
     assert_eq!(on_call(repo.path()).unwrap()["token"], "moshi-tok");
+}
+
+/// config.json's labels, each entry read as the Orchestrator reads it.
+fn labels_in(repo: &Path) -> BTreeMap<String, Label> {
+    let (_, doc) = app::read(repo).unwrap();
+    app::labels(&doc)
+        .into_iter()
+        .map(|(name, label)| (name, label.unwrap()))
+        .collect()
+}
+
+/// The rule that opens init's labels step.
+const LABELS_STEP: &str = "TICKET LABELS";
+
+/// init lists the seven shipped labels checked, and nobody answering keeps
+/// them all: each gets its entry, kind, guidance, rows and Extra review as
+/// shipped, and its skills are installed through the manifest with their
+/// sources; the Shipped orqa-infra-review is not fetched.
+#[test]
+fn init_lists_the_shipped_labels_checked_and_writes_all_seven_unanswered() {
+    let repo = bare_repo();
+    let tools = ok_tools();
+    let (code, out) = run_with(&["init"], repo.path(), tools.clone(), &herdr_env);
+    assert_eq!(code, 0, "{out}");
+    let list = &out[out.find(LABELS_STEP).expect("no labels step")..];
+    for (i, label) in LABELS.iter().enumerate() {
+        let row = format!("[x] {}. {}", i + 1, label.name);
+        assert!(list.contains(&row), "{row:?} not listed:\n{list}");
+    }
+    let labels = labels_in(repo.path());
+    // The Ticket's list: each label's kind and its skills' sources, which
+    // the entry names as installed and the manifest holds pinned.
+    let manifest = Manifest::load(repo.path()).unwrap();
+    let shipped: [(&str, &str, &[&str]); 7] = [
+        ("fe", "area", &["anthropics/skills/skills/frontend-design"]),
+        (
+            "be",
+            "area",
+            &["addyosmani/agent-skills/skills/api-and-interface-design"],
+        ),
+        (
+            "db",
+            "area",
+            &[
+                "supabase/agent-skills/skills/supabase-postgres-best-practices",
+                "addyosmani/agent-skills/skills/deprecation-and-migration",
+            ],
+        ),
+        (
+            "security",
+            "area",
+            &["addyosmani/agent-skills/skills/security-and-hardening"],
+        ),
+        (
+            "architecture",
+            "area",
+            &[
+                "mattpocock/skills/skills/engineering/codebase-design",
+                "mattpocock/skills/skills/engineering/domain-modeling",
+            ],
+        ),
+        (
+            "infra",
+            "area",
+            &[
+                "hashicorp/agent-skills/plugins/terraform/skills/terraform-style-guide",
+                "hashicorp/agent-skills/plugins/terraform/skills/terraform-test",
+                "docker/skills/skills/docker-build-strategies",
+                "lukasniessen/kubernetes-skill",
+                "addyosmani/agent-skills/skills/ci-cd-and-automation",
+                "github/awesome-copilot/skills/github-actions-hardening",
+            ],
+        ),
+        ("codex-review", "modifier", &[]),
+    ];
+    for (name, kind, sources) in shipped {
+        assert_eq!(labels[name].kind, kind, "{name}");
+        let installed: Vec<String> = labels[name]
+            .skills
+            .iter()
+            .map(|skill| {
+                let skill = &manifest.skills[skill];
+                assert_eq!(skill.commit, "abc123", "{name}");
+                let repo = skill.repo.strip_prefix("https://github.com/").unwrap();
+                format!("{repo}/{}", skill.path)
+                    .trim_end_matches('/')
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(installed, sources, "{name}");
+    }
+    assert_eq!(labels.len(), shipped.len());
+    for (name, said) in [
+        ("fe", "screenshots of every changed screen"),
+        ("be", "status codes"),
+        ("db", "rollback"),
+        ("security", "Open question"),
+        ("architecture", "ADR"),
+        ("infra", "mock_provider"),
+    ] {
+        assert!(
+            labels[name].guidance.contains(said),
+            "{name}: {}",
+            labels[name].guidance
+        );
+    }
+    assert_eq!(labels["fe"].skills, ["orqa-frontend-design"]);
+    assert_eq!(labels["db"].extra_review, app::ExtraReview::default());
+    let security = &labels["security"].extra_review;
+    assert_eq!(
+        (
+            security.skill.as_str(),
+            security.position.as_str(),
+            security.debate
+        ),
+        ("orqa-security-review", "every", true)
+    );
+    assert_eq!(
+        manifest.skills["orqa-security-review"],
+        Installed {
+            repo: "https://github.com/getsentry/skills".to_string(),
+            path: "skills/security-review".to_string(),
+            commit: "abc123".to_string(),
+            ..Installed::default()
+        }
+    );
+    let infra = &labels["infra"].extra_review;
+    assert_eq!(
+        (infra.skill.as_str(), infra.position.as_str(), infra.debate),
+        ("orqa-infra-review", "every", false)
+    );
+    let codex = &labels["codex-review"];
+    assert_eq!(codex.rows["review"]["app"], "codex");
+    assert!(codex.skills.is_empty() && codex.guidance.is_empty());
+    for (name, _, _) in shipped.iter().filter(|(name, ..)| *name != "codex-review") {
+        assert!(labels[*name].rows.is_empty(), "{name}");
+    }
+    for label in LABELS {
+        for (name, _) in label.skills {
+            assert!(
+                out.contains(&format!("init: installed {name}, for orqa:{}", label.name)),
+                "{out}"
+            );
+        }
+    }
+    assert!(manifest.skills["orqa-infra-review"].shipped);
+    assert!(
+        !tools
+            .calls()
+            .iter()
+            .any(|call| call.contains("clone") && call.contains("infra-review")),
+        "{:?}",
+        tools.calls()
+    );
+}
+
+/// Unchecking db (its digit toggles it) writes the six others and installs
+/// no db skill.
+#[test]
+fn unchecking_db_writes_six_entries_and_installs_no_db_skill() {
+    let (repo, home) = (bare_repo(), TempDir::new());
+    let tools = ok_tools();
+    // The docs/agents setup, TypeSafe no, then db off and enter.
+    let keys = ["\n", "n\n", "3", "\r"];
+    let (code, out) = init_with(repo.path(), home.path(), tools.clone(), &keys, "");
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("[ ] 3. db"), "{out}");
+    let labels = labels_in(repo.path());
+    assert_eq!(labels.len(), 6, "{:?}", labels.keys());
+    assert!(!labels.contains_key("db"));
+    let manifest = Manifest::load(repo.path()).unwrap();
+    for name in [
+        "orqa-supabase-postgres-best-practices",
+        "orqa-deprecation-and-migration",
+    ] {
+        assert!(
+            !manifest.skills.contains_key(name),
+            "{name} installed:\n{out}"
+        );
+    }
+    assert!(
+        manifest.skills.contains_key("orqa-frontend-design"),
+        "{out}"
+    );
+    assert!(
+        !tools.calls().iter().any(|call| call.contains("supabase")),
+        "{:?}",
+        tools.calls()
+    );
+    assert!(!repo.path().join(TEMPLATE_DIR).join("db.md").exists());
+    assert!(repo.path().join(TEMPLATE_DIR).join("fe.md").exists());
+}
+
+/// A second init keeps an entry the user edited, and fetches nothing again.
+#[test]
+fn a_second_init_keeps_an_entry_the_user_edited() {
+    let (repo, home) = (bare_repo(), TempDir::new());
+    init_keys(repo.path(), home.path(), &[]);
+    let config = repo.path().join(".orqadence/config.json");
+    let mut doc: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+    doc["labels"]["fe"]["guidance"] = "ours".into();
+    doc["labels"]["fe"]["skills"] = serde_json::json!([]);
+    fs::write(&config, doc.to_string()).unwrap();
+    let tools = ok_tools();
+    // The gate: refresh; TypeSafe no; the labels all checked.
+    let keys = ["2", "n\n", "\r"];
+    let (code, out) = init_with(repo.path(), home.path(), tools.clone(), &keys, "");
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains(LABELS_STEP), "{out}");
+    let labels = labels_in(repo.path());
+    assert_eq!(labels.len(), 7);
+    assert_eq!(labels["fe"].guidance, "ours");
+    assert!(labels["fe"].skills.is_empty());
+    assert!(
+        !tools.calls().iter().any(|call| call.contains("clone")),
+        "{:?}",
+        tools.calls()
+    );
+}
+
+/// A checkout whose settings are committed is not asked about the labels.
+#[test]
+fn a_committed_checkout_does_not_ask_the_labels() {
+    let (repo, home) = (prepared_repo(), TempDir::new());
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"typesafe": false}"#,
+    );
+    let (_, out) = init_with(
+        repo.path(),
+        home.path(),
+        committed_tools(),
+        &["\n", "\r"],
+        "",
+    );
+    assert!(!out.contains(LABELS_STEP), "{out}");
+    assert!(labels_in(repo.path()).is_empty());
+}
+
+/// A label skill whose fetch fails leaves init unready: the preflight names
+/// the missing Extra review skill, as it does a label's own skill.
+#[test]
+fn a_failed_label_skill_fetch_fails_the_preflight() {
+    let repo = bare_repo();
+    let tools = Fake::new(|dir, argv| {
+        if argv.contains(&"clone") && argv.iter().any(|arg| arg.contains("getsentry")) {
+            return Err("clone failed".to_string());
+        }
+        ok(dir, argv)
+    });
+    let (code, out) = run_with(&["init"], repo.path(), tools, &herdr_env);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("init: orqa-security-review not installed"),
+        "{out}"
+    );
+    assert!(
+        out.contains("preflight: orqa:security's skill orqa-security-review is missing"),
+        "{out}"
+    );
+    assert!(!out.contains("ready"), "{out}");
+}
+
+/// The checklist draws with auto-wrap off, so a row wider than the terminal
+/// stays one row, and turns it back on when it folds, even unanswered.
+#[test]
+fn the_labels_checklist_turns_auto_wrap_off_and_back_on() {
+    let repo = bare_repo();
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "{out}");
+    let list = &out[out.find(LABELS_STEP).expect("no labels step")..];
+    let (off, row, on) = (
+        list.find("\x1b[?7l").unwrap(),
+        list.find("[x] 1. fe").unwrap(),
+        list.find("\x1b[?7h").unwrap(),
+    );
+    assert!(off < row && row < on, "{list:?}");
+    assert!(list.contains("✓ fe, be, db"), "{list:?}");
+}
+
+/// The six Area labels and each one's section heading.
+const AREA_SECTIONS: [(&str, &str); 6] = [
+    ("fe", "## Screenshots"),
+    ("be", "## Contract"),
+    ("db", "## Schema"),
+    ("security", "## Threat note"),
+    ("architecture", "## Structure"),
+    ("infra", "## Infra"),
+];
+
+/// An empty repo gets the generic default, create-pr's five sections with
+/// a comment each, and one file per checked Area label: the default plus
+/// the label's section. codex-review gets none. Each Area entry's
+/// pr_template names its file.
+#[test]
+fn init_writes_the_default_template_and_one_per_checked_area_label() {
+    let repo = bare_repo();
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "{out}");
+    let default = read(repo.path(), DEFAULT_TEMPLATE);
+    assert_eq!(default, PR_TEMPLATE);
+    let labels = labels_in(repo.path());
+    for (name, heading) in AREA_SECTIONS {
+        let path = format!("{TEMPLATE_DIR}/{name}.md");
+        let text = read(repo.path(), &path);
+        assert!(text.starts_with(&default), "{path}:\n{text}");
+        let section = &text[default.len()..];
+        assert!(section.trim_start().starts_with(heading), "{path}:\n{text}");
+        assert_eq!(section.matches("<!--").count(), 1, "{path}:\n{text}");
+        assert_eq!(labels[name].pr_template, format!("{name}.md"), "{name}");
+        assert!(out.contains(&format!("init: wrote {path}")), "{out}");
+    }
+    assert!(!repo
+        .path()
+        .join(TEMPLATE_DIR)
+        .join("codex-review.md")
+        .exists());
+    assert_eq!(labels["codex-review"].pr_template, "");
+    assert!(out.contains("PR TEMPLATES"), "{out}");
+}
+
+/// init over a repo with a default template of its own, answered `answer`
+/// to the PR TEMPLATES question: the docs/agents setup, TypeSafe no, the
+/// labels all checked, then the answer.
+fn init_own_default(repo: &Path, answer: &str) -> String {
+    let home = TempDir::new();
+    let keys = ["\n", "n\n", "\r", answer];
+    let (code, out) = init_with(repo, home.path(), ok_tools(), &keys, "");
+    assert_eq!(code, 0, "{out}");
+    out
+}
+
+/// A repo's own default template, answered yes, frames the label
+/// templates and stays where it is.
+#[test]
+fn a_repos_own_default_template_answered_yes_frames_the_label_templates() {
+    let repo = bare_repo();
+    write_file(&repo.path().join(DEFAULT_TEMPLATE), "ours\n");
+    let out = init_own_default(repo.path(), "y\n");
+    assert!(
+        out.contains("Make .github/pull_request_template.md the default"),
+        "{out}"
+    );
+    assert_eq!(read(repo.path(), DEFAULT_TEMPLATE), "ours\n");
+    let labels = labels_in(repo.path());
+    for (name, heading) in AREA_SECTIONS {
+        let text = read(repo.path(), &format!("{TEMPLATE_DIR}/{name}.md"));
+        assert_eq!(text.lines().next(), Some("ours"), "{name}:\n{text}");
+        assert!(text.contains(heading), "{name}:\n{text}");
+        assert_eq!(labels[name].pr_template, format!("{name}.md"), "{name}");
+    }
+}
+
+/// Answered no, nothing is written and every label uses the repo's
+/// template: pr_template stays empty. A default at the root is found too.
+#[test]
+fn a_repos_own_default_template_answered_no_writes_nothing() {
+    let repo = bare_repo();
+    write_file(&repo.path().join("PULL_REQUEST_TEMPLATE.md"), "ours\n");
+    let out = init_own_default(repo.path(), "n\n");
+    assert!(
+        out.contains("Make PULL_REQUEST_TEMPLATE.md the default"),
+        "{out}"
+    );
+    assert!(!repo.path().join(TEMPLATE_DIR).exists());
+    assert!(!repo.path().join(DEFAULT_TEMPLATE).exists());
+    let labels = labels_in(repo.path());
+    for (name, _) in AREA_SECTIONS {
+        assert_eq!(labels[name].pr_template, "", "{name}");
+    }
+}
+
+/// With only a template directory, init asks which of its files is the
+/// default: the one picked is copied to the default's path and frames the
+/// label templates; the directory's own files are untouched.
+#[test]
+fn a_template_directory_alone_asks_which_is_the_default() {
+    let repo = bare_repo();
+    let dir = repo.path().join(TEMPLATE_DIR);
+    write_file(&dir.join("bug.md"), "bug\n");
+    write_file(&dir.join("feature.md"), "feature\n");
+    let out = init_own_default(repo.path(), "2");
+    assert!(
+        out.contains("Which of these is the default template?"),
+        "{out}"
+    );
+    for option in ["1. bug.md", "2. feature.md", "3. none"] {
+        assert!(out.contains(option), "{option}:\n{out}");
+    }
+    assert_eq!(read(repo.path(), DEFAULT_TEMPLATE), "feature\n");
+    assert_eq!(
+        read(repo.path(), &format!("{TEMPLATE_DIR}/bug.md")),
+        "bug\n"
+    );
+    assert_eq!(
+        read(repo.path(), &format!("{TEMPLATE_DIR}/feature.md")),
+        "feature\n"
+    );
+    let labels = labels_in(repo.path());
+    for (name, heading) in AREA_SECTIONS {
+        let text = read(repo.path(), &format!("{TEMPLATE_DIR}/{name}.md"));
+        assert!(
+            text.starts_with("feature\n") && text.contains(heading),
+            "{name}:\n{text}"
+        );
+        assert_eq!(labels[name].pr_template, format!("{name}.md"), "{name}");
+    }
+    assert!(
+        out.contains(&format!("init: wrote {DEFAULT_TEMPLATE}")),
+        "{out}"
+    );
+}
+
+/// none picked writes the generic default, as an empty repo gets.
+#[test]
+fn a_template_directory_alone_answered_none_gets_the_generic_default() {
+    let repo = bare_repo();
+    write_file(&repo.path().join(TEMPLATE_DIR).join("bug.md"), "bug\n");
+    init_own_default(repo.path(), "3");
+    let default = read(repo.path(), DEFAULT_TEMPLATE);
+    assert!(default.starts_with("## What\n"), "{default}");
+    let fe = read(repo.path(), &format!("{TEMPLATE_DIR}/fe.md"));
+    assert!(
+        fe.starts_with(&default) && fe.contains("## Screenshots"),
+        "{fe}"
+    );
+}
+
+/// An existing <name>.md in the directory is kept and mapped, and offered
+/// as the default; nobody answering picks none, the generic one. The rest
+/// are built.
+#[test]
+fn an_existing_label_template_is_kept_and_mapped() {
+    let repo = bare_repo();
+    write_file(&repo.path().join(TEMPLATE_DIR).join("fe.md"), "mine\n");
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("Which of these"), "{out}");
+    assert_eq!(read(repo.path(), DEFAULT_TEMPLATE), PR_TEMPLATE);
+    assert_eq!(
+        read(repo.path(), &format!("{TEMPLATE_DIR}/fe.md")),
+        "mine\n"
+    );
+    let labels = labels_in(repo.path());
+    assert_eq!(labels["fe"].pr_template, "fe.md");
+    for (name, heading) in AREA_SECTIONS.iter().filter(|(name, _)| *name != "fe") {
+        let text = read(repo.path(), &format!("{TEMPLATE_DIR}/{name}.md"));
+        assert!(text.contains(heading), "{name}:\n{text}");
+        assert_eq!(labels[*name].pr_template, format!("{name}.md"), "{name}");
+    }
+}
+
+/// A second init overwrites no template and asks nothing about them.
+#[test]
+fn a_second_init_overwrites_no_template() {
+    let (repo, home) = (bare_repo(), TempDir::new());
+    init_keys(repo.path(), home.path(), &[]);
+    let github = repo.path().join(".github");
+    write_file(&github.join("pull_request_template.md"), "edited\n");
+    write_file(&github.join("PULL_REQUEST_TEMPLATE/fe.md"), "edited fe\n");
+    let before = snapshot(&github);
+    // The gate: refresh; TypeSafe no; the labels all checked.
+    let (code, out) = init_keys(repo.path(), home.path(), &["2", "n\n", "\r"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("PR TEMPLATES"), "{out}");
+    assert_eq!(snapshot(&github), before);
+    assert_eq!(labels_in(repo.path())["fe"].pr_template, "fe.md");
 }

@@ -15,9 +15,9 @@ use crate::orchestrator::app::{Check, APPS};
 use crate::setup;
 use crate::shell::brand::{BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT};
 use crate::shell::config::{
-    distinct, family_label, floor_name, job_name, job_said, short, short_commit, Field, Listing,
-    Pick, Settings, Typing, APPS_PAGE, FLOORS, ON_CALL_PAGE, ROWS, RUN_PAGE, SECTIONS, SKILLS_PAGE,
-    SKILL_ROWS, TYPESAFE_PAGE,
+    distinct, family_label, floor_name, job_name, job_said, label_line, short, short_commit, Field,
+    Listing, Pick, Settings, Typing, APPS_PAGE, FLOORS, LABELS_PAGE, LABEL_FIELDS, ON_CALL_PAGE,
+    ROWS, RUN_PAGE, SECTIONS, SKILLS_PAGE, SKILL_ROWS, TYPESAFE_PAGE,
 };
 use crate::shell::Screen;
 use crate::skills::manifest::NONE;
@@ -61,6 +61,7 @@ pub(super) fn config(f: &mut Frame, s: &Screen) {
         (_, Some(pick)) => pick_lines(st, pick, width),
         _ if st.section == APPS_PAGE => apps_page(st, width),
         _ if st.section == SKILLS_PAGE => skills_page(st, width),
+        _ if st.section == LABELS_PAGE => labels_page(st, width),
         _ if st.section == TYPESAFE_PAGE => typesafe_page(s, st, width),
         _ if st.section == RUN_PAGE => run_page(st, width),
         _ if st.section == ON_CALL_PAGE => on_call_page(s, st, width),
@@ -224,6 +225,83 @@ fn skills_page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
             let used = vec![(format!("← {}", jobs.join(", ")), fg(CYAN))];
             lines.extend(wrap_spans(used, width, "    ", "      ", fg(CYAN)));
         }
+    }
+    (lines, at)
+}
+
+/// The Labels page: each label of config.json as orqa:<name>, area or
+/// modifier, and what it carries, an unreadable entry's error in red; or
+/// the open label's own page.
+fn labels_page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
+    if let Some(name) = &st.label {
+        return label_page(st, name, width);
+    }
+    let about = "A bd label orqa:<name> on a Ticket changes how it runs: the skills and guidance its code-editing Stages get, its rows, its PR template and an Extra review.";
+    let mut lines = head("Labels", st.labels_summary(), about, width);
+    lines.push(Line::default());
+    let mut at = 0;
+    let labels = st.labels();
+    if labels.is_empty() {
+        lines.push(Line::from(Span::styled("  none: a adds one", fg(MUTED))));
+    }
+    for (i, (name, label)) in labels.iter().enumerate() {
+        let value = match label {
+            Ok(label) => {
+                vec![
+                    Span::styled(pad(&label.kind, 9), fg(TEXT)),
+                    Span::styled(cut(&label_line(label), width.saturating_sub(31)), fg(MUTED)),
+                ]
+            }
+            Err(err) => vec![Span::styled(cut(err, width.saturating_sub(22)), fg(RED))],
+        };
+        let label = pad(&format!("orqa:{name}"), 20);
+        item(
+            &mut lines,
+            &mut at,
+            st.open && i == st.setting,
+            label,
+            value,
+            width,
+        );
+    }
+    (lines, at)
+}
+
+/// A label's own page: area or modifier, its skills and guidance; one
+/// that cannot be read shows why instead.
+fn label_page(st: &Settings, name: &str, width: usize) -> (Vec<Line<'static>>, usize) {
+    let mut lines = vec![
+        Line::from(Span::styled(format!("orqa:{name}"), bold(CYAN))),
+        Line::default(),
+    ];
+    let label = match st.label_of(name) {
+        Ok(label) => label,
+        Err(err) => {
+            let err = vec![(format!("{err}: mend it in config.json"), fg(RED))];
+            lines.extend(wrap_spans(err, width, "  ", "  ", fg(RED)));
+            return (lines, 0);
+        }
+    };
+    let room = width.saturating_sub(15);
+    let or_none = |text: String| match text.is_empty() {
+        true => vec![Span::styled("none", fg(MUTED))],
+        false => vec![Span::styled(cut(&text, room), fg(TEXT))],
+    };
+    let values = [
+        vec![Span::styled(label.kind, bold(TEXT))],
+        or_none(label.skills.join(", ")),
+        or_none(label.guidance),
+    ];
+    let mut at = 0;
+    for (i, (field, value)) in LABEL_FIELDS.iter().zip(values).enumerate() {
+        item(
+            &mut lines,
+            &mut at,
+            i == st.setting,
+            pad(field, 12),
+            value,
+            width,
+        );
     }
     (lines, at)
 }
@@ -438,10 +516,19 @@ fn hint(st: &Settings) -> &'static str {
         } => "Enter probes and saves · Esc cancels",
         _ if st.typing.is_some() => "Enter saves · Esc cancels",
         _ if st.listing.is_some() => "↑↓ move · Space ticks · Enter installs · Esc back",
+        _ if st.pick.as_ref().is_some_and(|p| p.field == Field::Skills) => {
+            "↑↓ move · type to filter · Enter toggles · Esc back"
+        }
         _ if st.pick.is_some() => "↑↓ move · type to filter · Enter picks · Esc back",
         _ if st.open && st.section == APPS_PAGE => "↑↓ App · ← or Esc back",
         _ if st.open && st.section == SKILLS_PAGE => {
             "↑↓ skill · Enter toggles yours · a add · u update · U update all · d remove · ← back"
+        }
+        _ if st.open && st.section == LABELS_PAGE && st.label.is_some() => {
+            "↑↓ field · Enter changes · Space toggles area/modifier · ← or Esc back"
+        }
+        _ if st.open && st.section == LABELS_PAGE => {
+            "↑↓ label · a add · e edit · r rename · d delete · ← or Esc back"
         }
         _ if st.open && st.section == 0 => {
             "↑↓ setting · Enter changes · Space toggles · ← or Esc back"
@@ -499,6 +586,12 @@ fn pipeline(s: &Screen, st: &Settings, height: u16, width: usize) -> Vec<Line<'s
         format!("{} installed", st.skills()),
         false,
         st.section == SKILLS_PAGE,
+    ));
+    lines.push(row(
+        "Labels",
+        st.labels_summary(),
+        false,
+        st.section == LABELS_PAGE,
     ));
     lines.push(row(
         "TypeSafe",
@@ -561,7 +654,7 @@ fn value(st: &Settings, row: usize, field: Field) -> Vec<Span<'static>> {
             _ => vec![shown],
         },
         Field::App => vec![shown],
-        Field::Same => vec![],
+        Field::Same | Field::Skills => vec![],
         Field::Job(_) if v == NONE => {
             vec![shown, muted("  the Stage skill's own instructions".into())]
         }
@@ -625,12 +718,13 @@ fn check_lines(lines: &mut Vec<Line<'static>>, checks: Vec<Check>, width: usize)
 fn pick_lines(st: &Settings, pick: &Pick, width: usize) -> (Vec<Line<'static>>, usize) {
     let row = &ROWS[pick.row];
     let on = match (pick.field, st.pick_app(pick)) {
-        (Field::App, _) | (_, None) => String::new(),
+        (Field::App | Field::Skills, _) | (_, None) => String::new(),
         (_, Some(app)) if pick.app.is_some() => format!(" · {} (new App)", app.name),
         (_, Some(app)) => format!(" · {}", app.name),
     };
     let title = match pick.field {
         Field::Job(j) => format!("{}{on}", job_said(j)),
+        Field::Skills => format!("orqa:{} skills", st.label.as_deref().unwrap_or_default()),
         field => format!("{} {}{on}", row.name, field.name()),
     };
     let mut lines = vec![Line::from(vec![
@@ -643,7 +737,7 @@ fn pick_lines(st: &Settings, pick: &Pick, width: usize) -> (Vec<Line<'static>>, 
     // a job's current pick is marked ' ✓' after its mark
     let (name_w, tick) = match pick.field {
         Field::App => (12, 1),
-        Field::Job(_) => (24, 3),
+        Field::Job(_) | Field::Skills => (24, 3),
         _ => (18, 1),
     };
     let marks = entries.iter().filter_map(|e| e.mark);
@@ -766,6 +860,21 @@ fn foot_lines(s: &Screen, st: &Settings, width: usize) -> Vec<Line<'static>> {
                 text.clone(),
                 format!("A whole number of at least 1, or nothing for the default {}, saved at once; the next tick reads it.", on_call::DEFAULT_MINUTES),
             ),
+            Typing::LabelName => (
+                "label › ".to_string(),
+                text.clone(),
+                "The part after orqa:, as bd takes a label: no spaces or commas. Written at once as an area label, uncommitted, to .orqadence/config.json.".to_string(),
+            ),
+            Typing::Rename(old) => (
+                format!("rename orqa:{old} › "),
+                text.clone(),
+                "The new name after orqa:. The entry moves with its PR template mapping; the template file keeps its name.".to_string(),
+            ),
+            Typing::Guidance => (
+                "guidance › ".to_string(),
+                text.clone(),
+                "One line for its code-editing Stages; nothing clears it. Saved at once, uncommitted, to .orqadence/config.json.".to_string(),
+            ),
         };
         let (help, color) = st.note.clone().unwrap_or((help, MUTED));
         return vec![
@@ -786,6 +895,7 @@ fn foot_lines(s: &Screen, st: &Settings, width: usize) -> Vec<Line<'static>> {
         (None, Some(pick)) => (st.note_of(pick.row, pick.field), MUTED),
         (None, None) if st.open && st.section == APPS_PAGE => (st.app_note(st.setting), MUTED),
         (None, None) if st.open && st.section == SKILLS_PAGE => (st.skills_note(st.setting), MUTED),
+        (None, None) if st.open && st.section == LABELS_PAGE => (st.labels_note(), MUTED),
         (None, None) if st.open && st.section == TYPESAFE_PAGE => {
             (st.typesafe_note(st.setting), MUTED)
         }

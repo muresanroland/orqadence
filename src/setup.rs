@@ -1,7 +1,8 @@
 //! The thin 'orqa init': tidies a checkout an older init set up, installs
 //! the shipped skills and every job's default in .orqadence/skills, offers
 //! bd init, the docs/agents setup and herdr's integrations, keeps TypeSafe
-//! on or off and its key, asks On call's Moshi token, and preflights the Target repo.
+//! on or off and its key, the shipped Ticket labels and their skills, asks
+//! On call's Moshi token, and preflights the Target repo.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -12,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line as Row, Span};
+use serde_json::{json, Value};
 
 use crate::on_call;
 use crate::orchestrator::app::{self, APPS};
@@ -342,10 +344,11 @@ fn unhide_links(repo: &Path) -> io::Result<()> {
 }
 
 /// The rest of init once the skills are in: bd, the docs/agents setup,
-/// TypeSafe, every job's default, On call, and herdr's integrations. A
-/// `committed` checkout keeps the committed TypeSafe switch and picks, and
-/// is asked only for the key, when TypeSafe is on and no key is set or
-/// kept; On call is per person, asked on every checkout.
+/// TypeSafe, every job's default, the Ticket labels, On call, and herdr's
+/// integrations. A `committed` checkout keeps the committed TypeSafe
+/// switch, picks and labels, and is asked only for the key, when TypeSafe
+/// is on and no key is set or kept; On call is per person, asked on every
+/// checkout.
 pub(crate) fn set_up(
     repo: &Path,
     tools: &dyn Tools,
@@ -361,6 +364,7 @@ pub(crate) fn set_up(
     if !committed {
         let typesafe = ask_typesafe(repo, &env_key, out, input, tty)?;
         install_defaults(repo, tools, typesafe, out)?;
+        ask_labels(repo, tools, out, input, tty)?;
     } else if app::typesafe(repo) && env_key.trim().is_empty() && !repo.join(KEY_FILE).exists() {
         ask_typesafe_key(repo, out, input, tty)?;
     }
@@ -602,7 +606,6 @@ pub(crate) fn install_defaults(
     typesafe: bool,
     out: &mut dyn Write,
 ) -> io::Result<()> {
-    let manifest = Manifest::load(repo).map_err(io::Error::other)?;
     let defaults = JOBS.iter().map(|(job, suggestions)| {
         (
             suggestions[0],
@@ -610,7 +613,22 @@ pub(crate) fn install_defaults(
         )
     });
     let typesafe = typesafe.then(|| (TYPESAFE_SKILL, "for TypeSafe".to_string()));
-    for ((name, source), what) in defaults.chain(typesafe) {
+    install_missing(repo, tools, out, defaults.chain(typesafe))
+}
+
+/// Installs each ((name, source), what) the manifest lacks, in
+/// .orqadence/skills, pinned by its commit. An empty source is built into
+/// an App or Shipped: nothing to install. A failure is said and init goes
+/// on: the preflight names what is missing.
+fn install_missing<'a>(
+    repo: &Path,
+    tools: &dyn Tools,
+    out: &mut dyn Write,
+    wanted: impl Iterator<Item = ((&'a str, &'a str), String)>,
+) -> io::Result<()> {
+    for ((name, source), what) in wanted {
+        // Loaded each time: add saves the manifest.
+        let manifest = Manifest::load(repo).map_err(io::Error::other)?;
         if source.is_empty() || manifest.skills.contains_key(name) {
             continue;
         }
@@ -620,6 +638,322 @@ pub(crate) fn install_defaults(
         }
     }
     Ok(())
+}
+
+/// A shipped Ticket label: the entry init writes to config.json's labels,
+/// and where its skills come from.
+pub(crate) struct ShippedLabel {
+    /// The part after orqa:.
+    pub(crate) name: &'static str,
+    /// "area" or "modifier".
+    pub(crate) kind: &'static str,
+    /// (installed name, manifest source), installed as the jobs' defaults are.
+    pub(crate) skills: &'static [(&'static str, &'static str)],
+    /// The line the code-editing Stages get as Label guidance.
+    pub(crate) guidance: &'static str,
+    /// The Extra review, every Round: (skill, source, debated). An empty
+    /// source is a Shipped skill.
+    pub(crate) review: Option<(&'static str, &'static str, bool)>,
+    /// Row overrides: (row, field, value).
+    pub(crate) rows: &'static [(&'static str, &'static str, &'static str)],
+    /// The section its PR template adds to the default: a heading and a
+    /// comment saying what goes there. Empty for a Modifier label.
+    pub(crate) pr_section: &'static str,
+}
+
+impl ShippedLabel {
+    /// Its PR template's file name in TEMPLATE_DIR.
+    fn template_file(&self) -> String {
+        format!("{}.md", self.name)
+    }
+
+    /// Every skill the label needs from a source, its Extra review's too:
+    /// (installed name, manifest source).
+    pub(crate) fn sources(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+        let review = self.review.map(|(name, source, _)| (name, source));
+        self.skills.iter().copied().chain(review)
+    }
+
+    /// The entry as config.json's labels holds it: rows and extra_review
+    /// only where set.
+    fn entry(&self) -> Value {
+        let skills: Vec<&str> = self.skills.iter().map(|(name, _)| *name).collect();
+        let mut entry = json!({"kind": self.kind, "skills": skills, "guidance": self.guidance});
+        for (row, field, value) in self.rows {
+            entry["rows"][row][field] = json!(value);
+        }
+        if let Some((skill, _, debate)) = self.review {
+            entry["extra_review"] = json!({"skill": skill, "position": "every", "debate": debate});
+        }
+        entry
+    }
+}
+
+/// The shipped Ticket labels (harness-bsg.7, .8 and .21), in the order
+/// init lists them. The human_merge of security, db and infra is the
+/// Agent merge Epic's (harness-72t.2).
+pub(crate) const LABELS: [ShippedLabel; 7] = [
+    ShippedLabel {
+        name: "fe",
+        kind: "area",
+        skills: &[("orqa-frontend-design", "anthropics/skills/skills/frontend-design")],
+        guidance: "Front-end work: the pull request carries screenshots of every changed screen.",
+        review: None,
+        rows: &[],
+        pr_section: "## Screenshots\n<!-- every changed screen after the change, attached; light and dark only if theming changed; a short video for a new flow; if the app cannot start, why -->\n",
+    },
+    ShippedLabel {
+        name: "be",
+        kind: "area",
+        skills: &[("orqa-api-and-interface-design", "addyosmani/agent-skills/skills/api-and-interface-design")],
+        guidance: "Keep the contract explicit: requests, responses, status codes, compatibility.",
+        review: None,
+        rows: &[],
+        pr_section: "## Contract\n<!-- before and after request and response, status codes, a compatibility note; an oasdiff changelog if there is an OpenAPI spec and oasdiff is installed, else by hand from the diff; a Mermaid sequenceDiagram if async -->\n",
+    },
+    ShippedLabel {
+        name: "db",
+        kind: "area",
+        skills: &[
+            ("orqa-supabase-postgres-best-practices", "supabase/agent-skills/skills/supabase-postgres-best-practices"),
+            ("orqa-deprecation-and-migration", "addyosmani/agent-skills/skills/deprecation-and-migration"),
+        ],
+        guidance: "Expand/contract migrations; say what locks or rewrites a table; give a rollback path.",
+        review: None,
+        rows: &[],
+        pr_section: "## Schema\n<!-- a Mermaid erDiagram of the touched tables; locks, backfill, rollback; squawk output if it is installed, else by hand from the diff -->\n",
+    },
+    ShippedLabel {
+        name: "security",
+        kind: "area",
+        skills: &[("orqa-security-and-hardening", "addyosmani/agent-skills/skills/security-and-hardening")],
+        guidance: "An item of security-and-hardening's Ask First tier (a new auth flow, a new PII category, CORS, upload handlers, rate limits) goes in the Plan under Open question.",
+        review: Some(("orqa-security-review", "getsentry/skills/skills/security-review", true)),
+        rows: &[],
+        pr_section: "## Threat note\n<!-- the trust boundary touched; the Extra review Findings fixed and declined, with the reason -->\n",
+    },
+    ShippedLabel {
+        name: "architecture",
+        kind: "area",
+        skills: &[
+            ("orqa-codebase-design", "mattpocock/skills/skills/engineering/codebase-design"),
+            ("orqa-domain-modeling", "mattpocock/skills/skills/engineering/domain-modeling"),
+        ],
+        guidance: "Record a decision as an ADR and a new term in CONTEXT.md.",
+        review: None,
+        rows: &[],
+        pr_section: "## Structure\n<!-- a Mermaid flowchart or sequenceDiagram of the new structure; the ADR if one was written -->\n",
+    },
+    ShippedLabel {
+        name: "infra",
+        kind: "area",
+        skills: &[
+            ("orqa-terraform-style-guide", "hashicorp/agent-skills/plugins/terraform/skills/terraform-style-guide"),
+            ("orqa-terraform-test", "hashicorp/agent-skills/plugins/terraform/skills/terraform-test"),
+            ("orqa-docker-build-strategies", "docker/skills/skills/docker-build-strategies"),
+            ("orqa-kubernetes-skill", "lukasniessen/kubernetes-skill"),
+            ("orqa-ci-cd-and-automation", "addyosmani/agent-skills/skills/ci-cd-and-automation"),
+            ("orqa-github-actions-hardening", "github/awesome-copilot/skills/github-actions-hardening"),
+        ],
+        guidance: "Validate with offline commands only: never terraform plan, apply, destroy, state, import, force-unlock or workspace, init with a backend, kubectl or helm against a cluster, docker push or login, gh secret, gh variable or gh workflow run, or anything that reads a secret; terraform test with mock_provider only. Anything needing a credential is filed as Manual work. Commit a .terraform.lock.hcl change only when the Ticket adds or upgrades a provider, regenerated with terraform providers lock for every platform the lock file lists; without network, file it as Manual work.",
+        review: Some(("orqa-infra-review", "", false)),
+        rows: &[],
+        pr_section: "## Infra\n<!-- a Mermaid diagram of the resources touched; replacement risks; rollout and rollback; the offline checks' output; Manual work for plan and apply; never a plan -->\n",
+    },
+    ShippedLabel {
+        name: "codex-review",
+        kind: "modifier",
+        skills: &[],
+        guidance: "",
+        review: None,
+        rows: &[("review", "app", "codex")],
+        pr_section: "",
+    },
+];
+
+/// The generic default PR template init writes: create-pr's five sections,
+/// each with a one-line comment saying what goes there.
+pub(crate) const PR_TEMPLATE: &str = "## What
+<!-- one or two sentences, concrete -->
+
+## Why
+<!-- the Ticket or decision behind it -->
+
+## Impact
+<!-- what a reviewer should look at: migrations, public API or contract changes, security- or auth-adjacent paths, anything the checks do not cover -->
+
+## Testing
+<!-- the exact commands run and their result -->
+
+## Ticket
+<!-- the issue this closes -->
+";
+
+/// Where the label templates go.
+pub(crate) const TEMPLATE_DIR: &str = ".github/PULL_REQUEST_TEMPLATE";
+/// Where init writes the default template.
+pub(crate) const DEFAULT_TEMPLATE: &str = ".github/pull_request_template.md";
+
+/// The repo's default PR template, where GitHub reads one: .github, the
+/// root or docs, named pull_request_template.md in any case.
+fn default_template(repo: &Path) -> Option<PathBuf> {
+    [".github", "", "docs"].into_iter().find_map(|dir| {
+        fs::read_dir(repo.join(dir))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name().is_some_and(|name| {
+                    name.to_string_lossy()
+                        .eq_ignore_ascii_case("pull_request_template.md")
+                })
+            })
+    })
+}
+
+/// Writes the PR templates for the checked Area labels: the default at
+/// .github/pull_request_template.md and TEMPLATE_DIR/<name>.md, the default
+/// plus the label's section, for each label without one. Nothing existing
+/// is overwritten, and nothing is asked when every file is there. A
+/// default the repo has, wherever GitHub reads it, is asked to frame the
+/// label templates (yes, or nobody answering; no writes nothing) and stays
+/// where it is; with only a template directory, one of its files is
+/// picked as the default and copied there, or none, which writes the
+/// generic one.
+fn write_pr_templates(
+    repo: &Path,
+    labels: &[&ShippedLabel],
+    out: &mut dyn Write,
+    input: &mut dyn Read,
+    tty: bool,
+) -> io::Result<()> {
+    let dir = repo.join(TEMPLATE_DIR);
+    let missing: Vec<&ShippedLabel> = labels
+        .iter()
+        .copied()
+        .filter(|label| !dir.join(label.template_file()).exists())
+        .collect();
+    let default = default_template(repo);
+    if default.is_some() && missing.is_empty() {
+        return Ok(());
+    }
+    step(out, named("PR TEMPLATES"))?;
+    let frame = match default {
+        Some(path) => {
+            let name = path.strip_prefix(repo).unwrap_or(&path).display();
+            let question =
+                format!("Make {name} the default and add the label templates built from it?");
+            if yes(out, input, tty, &question, true)? == Some(false) {
+                return Ok(());
+            }
+            fs::read_to_string(&path)?
+        }
+        None => {
+            let mut files: Vec<String> = fs::read_dir(&dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.ends_with(".md"))
+                .collect();
+            files.sort();
+            let picked = if files.is_empty() {
+                None
+            } else {
+                let options: Vec<&str> = files.iter().map(String::as_str).chain(["none"]).collect();
+                let none = files.len();
+                let question = "Which of these is the default template?";
+                raw(tty, || {
+                    choose(out, &mut *input, question, &options, (none, none), "")
+                })?
+                .filter(|&i| i != none)
+                .map(|i| fs::read_to_string(dir.join(&files[i])))
+                .transpose()?
+            };
+            let frame = picked.unwrap_or_else(|| PR_TEMPLATE.to_string());
+            let at = repo.join(DEFAULT_TEMPLATE);
+            fs::create_dir_all(at.parent().unwrap())?;
+            fs::write(&at, &frame)?;
+            write!(out, "init: wrote {DEFAULT_TEMPLATE}\r\n")?;
+            frame
+        }
+    };
+    let gap = if frame.ends_with('\n') { "\n" } else { "\n\n" };
+    for label in missing {
+        let name = label.template_file();
+        fs::create_dir_all(&dir)?;
+        fs::write(dir.join(&name), format!("{frame}{gap}{}", label.pr_section))?;
+        write!(out, "init: wrote {TEMPLATE_DIR}/{name}\r\n")?;
+    }
+    Ok(())
+}
+
+/// The shipped Ticket labels as a checklist, all checked: the user unchecks
+/// the ones this repo will not use. Each checked label gets its entry in
+/// config.json's labels, unless it has one already, which is never
+/// overwritten, and its skills installed through the Skill manifest. An
+/// unchecked label's entry, if any, is left too: init never deletes one.
+/// Nobody answering keeps every label. Then the PR templates
+/// (write_pr_templates), and each checked Area label whose template file
+/// is there gets it as its pr_template, unless the entry names one.
+fn ask_labels(
+    repo: &Path,
+    tools: &dyn Tools,
+    out: &mut dyn Write,
+    input: &mut dyn Read,
+    tty: bool,
+) -> io::Result<()> {
+    step(out, named("TICKET LABELS"))?;
+    note(
+        out,
+        "an orqa:<name> bd label on a Ticket loads the label's skills and guidance into the Stages that write its code",
+    )?;
+    let rows: Vec<(&str, String)> = LABELS
+        .iter()
+        .map(|label| {
+            let skills: Vec<&str> = label
+                .skills
+                .iter()
+                .map(|(name, _)| name.strip_prefix(manifest::PREFIX).unwrap_or(name))
+                .collect();
+            (label.name, skills.join(", "))
+        })
+        .collect();
+    let question = "Which Ticket labels will this repo use?";
+    let checked = raw(tty, || checklist(out, input, question, &rows))?;
+    let (path, mut doc) = app::read_object(repo).map_err(io::Error::other)?;
+    if !matches!(doc["labels"], Value::Null | Value::Object(_)) {
+        return Err(io::Error::other("config.json's labels is not an object"));
+    }
+    let picked = || LABELS.iter().zip(&checked).filter(|(_, on)| **on);
+    for (label, _) in picked() {
+        if doc["labels"][label.name].is_null() {
+            doc["labels"][label.name] = label.entry();
+        }
+    }
+    let areas: Vec<&ShippedLabel> = picked()
+        .map(|(label, _)| label)
+        .filter(|label| label.kind == "area")
+        .collect();
+    write_pr_templates(repo, &areas, out, input, tty)?;
+    // The mapping follows the file, written now or kept: an entry's own
+    // non-empty pr_template stays, and a broken entry is not init's to fix.
+    for label in areas {
+        let file = label.template_file();
+        let entry = &mut doc["labels"][label.name];
+        let unset = entry["pr_template"].as_str().unwrap_or_default().is_empty();
+        if entry.is_object() && unset && repo.join(TEMPLATE_DIR).join(&file).exists() {
+            entry["pr_template"] = json!(file);
+        }
+    }
+    app::write(&path, &doc).map_err(io::Error::other)?;
+    let wanted = picked().flat_map(|(label, _)| {
+        label
+            .sources()
+            .map(move |skill| (skill, format!("for orqa:{}", label.name)))
+    });
+    install_missing(repo, tools, out, wanted)
 }
 
 /// TypeSafe's opt-in, kept on or off in config.json. TYPESAFE_API_KEY
@@ -939,19 +1273,8 @@ fn choose(
     };
     let (mut sel, mut pressed) = (default, false);
     draw(out, sel)?;
-    while let Some(key) = next_byte(input) {
+    while let Some(key) = next_key(input) {
         pressed = true;
-        let key = match key {
-            // An arrow key: ESC [ A to D, flagged 0x80; others skipped whole.
-            0x1b if next_byte(input) == Some(b'[') => loop {
-                match next_byte(input) {
-                    Some(b @ 0x40..=0x7e) => break b | 0x80,
-                    Some(_) => {}
-                    None => break 0,
-                }
-            },
-            key => key,
-        };
         match key {
             0xc1 | 0xc4 | b'k' => sel = sel.saturating_sub(1), // up, left
             0xc2 | 0xc3 | b'j' => sel = (sel + 1).min(options.len() - 1), // down, right
@@ -982,17 +1305,127 @@ fn next_byte(input: &mut dyn Read) -> Option<u8> {
     matches!(input.read(&mut byte), Ok(1)).then_some(byte[0])
 }
 
-/// Folds the menu into one line naming the choice.
-fn done(out: &mut dyn Write, options: &[&str], sel: usize) -> io::Result<Option<usize>> {
-    let answer = Span::styled(format!("  ✓ {}", options[sel]), GREEN);
+/// The next key: a byte, or an arrow key (ESC [ A to D) flagged 0x80;
+/// any other escape sequence is skipped whole and reads as 0.
+fn next_key(input: &mut dyn Read) -> Option<u8> {
+    Some(match next_byte(input)? {
+        0x1b if next_byte(input) == Some(b'[') => loop {
+            match next_byte(input) {
+                Some(b @ 0x40..=0x7e) => break b | 0x80,
+                Some(_) => {}
+                None => break 0,
+            }
+        },
+        key => key,
+    })
+}
+
+/// Puts `question` over a checklist of (name, detail) options, every one
+/// checked: the arrow keys (or j/k) move the cursor, space toggles its
+/// option, a digit toggles the nth, and enter submits. Ctrl-C, Ctrl-D or q
+/// keep the default, every option checked, as does the input ending before
+/// any key; a key and then the end submits what is checked. Answered, the
+/// list folds into a line naming the checked options.
+fn checklist(
+    out: &mut dyn Write,
+    input: &mut dyn Read,
+    question: &str,
+    options: &[(&str, String)],
+) -> io::Result<Vec<bool>> {
     write!(
         out,
-        "\x1b[{}A\r\x1b[J{}\r\n",
+        "{}\r\n",
+        paint(vec![Span::styled(format!("  {question}"), TEXT).bold()])
+    )?;
+    let hint = format!(
+        "  ↑↓ move · space or 1-{} toggle · enter choose",
+        options.len()
+    );
+    let width = options
+        .iter()
+        .map(|(name, _)| name.len())
+        .max()
+        .unwrap_or(0)
+        + 2;
+    let draw = |out: &mut dyn Write, sel: usize, on: &[bool]| -> io::Result<()> {
+        for (i, (name, detail)) in options.iter().enumerate() {
+            let (mark, style) = if i == sel {
+                ("›", Style::new().fg(PURPLE).bold())
+            } else {
+                (" ", Style::new().fg(TEXT))
+            };
+            let tick = if on[i] { "x" } else { " " };
+            let row = vec![
+                Span::styled(
+                    format!("  {mark} [{tick}] {}. {name:<width$}", i + 1),
+                    style,
+                ),
+                Span::styled(detail.clone(), MUTED),
+            ];
+            write!(out, "{}\x1b[K\r\n", paint(row))?;
+        }
+        write!(
+            out,
+            "{}\x1b[K\r",
+            paint(vec![Span::styled(hint.as_str(), MUTED)])
+        )?;
+        out.flush()
+    };
+    let (mut sel, mut on) = (0, vec![true; options.len()]);
+    // Auto-wrap off, so a row wider than the terminal stays one row and the
+    // moves up count right; fold turns it back on.
+    write!(out, "\x1b[?7l")?;
+    draw(out, sel, &on)?;
+    while let Some(key) = next_key(input) {
+        match key {
+            0xc1 | 0xc4 | b'k' => sel = sel.saturating_sub(1), // up, left
+            0xc2 | 0xc3 | b'j' => sel = (sel + 1).min(options.len() - 1), // down, right
+            b'\r' | b'\n' => break,
+            3 | 4 | b'q' => {
+                on = vec![true; options.len()];
+                break;
+            }
+            b' ' => on[sel] = !on[sel],
+            // ponytail: one digit each, as choose has; letters past 9 if a list ever grows.
+            digit if digit > b'0' && usize::from(digit - b'0') <= options.len() => {
+                on[usize::from(digit - b'0') - 1] ^= true;
+            }
+            _ => {}
+        }
+        write!(out, "\x1b[{}A", options.len())?; // back over the list and redraw it
+        draw(out, sel, &on)?;
+    }
+    let said = options
+        .iter()
+        .zip(&on)
+        .filter(|(_, on)| **on)
+        .map(|((name, _), _)| *name)
+        .collect::<Vec<_>>()
+        .join(", ");
+    fold(
+        out,
         options.len(),
+        if said.is_empty() { "none" } else { &said },
+    )?;
+    Ok(on)
+}
+
+/// Folds the menu into one line naming the choice.
+fn done(out: &mut dyn Write, options: &[&str], sel: usize) -> io::Result<Option<usize>> {
+    fold(out, options.len(), options[sel])?;
+    Ok(Some(sel))
+}
+
+/// Goes back up `lines` rows, clears them and what is below, and says the
+/// answer in one line; auto-wrap back on, as the checklist turns it off.
+fn fold(out: &mut dyn Write, lines: usize, said: &str) -> io::Result<()> {
+    let answer = Span::styled(format!("  ✓ {said}"), GREEN);
+    write!(
+        out,
+        "\x1b[{lines}A\r\x1b[J\x1b[?7h{}\r\n",
         paint(vec![answer])
     )?;
-    out.flush()?;
-    Ok(Some(sel))
+    out.flush()
 }
 
 /// Takes out of the file at path each line that is one of lines, trimmed,
@@ -1070,6 +1503,24 @@ pub(crate) fn preflight(
             }
         }
         Err(err) => missing.push(err),
+    }
+    // Each configured label's skills and Extra review skill, which init's
+    // install may have failed to fetch; a broken entry is app::checks'.
+    let labels = app::read(repo)
+        .map(|(_, doc)| app::labels(&doc))
+        .unwrap_or_default();
+    for (name, label) in labels {
+        let Ok(label) = label else {
+            continue;
+        };
+        let review = Some(label.extra_review.skill).filter(|skill| !skill.is_empty());
+        for skill in label.skills.into_iter().chain(review) {
+            if !found.iter().any(|(have, _)| *have == skill) {
+                missing.push(format!(
+                    "orqa:{name}'s skill {skill} is missing: orqa init installs a shipped label's"
+                ));
+            }
+        }
     }
     // A row that cannot be read is the Orchestrator's to refuse; the
     // Review's fallback, unset, runs nothing.
