@@ -1,5 +1,5 @@
 ---
-name: stage-moderate
+name: orqa-stage-moderate
 description: Orqadence Debate Stage. A neutral Moderator runs a debate between side A and side B over a Ticket's Findings and writes the Verdict. Run by the Orqadence Orchestrator, not by hand.
 ---
 
@@ -57,7 +57,7 @@ curl -sS --max-time 60 https://api.typesafe.ai/v1/systemone \
   -d @<Run directory>/typesafe-F<n>.json
 ```
 
-The body is a `noul` question, "Should this finding be fixed before the change merges?", over `{diff, finding, argument_for, argument_against}`, where `argument_for` is the fix side's latest argument and `argument_against` the skip side's. Build the JSON file with `jq -n --rawfile` or a short script so quoting cannot break it. If you do not know the exact request shape, load the typesafe-ai skill if it is installed, or read the TypeSafe docs, before the first call rather than guessing.
+The body is a `noul` question, "Should this finding be fixed before the change merges?", over `{diff, finding, argument_for, argument_against}`, where `argument_for` is the fix side's latest argument and `argument_against` the skip side's. Build the JSON file with `jq -n --rawfile` or a short script so quoting cannot break it. If you do not know the exact request shape, load the orqa-typesafe-ai skill if it is installed, or read the TypeSafe docs, before the first call rather than guessing.
 
 A score of 0.5 or more is **fix**, below is **skip**, settled `typesafe <score>`. If `TYPESAFE_API_KEY` is empty, or the call fails or times out twice, the Finding is **skip**, settled `flagged: TypeSafe unreachable`.
 

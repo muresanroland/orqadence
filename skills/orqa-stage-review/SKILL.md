@@ -1,5 +1,5 @@
 ---
-name: stage-review
+name: orqa-stage-review
 description: Orqadence Review Stage. Reviews a Ticket's branch against its base and writes Findings to a result file. Run by the Orqadence Orchestrator, not by hand.
 ---
 

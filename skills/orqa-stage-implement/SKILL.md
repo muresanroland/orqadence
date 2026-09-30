@@ -1,5 +1,5 @@
 ---
-name: stage-implement
+name: orqa-stage-implement
 description: Orqadence Implement Stage. Implements one beads Ticket in its worktree and writes a result file. Run by the Orqadence Orchestrator, not by hand.
 ---
 

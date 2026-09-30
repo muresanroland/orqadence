@@ -13,7 +13,7 @@ use crate::on_call;
 use crate::orchestrator::app::{self, APPS};
 use crate::orchestrator::state::{self, local_dir};
 use crate::skills::manifest::{self, Installed, Manifest, FILES, JOBS, LINKS};
-use crate::skills::{stage_skill, SKILLS};
+use crate::skills::{stage_skill, CREATE_PR, SKILLS};
 use crate::tools::Tools;
 
 /// The record of every skill file init wrote, path to the text it wrote:
@@ -155,12 +155,9 @@ pub(crate) fn committed(repo: &Path, tools: &dyn Tools) -> bool {
 /// refresh only the files unedited since install (by the record), or
 /// overwrite everything; force is overwrite unasked. A Shipped skill the
 /// repo has in its own .agents/skills moves into .orqadence/skills first,
-/// where the gate decides it. A Target repo that already has a create-pr
-/// skill of its own is asked what to do with the shipped one, since the Fix
-/// Stage runs whichever /create-pr the repo ends up with; later inits keep
-/// that answer from the record, and a `committed` checkout is not asked:
-/// its committed skills hold the answer. `input` answers the questions, in raw mode
-/// when `tty`. .orqadence-local is made first, whatever the answers: orqa
+/// where the gate decides it, and every skill an init installed before
+/// manifest::PREFIX is renamed to its name with it, the record too.
+/// `input` answers the questions, in raw mode when `tty`. .orqadence-local is made first, whatever the answers: orqa
 /// opens once it exists; a TypeSafe key an older init kept in .orqadence
 /// moves into it, readable only by the user, or is deleted when one is
 /// already there, since that one wins.
@@ -168,7 +165,6 @@ pub(crate) fn install_skills(
     repo: &Path,
     home: &Path,
     force: bool,
-    committed: bool,
     out: &mut dyn Write,
     input: &mut dyn Read,
     tty: bool,
@@ -199,6 +195,18 @@ pub(crate) fn install_skills(
     }
     manifest::settle(repo, home, &manifest)?;
     unhide_links(repo)?;
+    let renamed = manifest::prefix(repo, &mut manifest)?;
+    for (old, new) in &renamed {
+        if let Some(wrote) = record.remove(&record_key(old)) {
+            record.insert(record_key(new), manifest::renamed(&wrote, new));
+        }
+        write!(out, "init: renamed {old} to {new}\r\n")?;
+    }
+    // Saved now: a cancel at the gate must not leave the folders renamed
+    // and the manifest naming the old ones.
+    if !renamed.is_empty() {
+        save_skills(repo, &record, &manifest)?;
+    }
     let mode = if force {
         Mode::Overwrite
     } else if installed(&repo.join(FILES)) {
@@ -219,23 +227,7 @@ pub(crate) fn install_skills(
     } else {
         Mode::Fresh
     };
-    // The name the shipped create-pr is installed under; "" keeps the repo's own.
-    let recorded = ["create-pr", "orqadence-create-pr"]
-        .into_iter()
-        .find(|name| record.contains_key(&record_key(name)));
-    let pr = match (recorded, mode) {
-        (Some(name), _) => name,
-        (None, _) if !has_skill(repo, "create-pr") => "create-pr",
-        (None, Mode::Fresh) if !committed => ask_about_create_pr(out, input, tty)?,
-        (None, _) => "", // the repo's own, kept on the first init
-    };
-    // (shipped name, installed name, body); the repo's own create-pr is left out.
-    let skills: Vec<(&str, &str, &str)> = SKILLS
-        .iter()
-        .filter(|&&(skill, _)| skill != "create-pr" || !pr.is_empty())
-        .map(|&(skill, body)| (skill, if skill == "create-pr" { pr } else { skill }, body))
-        .collect();
-    for &(skill, name, body) in &skills {
+    for &(name, body) in SKILLS {
         let rel = record_key(name);
         manifest::move_in(repo, name)?;
         let dest = manifest::skill_dir(repo, name).join("SKILL.md");
@@ -252,39 +244,32 @@ pub(crate) fn install_skills(
             Mode::Refresh => record
                 .get(&rel)
                 .is_some_and(|wrote| fs::read_to_string(&dest).is_ok_and(|now| now == *wrote)),
-            Mode::Fresh => skill == "create-pr" || existing.is_none(),
+            Mode::Fresh => existing.is_none(),
         };
         if write {
-            let body = if name != skill {
-                // Installed beside the repo's own, so it needs its own name in the text.
-                body.replace("create-pr", name)
-            } else {
-                body.to_string()
-            };
             fs::create_dir_all(dest.parent().unwrap())?;
-            fs::write(&dest, &body)?;
-            record.insert(rel, body);
+            fs::write(&dest, body)?;
+            record.insert(rel, body.to_string());
             manifest.skills.insert(name.to_string(), shipped());
-        }
-        for link in manifest::links(repo, name).iter().filter(|link| {
-            name == pr
-                && fs::symlink_metadata(link).is_ok_and(|meta| !meta.file_type().is_symlink())
-        }) {
-            writeln!(
-                out,
-                "init: {} is its own copy, not a link: remove it to use the shipped skill",
-                link.display()
-            )?;
         }
         manifest::link(repo, name)?;
     }
+    save_skills(repo, &record, &manifest)?;
+    Ok(true)
+}
+
+/// Writes init's record and the Skill manifest.
+fn save_skills(
+    repo: &Path,
+    record: &BTreeMap<String, String>,
+    manifest: &Manifest,
+) -> io::Result<()> {
     fs::create_dir_all(repo.join(".orqadence"))?;
     fs::write(
         repo.join(RECORD),
-        serde_json::to_string_pretty(&record)? + "\n",
+        serde_json::to_string_pretty(record)? + "\n",
     )?;
-    manifest.save(repo).map_err(io::Error::other)?;
-    Ok(true)
+    manifest.save(repo).map_err(io::Error::other)
 }
 
 /// A Shipped skill's manifest entry.
@@ -301,14 +286,11 @@ fn record_key(name: &str) -> String {
     format!(".agents/skills/{name}/SKILL.md")
 }
 
-/// Whether a shipped skill is already installed in dir. create-pr does not
-/// count: a repo's own is not an install, and it has its own question.
-// ponytail: a repo that deleted every Stage skill but kept a shipped create-pr
-// reads as fresh; the record would tell, but nobody has done that.
+/// Whether a shipped skill is already installed in dir.
 fn installed(dir: &Path) -> bool {
     SKILLS
         .iter()
-        .any(|&(name, _)| name != "create-pr" && dir.join(name).join("SKILL.md").exists())
+        .any(|&(name, _)| dir.join(name).join("SKILL.md").exists())
 }
 
 /// Takes out the lines an older orqa put in .git/info/exclude to hide each
@@ -571,7 +553,7 @@ fn write_agent_docs(
 
 /// The typesafe-ai skill init installs when TypeSafe is on: (name, source).
 pub(crate) const TYPESAFE_SKILL: (&str, &str) =
-    ("typesafe-ai", "typesafe-ai/skills/skills/typesafe-ai");
+    ("orqa-typesafe-ai", "typesafe-ai/skills/skills/typesafe-ai");
 
 /// Installs every job's default the manifest lacks, and the typesafe-ai
 /// skill when TypeSafe is on, in .orqadence/skills, each pinned by its
@@ -769,28 +751,6 @@ fn raw<T>(tty: bool, f: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
     result
 }
 
-/// Asks what to do with the shipped create-pr when the Target repo already has
-/// one, and returns the name to install it under: "" keeps the repo's own and
-/// installs nothing. A silent stdin keeps the repo's own, so a
-/// non-interactive init never overwrites it.
-fn ask_about_create_pr(
-    out: &mut dyn Write,
-    input: &mut dyn Read,
-    tty: bool,
-) -> io::Result<&'static str> {
-    write!(
-        out,
-        "init: this repo already has a create-pr skill, and Orqadence ships its own.\r\n"
-    )?;
-    let options = [
-        "keep this repo's, install nothing",
-        "replace it with the shipped one",
-        "install the shipped one beside it, as orqadence-create-pr",
-    ];
-    let choice = raw(tty, || choose(out, input, &options, 0))?;
-    Ok(["", "create-pr", "orqadence-create-pr"][choice])
-}
-
 /// Draws a menu, the default selected, moves the selection on the arrow keys
 /// (or j/k), and returns the index the user submits with enter. A digit
 /// picks its option outright. A closed stdin leaves the selection; Ctrl-C
@@ -882,9 +842,11 @@ pub(crate) fn preflight(
         missing.push("no git remote: add one with 'git remote add origin <url>'".to_string());
     }
     let home = PathBuf::from(env("HOME"));
-    let found = manifest::list(repo, &home, tools);
-    if !found.iter().any(|(name, _)| name == "create-pr") {
-        missing.push("no create-pr skill: run 'orqa init' to install the shipped one".to_string());
+    let found = manifest::list(repo, &home, tools, manifest::personal(repo));
+    if !found.iter().any(|(name, _)| name == CREATE_PR) {
+        missing.push(format!(
+            "no {CREATE_PR} skill: run 'orqa init' to install the shipped one"
+        ));
     }
     // Each job's pick, but none, as the App its row runs on loads or has
     // built in one.
@@ -970,15 +932,6 @@ pub(crate) fn warnings(repo: &Path, tools: &dyn Tools) -> Vec<String> {
         );
     }
     warn
-}
-
-/// Whether the skill is in the repo's .agents/skills, .claude/skills or
-/// .orqadence/skills.
-fn has_skill(repo: &Path, name: &str) -> bool {
-    LINKS
-        .into_iter()
-        .chain([FILES])
-        .any(|dir| repo.join(dir).join(name).join("SKILL.md").exists())
 }
 
 /// Prints each missing prerequisite and returns the exit code.

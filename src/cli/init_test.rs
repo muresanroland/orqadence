@@ -37,6 +37,8 @@ fn ok(_: &Path, argv: &[&str]) -> Result<String, String> {
         let defaults = JOBS.iter().map(|(_, suggestions)| suggestions[0]);
         for (name, source) in defaults.chain([TYPESAFE_SKILL]) {
             if let Some(path) = source.splitn(3, '/').nth(2) {
+                // named upstream without the prefix
+                let name = name.strip_prefix("orqa-").unwrap_or(name);
                 write_file(
                     &dest.join(path).join("SKILL.md"),
                     &format!("---\nname: {name}\n---\n"),
@@ -118,15 +120,16 @@ fn a_fresh_init_puts_every_skill_in_orqadence_skills_linked_from_both() {
     for (name, _) in SKILLS {
         assert_placed(repo.path(), name, &format!("name: {name}"));
     }
-    assert_placed(repo.path(), "tdd", "name: tdd");
+    assert_placed(repo.path(), "orqa-tdd", "name: orqa-tdd");
     let manifest = Manifest::load(repo.path()).unwrap();
-    assert_eq!(manifest.skills["tdd"].commit, "abc123");
-    assert!(manifest.skills["stage-implement"].shipped);
+    assert_eq!(manifest.skills["orqa-tdd"].commit, "abc123");
+    assert!(manifest.skills["orqa-stage-implement"].shipped);
 }
 
 /// A checkout an older init set up in the repo location: the skills it
 /// installed in .agents/skills move to .orqadence/skills, edits and all,
-/// and leave links behind; the repo's own skill stays as it was.
+/// renamed to orqa-<name>, and leave links behind; the repo's own skill
+/// stays as it was.
 #[test]
 fn init_moves_the_skills_an_older_init_put_in_agents_skills() {
     let (repo, home) = (bare_repo(), TempDir::new());
@@ -148,8 +151,14 @@ fn init_moves_the_skills_an_older_init_put_in_agents_skills() {
     }
     let (code, out) = init_keys(repo.path(), home.path(), &[]);
     assert_eq!(code, 0, "init exit {code}:\n{out}");
-    assert_placed(repo.path(), "stage-fix", "edited stage-fix");
-    assert_placed(repo.path(), "tdd", "old");
+    assert_placed(repo.path(), "orqa-stage-fix", "edited stage-fix");
+    assert_placed(repo.path(), "orqa-tdd", "---\nname: orqa-tdd\n---\nold");
+    for old in ["stage-fix", "tdd"] {
+        for dir in [".agents/skills", ".claude/skills", ".orqadence/skills"] {
+            let at = repo.path().join(dir).join(old);
+            assert!(fs::symlink_metadata(&at).is_err(), "{at:?} left");
+        }
+    }
     let own = fs::symlink_metadata(agents.join("own")).unwrap();
     assert!(own.is_dir(), "the repo's own skill moved");
     assert_eq!(
@@ -174,7 +183,7 @@ fn init_copies_the_skills_an_older_init_put_at_user_level() {
     write_file(&mine, "---\nname: tdd\n---\nedited at user level");
     let (code, out) = init_keys(repo.path(), home.path(), &[]);
     assert_eq!(code, 0, "init exit {code}:\n{out}");
-    assert_placed(repo.path(), "tdd", "edited at user level");
+    assert_placed(repo.path(), "orqa-tdd", "edited at user level");
     assert_eq!(
         fs::read_to_string(&mine).unwrap(),
         "---\nname: tdd\n---\nedited at user level"
@@ -432,7 +441,9 @@ fn init_cancelled_at_the_skills_gate_still_makes_the_local_folder() {
 fn init_keeps_edited_skill_unless_forced() {
     let repo = prepared_repo();
     run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
-    let skill = repo.path().join(".orqadence/skills/stage-fix/SKILL.md");
+    let skill = repo
+        .path()
+        .join(".orqadence/skills/orqa-stage-fix/SKILL.md");
     let shipped = fs::read_to_string(&skill).unwrap();
     fs::write(&skill, "edited in the Target repo").unwrap();
 
@@ -475,31 +486,21 @@ fn preflight_names_each_missing_prerequisite() {
     }
 }
 
+/// orqa-create-pr goes beside a repo's own create-pr, unasked.
 #[test]
-fn init_installs_create_pr_and_keeps_the_repos_own() {
-    let fresh = prepared_repo();
-    fs::remove_dir_all(fresh.path().join(".agents/skills/create-pr")).unwrap();
-    let (code, _) = run_with(&["init"], fresh.path(), ok_tools(), &herdr_env);
-    assert_eq!(code, 0, "init exit {code}");
-    let got = fs::read_to_string(fresh.path().join(".orqadence/skills/create-pr/SKILL.md"));
+fn init_installs_orqa_create_pr_and_keeps_the_repos_own() {
+    let own = prepared_repo();
+    let (code, out) = run_with(&["init"], own.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "init exit {code}:\n{out}");
+    let got = fs::read_to_string(own.path().join(".orqadence/skills/orqa-create-pr/SKILL.md"));
     assert!(
         got.as_ref()
-            .is_ok_and(|got| got.contains("name: create-pr")),
-        "shipped create-pr not installed: {got:?}"
+            .is_ok_and(|got| got.contains("name: orqa-create-pr")),
+        "shipped orqa-create-pr not installed: {got:?}"
     );
-
-    // Nothing on stdin to answer with, so the repo's own create-pr stands.
-    let own = prepared_repo();
-    let (_, out) = run_with(&["init"], own.path(), ok_tools(), &herdr_env);
     let got = fs::read_to_string(own.path().join(".agents/skills/create-pr/SKILL.md")).unwrap();
-    assert_eq!(
-        got, "pr",
-        "init replaced the repo's own create-pr unasked: {got:?}"
-    );
-    assert!(
-        out.contains("already has a create-pr skill"),
-        "init did not ask:\n{out}"
-    );
+    assert_eq!(got, "pr", "init replaced the repo's own create-pr: {got:?}");
+    assert!(!out.contains("create-pr skill"), "init asked:\n{out}");
 }
 
 #[test]
@@ -596,7 +597,7 @@ fn typesafe_is_its_own_opt_in_kept_in_config_json() {
         assert_eq!(config["typesafe"], on, "{case}:\n{out}");
         let manifest = Manifest::load(repo.path()).unwrap();
         assert_eq!(
-            manifest.skills.contains_key("typesafe-ai"),
+            manifest.skills.contains_key("orqa-typesafe-ai"),
             on,
             "{case}:\n{out}"
         );
@@ -796,7 +797,6 @@ fn a_committed_checkout_asks_only_this_machines_questions() {
     let tools = committed_tools();
     let (_, out) = init_with(repo.path(), home.path(), tools.clone(), &[], "");
     assert_eq!(out.matches(COMMITTED).count(), 1, "{out}");
-    assert!(!out.contains("already has a create-pr skill"), "{out}");
     assert!(!out.contains("Use TypeSafe"), "{out}");
     assert!(
         !tools.calls().iter().any(|call| call.contains("clone")),
@@ -850,7 +850,9 @@ fn a_committed_checkout_with_typesafe_on_asks_for_the_key_unless_set() {
 fn cancel_at_the_gate_on_a_committed_checkout_goes_on_to_this_machines_steps() {
     let (repo, home) = (bare_repo(), TempDir::new());
     init_keys(repo.path(), home.path(), &[]);
-    let skill = repo.path().join(".orqadence/skills/stage-fix/SKILL.md");
+    let skill = repo
+        .path()
+        .join(".orqadence/skills/orqa-stage-fix/SKILL.md");
     fs::write(&skill, "edited").unwrap();
     fs::remove_dir_all(repo.path().join(".beads")).unwrap();
     let (_, out) = init_with(repo.path(), home.path(), committed_tools(), &["1"], "");
@@ -868,11 +870,7 @@ fn a_repo_whose_config_json_is_untracked_asks_every_question() {
     let tools = ok_tools();
     let (_, out) = init_with(repo.path(), home.path(), tools.clone(), &[], "");
     assert!(!out.contains(COMMITTED), "{out}");
-    for question in [
-        "already has a create-pr skill",
-        "docs/agents setup",
-        "Use TypeSafe",
-    ] {
+    for question in ["docs/agents setup", "Use TypeSafe"] {
         assert!(out.contains(question), "{question:?} not asked:\n{out}");
     }
     assert!(

@@ -74,9 +74,9 @@ pub fn run(
                     "init: this repo's Orqadence settings are committed; asking only this machine's questions"
                 );
             }
-            let asked = match tidied.and_then(|()| {
-                setup::install_skills(repo, &home, force, committed, out, &mut *input, tty)
-            }) {
+            let asked = match tidied
+                .and_then(|()| setup::install_skills(repo, &home, force, out, &mut *input, tty))
+            {
                 // Cancelled at the gate: nothing else runs, but for this
                 // machine's steps on a committed checkout.
                 Ok(false) if !committed => return 0,

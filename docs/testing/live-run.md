@@ -54,7 +54,7 @@ They belong to the earlier run, not to this cleanup.
 
 ### 0.3 Refresh the Stage skills
 
-The installed `stage-implement` skill predates plan mode: it lacks the "Plan
+The installed `orqa-stage-implement` skill predates plan mode: it lacks the "Plan
 first" section. The other shipped skills already match. From a Herdr shell pane
 (the preflight wants `HERDR_ENV=1`), in the target repo:
 
@@ -64,7 +64,6 @@ first" section. The other shipped skills already match. From a Herdr shell pane
 
 - At the gate ("the shipped skills are already installed here"), choose
   **overwrite everything with the shipped skills**.
-- If asked about create-pr, keep the shipped one; it is identical.
 - If asked for a TypeSafe key, press Enter when `TYPESAFE_API_KEY` is exported
   in the shell you will launch from. Otherwise paste it; init keeps it in
   `.orqadence/typesafe-key`.
@@ -72,7 +71,7 @@ first" section. The other shipped skills already match. From a Herdr shell pane
 The preflight should report nothing missing. Check the refresh landed:
 
 ```bash
-grep -c "Plan first" .orqadence/skills/stage-implement/SKILL.md   # 1, in the checkout location
+grep -c "Plan first" .orqadence/skills/orqa-stage-implement/SKILL.md   # 1, in the checkout location
 ```
 
 The leftover `start-work` skill is unused by the Shell. Leave it.

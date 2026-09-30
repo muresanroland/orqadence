@@ -17,7 +17,7 @@ use crate::shell::brand::{BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT}
 use crate::shell::config::{
     distinct, family_label, floor_name, job_name, job_said, short, short_commit, Field, Listing,
     Pick, Settings, Typing, APPS_PAGE, FLOORS, ON_CALL_PAGE, ROWS, RUN_PAGE, SECTIONS, SKILLS_PAGE,
-    TYPESAFE_PAGE,
+    SKILL_ROWS, TYPESAFE_PAGE,
 };
 use crate::shell::Screen;
 use crate::skills::manifest::NONE;
@@ -150,8 +150,9 @@ fn item(
     }
 }
 
-/// The Skills page: where the skills live, read-only, then each skill
-/// Orqadence installed with its source @ commit and the jobs using it.
+/// The Skills page: where the skills live, read-only, your personal
+/// skills' switch, then each skill Orqadence installed with its source @
+/// commit and the jobs using it.
 fn skills_page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
     let about = "The skills Orqadence installed, from their sources; the Skill manifest is .orqadence/skills.json.";
     let summary = format!("{} installed", st.skills());
@@ -176,6 +177,29 @@ fn skills_page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
         fg(MUTED),
     )];
     lines.extend(wrap_spans(linked, width, "    ", "      ", fg(MUTED)));
+    let personal = match st.personal {
+        true => vec![
+            Span::styled("on", fg(TEXT)),
+            Span::styled(", for you alone", fg(MUTED)),
+        ],
+        false => vec![
+            Span::styled("off", fg(TEXT)),
+            Span::styled(": Orqadence's and the repo's only", fg(MUTED)),
+        ],
+    };
+    item(
+        &mut lines,
+        &mut at,
+        selected(1),
+        pad("yours", 12),
+        personal,
+        width,
+    );
+    let yours = vec![(
+        "~/.claude/skills, ~/.agents/skills and Claude Code plugins".to_string(),
+        fg(MUTED),
+    )];
+    lines.extend(wrap_spans(yours, width, "    ", "      ", fg(MUTED)));
     lines.push(Line::default());
     for (i, name) in st.skill_names().into_iter().enumerate() {
         let skill = &st.manifest.skills[&name];
@@ -189,7 +213,7 @@ fn skills_page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
         item(
             &mut lines,
             &mut at,
-            selected(i + 1),
+            selected(i + SKILL_ROWS),
             pad(&name, 24),
             value,
             width,
@@ -417,7 +441,7 @@ fn hint(st: &Settings) -> &'static str {
         _ if st.pick.is_some() => "↑↓ move · type to filter · Enter picks · Esc back",
         _ if st.open && st.section == APPS_PAGE => "↑↓ App · ← or Esc back",
         _ if st.open && st.section == SKILLS_PAGE => {
-            "↑↓ skill · a add · u update · U update all · d remove · ← back"
+            "↑↓ skill · Enter toggles yours · a add · u update · U update all · d remove · ← back"
         }
         _ if st.open && st.section == 0 => {
             "↑↓ setting · Enter changes · Space toggles · ← or Esc back"

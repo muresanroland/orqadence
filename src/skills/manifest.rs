@@ -10,28 +10,42 @@ use std::iter;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
+use crate::on_call;
+use crate::skills::CREATE_PR;
 use crate::tempdir::TempDir;
 use crate::tools::Tools;
 
 const MANIFEST: &str = ".orqadence/skills.json";
 
+/// Before the name of every skill Orqadence installs, its folder's and its
+/// SKILL.md's: none shares a name with a skill of the user's own, which
+/// claude would run instead.
+pub(crate) const PREFIX: &str = "orqa-";
+
+/// The per-person switch, in on_call::CONFIG, that lets the jobs pick and
+/// the Stages load the user's personal skills: those at home and the
+/// Claude Code plugins'. Off, only Orqadence's, the repo's own and the
+/// Apps' built-in ones.
+const PERSONAL: &str = "personal_skills";
+
 /// The pick that opts a job out: its Stage skill follows its own instructions.
 pub(crate) const NONE: &str = "none";
 
 /// Each job a Delegate skill can do, with its suggestions, the default first:
-/// (skill name, source). An empty source is built into an App (its
-/// built_in): nothing to install.
+/// (skill name, source). A skill from a source is named as installed, with
+/// PREFIX; an empty source is built into an App (its built_in): nothing to
+/// install.
 pub(crate) const JOBS: &[(&str, &[(&str, &str)])] = &[
     (
         "test-first",
         &[
-            ("tdd", "mattpocock/skills/skills/engineering/tdd"),
+            ("orqa-tdd", "mattpocock/skills/skills/engineering/tdd"),
             (
-                "test-driven-development",
+                "orqa-test-driven-development",
                 "obra/superpowers/skills/test-driven-development",
             ),
             (
-                "test-driven-development",
+                "orqa-test-driven-development",
                 "addyosmani/agent-skills/skills/test-driven-development",
             ),
         ],
@@ -40,11 +54,11 @@ pub(crate) const JOBS: &[(&str, &[(&str, &str)])] = &[
         "self-review",
         &[
             (
-                "code-review",
+                "orqa-code-review",
                 "mattpocock/skills/skills/engineering/code-review",
             ),
             (
-                "requesting-code-review",
+                "orqa-requesting-code-review",
                 "obra/superpowers/skills/requesting-code-review",
             ),
         ],
@@ -52,9 +66,9 @@ pub(crate) const JOBS: &[(&str, &[(&str, &str)])] = &[
     (
         "working-mode",
         &[
-            ("ponytail", "DietrichGebert/ponytail/skills/ponytail"),
+            ("orqa-ponytail", "DietrichGebert/ponytail/skills/ponytail"),
             (
-                "karpathy-guidelines",
+                "orqa-karpathy-guidelines",
                 "multica-ai/andrej-karpathy-skills/skills/karpathy-guidelines",
             ),
         ],
@@ -62,9 +76,9 @@ pub(crate) const JOBS: &[(&str, &[(&str, &str)])] = &[
     (
         "prose",
         &[
-            ("caveman", "JuliusBrussee/caveman/skills/caveman"),
+            ("orqa-caveman", "JuliusBrussee/caveman/skills/caveman"),
             (
-                "caveman-commit",
+                "orqa-caveman-commit",
                 "JuliusBrussee/caveman/skills/caveman-commit",
             ),
         ],
@@ -75,7 +89,7 @@ pub(crate) const JOBS: &[(&str, &[(&str, &str)])] = &[
             (NONE, ""),
             ("review-agent", ""), // Codex's own
             (
-                "requesting-code-review",
+                "orqa-requesting-code-review",
                 "obra/superpowers/skills/requesting-code-review",
             ),
         ],
@@ -83,7 +97,7 @@ pub(crate) const JOBS: &[(&str, &[(&str, &str)])] = &[
     (
         "audit",
         &[(
-            "ponytail-review",
+            "orqa-ponytail-review",
             "DietrichGebert/ponytail/skills/ponytail-review",
         )],
     ),
@@ -91,11 +105,11 @@ pub(crate) const JOBS: &[(&str, &[(&str, &str)])] = &[
         "merge-conflicts",
         &[
             (
-                "resolving-merge-conflicts",
+                "orqa-resolving-merge-conflicts",
                 "mattpocock/skills/skills/engineering/resolving-merge-conflicts",
             ),
             (
-                "resolve-merge-conflicts",
+                "orqa-resolve-merge-conflicts",
                 "warpdotdev/common-skills/.agents/skills/resolve-merge-conflicts",
             ),
         ],
@@ -324,16 +338,19 @@ pub(crate) enum Added {
     Choose(Vec<String>),
 }
 
-/// Installs one skill from a source: the one named, or the only one there.
-/// The skill is copied to its folder in .orqadence/skills, linked as init
-/// does, and recorded with its source and commit. A source already
-/// installed is refused, and so is a same-named skill from anywhere else.
+/// Installs one skill from a source: the one named, with PREFIX or
+/// without, or the only one there. The skill is copied to its folder in
+/// .orqadence/skills under its name with PREFIX, which its SKILL.md takes
+/// too, linked as init does, and recorded with its source and commit;
+/// Installed gives that name. A source already installed is refused, and so
+/// is a same-named skill from anywhere else.
 pub(crate) fn add(
     repo: &Path,
     tools: &dyn Tools,
     source: &str,
     name: Option<&str>,
 ) -> Result<Added, String> {
+    let name = name.map(|name| name.strip_prefix(PREFIX).unwrap_or(name));
     let source = parse_source(source)?;
     let mut manifest = Manifest::load(repo)?;
     let (tmp, commit) = fetch(repo, tools, &source.repo, &source.git_ref)?;
@@ -364,6 +381,7 @@ pub(crate) fn add(
             ))
         }
     };
+    let name = format!("{PREFIX}{name}");
     if let Some((other, _)) = manifest
         .skills
         .iter()
@@ -427,13 +445,15 @@ pub(crate) fn add(
 }
 
 /// Fetches an installed skill's source again, replaces its folder with the
-/// skill at the recorded path, and records the new commit.
+/// skill at the recorded path, named as installed, and records the new
+/// commit.
 pub(crate) fn update(repo: &Path, tools: &dyn Tools, name: &str) -> Result<(), String> {
     let mut manifest = Manifest::load(repo)?;
     let skill = third_party(repo, &manifest, name)?.clone();
     let (clone, commit) = fetch(repo, tools, &skill.repo, &skill.git_ref)?;
+    let upstream = name.strip_prefix(PREFIX).unwrap_or(name);
     let from = in_clone(clone.path(), &skill.path)
-        .filter(|from| skill_in(from).as_deref() == Some(name))
+        .filter(|from| skill_in(from).as_deref() == Some(upstream))
         .ok_or_else(|| format!("{} no longer has {name} at {}", skill.repo, skill.path))?;
     // The new copy goes beside the old one first, and the old one is only
     // moved aside until the new one is in place, so that a copy or a rename
@@ -451,6 +471,7 @@ pub(crate) fn update(repo: &Path, tools: &dyn Tools, name: &str) -> Result<(), S
     }
     let _ = fs::remove_dir_all(&old);
     let swapped = copy_dir(&from, &fresh, false).and_then(|()| {
+        rename(&fresh, name)?;
         if at.exists() {
             fs::rename(&at, &old)?;
         }
@@ -666,10 +687,101 @@ fn safe_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-/// Copies the skill's folder into .orqadence/skills and links it there.
+/// Copies the skill's folder into .orqadence/skills, named name, and links
+/// it there.
 fn put(repo: &Path, from: &Path, name: &str) -> io::Result<()> {
     copy_dir(from, &skill_dir(repo, name), false)?;
+    rename(&skill_dir(repo, name), name)?;
     link(repo, name)
+}
+
+/// Gives the skill in dir the name name in its SKILL.md, as the agents
+/// name a skill by it. A SKILL.md that is a link is left: it leads out of
+/// .orqadence/skills.
+fn rename(dir: &Path, name: &str) -> io::Result<()> {
+    let path = dir.join("SKILL.md");
+    if !fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()) {
+        return Ok(());
+    }
+    fs::write(&path, renamed(&fs::read_to_string(&path)?, name))
+}
+
+/// A SKILL.md's text with name on its frontmatter's name line.
+pub(crate) fn renamed(skill: &str, name: &str) -> String {
+    let mut fences = 0;
+    skill
+        .split_inclusive('\n')
+        .map(|line| {
+            if line.trim() == "---" {
+                fences += 1;
+            }
+            match fences == 1 && line.starts_with("name:") {
+                true => format!("name: {name}\n"),
+                false => line.to_string(),
+            }
+        })
+        .collect()
+}
+
+/// Renames each skill the manifest names without PREFIX, as an init from
+/// before it left them, to its name with it: its folder in
+/// .orqadence/skills and the name in its SKILL.md, its links, its entry and
+/// each pick of it. The shipped create-pr an init put beside the repo's own
+/// as orqadence-create-pr becomes CREATE_PR. Gives each (old, new).
+pub(crate) fn prefix(repo: &Path, manifest: &mut Manifest) -> io::Result<Vec<(String, String)>> {
+    let old: Vec<String> = manifest
+        .skills
+        .keys()
+        .filter(|name| !name.starts_with(PREFIX) && safe_name(name))
+        .cloned()
+        .collect();
+    let mut renamed = Vec::new();
+    for name in old {
+        let new = match name.as_str() {
+            "orqadence-create-pr" => CREATE_PR.to_string(),
+            _ => format!("{PREFIX}{name}"),
+        };
+        if manifest.skills.contains_key(&new) {
+            continue;
+        }
+        let (from, to) = (skill_dir(repo, &name), skill_dir(repo, &new));
+        if own(repo, FILES)
+            && fs::symlink_metadata(&from).is_ok()
+            && fs::symlink_metadata(&to).is_err()
+        {
+            fs::rename(&from, &to)?;
+            rename(&to, &new)?;
+        }
+        for link in links(repo, &name) {
+            if fs::read_link(&link).is_ok_and(|to| to == target(&name)) {
+                fs::remove_file(link)?;
+            }
+        }
+        if to.exists() {
+            link(repo, &new)?;
+        }
+        let entry = manifest.skills.remove(&name).unwrap();
+        manifest.skills.insert(new.clone(), entry);
+        for pick in manifest.picks.values_mut().filter(|pick| **pick == name) {
+            *pick = new.clone();
+        }
+        renamed.push((name, new));
+    }
+    Ok(renamed)
+}
+
+/// Whether the user has turned on their personal skills (PERSONAL) for
+/// this checkout. A file missing or unreadable is off.
+pub(crate) fn personal(repo: &Path) -> bool {
+    fs::read_to_string(repo.join(on_call::CONFIG))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .is_some_and(|doc| doc[PERSONAL] == true)
+}
+
+/// Turns the user's personal skills on or off for this checkout.
+pub(crate) fn set_personal(repo: &Path, on: bool) -> io::Result<()> {
+    on_call::keep(repo, PERSONAL, serde_json::Value::Bool(on))
 }
 
 /// Links the skill in .orqadence/skills from .agents/skills and
@@ -820,24 +932,33 @@ pub(crate) fn plugins(repo: &Path, tools: &dyn Tools) -> Vec<(String, PathBuf)> 
 }
 
 /// Every skill the user has, each with where it is: the repo's, Orqadence's
-/// in .orqadence/skills, the user's, and the enabled Claude Code plugins',
-/// named plugin:skill. A skill is named by its folder, as the
-/// agents name it. A skill linked from .claude/skills to .agents/skills is
-/// listed at both places: Claude reads the one, codex the other. No home, no
-/// user's.
+/// in .orqadence/skills and, when personal (the user's switch), the user's
+/// and the enabled Claude Code plugins', named plugin:skill. A skill is
+/// named by its folder, as the agents name it. A skill linked from
+/// .claude/skills to .agents/skills is listed at both places: Claude reads
+/// the one, codex the other. No home, no user's.
 // ponytail: a plugin's skills are read from its skills/ folder only, not a
 // skills list in its plugin.json; read that when a plugin needs it.
-pub(crate) fn list(repo: &Path, home: &Path, tools: &dyn Tools) -> Vec<(String, PathBuf)> {
+pub(crate) fn list(
+    repo: &Path,
+    home: &Path,
+    tools: &dyn Tools,
+    personal: bool,
+) -> Vec<(String, PathBuf)> {
     let mut dirs = vec![
         repo.join(".agents/skills"),
         repo.join(".claude/skills"),
         repo.join(FILES),
     ];
-    if !home.as_os_str().is_empty() {
+    if personal && !home.as_os_str().is_empty() {
         dirs.extend([home.join(".claude/skills"), home.join(".agents/skills")]);
     }
     let dirs = dirs.into_iter().map(|dir| (String::new(), dir));
-    let plugin_dirs = plugins(repo, tools)
+    let plugins = match personal {
+        true => plugins(repo, tools),
+        false => Vec::new(),
+    };
+    let plugin_dirs = plugins
         .into_iter()
         .map(|(name, path)| (format!("{name}:"), path.join("skills")));
     let mut found = Vec::new();

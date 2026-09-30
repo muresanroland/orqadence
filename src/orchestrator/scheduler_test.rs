@@ -351,7 +351,10 @@ fn address_prompt_carries_the_pr_feedback_and_conflict_state() {
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let text = stage_prompt("---\nname: stage-address\n---\nAddress the PR.", &inputs);
+    let text = stage_prompt(
+        "---\nname: orqa-stage-address\n---\nAddress the PR.",
+        &inputs,
+    );
     for want in [
         "Address the PR.",
         "- PR: https://example.test/pr/9",

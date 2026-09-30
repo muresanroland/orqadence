@@ -41,11 +41,11 @@ const fn stage(name: &'static str, skill: &'static str, minutes: u64) -> Stage {
 }
 
 // The App each Stage runs on comes from .orqadence/config.json (app.rs).
-pub(crate) const IMPLEMENT: Stage = stage("implement", "stage-implement", 60);
-pub(crate) const REVIEW: Stage = stage("review", "stage-review", 30);
-pub(crate) const DEBATE: Stage = stage("debate", "stage-moderate", 30);
-pub(crate) const FIX: Stage = stage("fix", "stage-fix", 60);
-pub(crate) const ADDRESS: Stage = stage("address", "stage-address", 60);
+pub(crate) const IMPLEMENT: Stage = stage("implement", "orqa-stage-implement", 60);
+pub(crate) const REVIEW: Stage = stage("review", "orqa-stage-review", 30);
+pub(crate) const DEBATE: Stage = stage("debate", "orqa-stage-moderate", 30);
+pub(crate) const FIX: Stage = stage("fix", "orqa-stage-fix", 60);
+pub(crate) const ADDRESS: Stage = stage("address", "orqa-stage-address", 60);
 
 /// How a Stage ends other than with an accepted result.
 #[derive(Debug, PartialEq)]
@@ -831,7 +831,8 @@ impl Orchestrator {
         // not the base's. Its Stage skill body is the worktree's all the same.
         // A pick not merged is not had, though a personal skill has its name:
         // run without it, its line is left out (ask_unmerged_picks).
-        let have: Vec<String> = manifest::list(&worktree, home, &*self.cfg.tools)
+        let personal = manifest::personal(&self.cfg.repo);
+        let have: Vec<String> = manifest::list(&worktree, home, &*self.cfg.tools, personal)
             .into_iter()
             .filter(|(name, path)| path.parent().is_some_and(|dir| runs.loads(name, dir)))
             .filter(|(name, _)| !manifest.unmerged(&worktree, name))

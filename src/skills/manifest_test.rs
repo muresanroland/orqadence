@@ -1,6 +1,6 @@
 use super::manifest::{
-    add, link, list, parse_source, placeholder, remove, update, update_all, Added, Installed,
-    Manifest, Source, JOBS, NONE,
+    add, link, list, parse_source, placeholder, remove, renamed, update, update_all, Added,
+    Installed, Manifest, Source, JOBS, NONE,
 };
 use crate::orchestrator::write_file;
 use crate::tempdir::TempDir;
@@ -10,6 +10,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 const TDD: &str = "---\nname: tdd\ndescription: test first\n---\nversion one\n";
+/// TDD as installed, named with the prefix.
+const INSTALLED: &str = "---\nname: orqa-tdd\ndescription: test first\n---\nversion one\n";
 
 /// mattpocock/skills as a clone finds it: two skills and a README.
 const TWO_SKILLS: &[(&str, &str)] = &[
@@ -119,15 +121,15 @@ fn add_installs_the_named_skill_of_two_and_records_its_source() {
 
     assert_eq!(
         add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")),
-        Ok(Added::Installed("tdd".into()))
+        Ok(Added::Installed("orqa-tdd".into()))
     );
-    let at = repo.path().join(".orqadence/skills/tdd");
-    assert_eq!(fs::read_to_string(at.join("SKILL.md")).unwrap(), TDD);
+    let at = repo.path().join(".orqadence/skills/orqa-tdd");
+    assert_eq!(fs::read_to_string(at.join("SKILL.md")).unwrap(), INSTALLED);
     assert!(at.join("tests.md").is_file());
     for dir in [".agents/skills", ".claude/skills"] {
         assert_eq!(
-            fs::read_link(repo.path().join(dir).join("tdd")).unwrap(),
-            Path::new("../../.orqadence/skills/tdd"),
+            fs::read_link(repo.path().join(dir).join("orqa-tdd")).unwrap(),
+            Path::new("../../.orqadence/skills/orqa-tdd"),
             "{dir}"
         );
     }
@@ -135,7 +137,7 @@ fn add_installs_the_named_skill_of_two_and_records_its_source() {
     assert!(!repo.path().join(".orqadence/skills/README.md").exists());
 
     let manifest = Manifest::load(repo.path()).unwrap();
-    let tdd = &manifest.skills["tdd"];
+    let tdd = &manifest.skills["orqa-tdd"];
     assert_eq!(
         (&*tdd.repo, &*tdd.path, &*tdd.commit, tdd.shipped),
         (
@@ -170,11 +172,11 @@ fn add_refuses_a_source_already_installed_and_a_same_named_skill_from_another() 
     let err = add(repo.path(), &*tools, "someone/fork", Some("tdd")).unwrap_err();
     assert!(err.contains("remove it first"), "{err}");
     assert_eq!(
-        fs::read_to_string(repo.path().join(".agents/skills/tdd/SKILL.md")).unwrap(),
-        TDD
+        fs::read_to_string(repo.path().join(".agents/skills/orqa-tdd/SKILL.md")).unwrap(),
+        INSTALLED
     );
     assert_eq!(
-        Manifest::load(repo.path()).unwrap().skills["tdd"].repo,
+        Manifest::load(repo.path()).unwrap().skills["orqa-tdd"].repo,
         "https://github.com/mattpocock/skills"
     );
 }
@@ -188,24 +190,27 @@ fn update_refetches_the_source_and_records_the_new_commit() {
 
     const NEW: &str = "---\nname: tdd\n---\nversion two\n";
     *remote.lock().unwrap() = ("def456", vec![("skills/engineering/tdd/SKILL.md", NEW)]);
-    update(repo.path(), &*tools, "tdd").unwrap();
+    update(repo.path(), &*tools, "orqa-tdd").unwrap();
     assert_eq!(
-        fs::read_to_string(repo.path().join(".claude/skills/tdd/SKILL.md")).unwrap(),
-        NEW
+        fs::read_to_string(repo.path().join(".claude/skills/orqa-tdd/SKILL.md")).unwrap(),
+        "---\nname: orqa-tdd\n---\nversion two\n"
     );
     assert!(
-        !repo.path().join(".agents/skills/tdd/tests.md").exists(),
+        !repo
+            .path()
+            .join(".agents/skills/orqa-tdd/tests.md")
+            .exists(),
         "a file gone upstream stayed"
     );
     assert_eq!(
-        Manifest::load(repo.path()).unwrap().skills["tdd"].commit,
+        Manifest::load(repo.path()).unwrap().skills["orqa-tdd"].commit,
         "def456"
     );
 
     *remote.lock().unwrap() = ("0a0a0a", vec![("skills/engineering/tdd/SKILL.md", TDD)]);
     assert_eq!(update_all(repo.path(), &*tools), Ok(vec![]));
     assert_eq!(
-        Manifest::load(repo.path()).unwrap().skills["tdd"].commit,
+        Manifest::load(repo.path()).unwrap().skills["orqa-tdd"].commit,
         "0a0a0a"
     );
     let err = update(repo.path(), &*tools, "code-review").unwrap_err();
@@ -223,20 +228,23 @@ fn a_failed_save_leaves_update_and_remove_undone() {
     fs::create_dir(repo.path().join(".orqadence/skills.json.tmp")).unwrap();
 
     *remote.lock().unwrap() = ("def456", vec![("skills/engineering/tdd/SKILL.md", "new")]);
-    update(repo.path(), &*tools, "tdd").unwrap_err();
-    remove(repo.path(), "tdd").unwrap_err();
+    update(repo.path(), &*tools, "orqa-tdd").unwrap_err();
+    remove(repo.path(), "orqa-tdd").unwrap_err();
     assert_eq!(
-        fs::read_to_string(repo.path().join(".claude/skills/tdd/SKILL.md")).unwrap(),
-        TDD
+        fs::read_to_string(repo.path().join(".claude/skills/orqa-tdd/SKILL.md")).unwrap(),
+        INSTALLED
     );
-    assert!(repo.path().join(".agents/skills/tdd/tests.md").exists());
+    assert!(repo
+        .path()
+        .join(".agents/skills/orqa-tdd/tests.md")
+        .exists());
     assert_eq!(Manifest::load(repo.path()).unwrap(), manifest);
     let mut left: Vec<_> = fs::read_dir(repo.path().join(".orqadence/skills"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
         .collect();
     left.sort();
-    assert_eq!(left, ["tdd"], "a copy set aside stayed");
+    assert_eq!(left, ["orqa-tdd"], "a copy set aside stayed");
 }
 
 #[test]
@@ -247,18 +255,21 @@ fn update_stops_when_an_earlier_staging_folder_cannot_be_cleared() {
     let tools = git(&remote);
     add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
     // An interrupted update's staging folder whose stale file cannot go.
-    let locked = repo.path().join(".orqadence/skills/.tdd.new/locked");
+    let locked = repo.path().join(".orqadence/skills/.orqa-tdd.new/locked");
     write_file(&locked.join("stale.md"), "stale");
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
 
     *remote.lock().unwrap() = ("def456", vec![("skills/engineering/tdd/SKILL.md", TDD)]);
-    let result = update(repo.path(), &*tools, "tdd");
+    let result = update(repo.path(), &*tools, "orqa-tdd");
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
     let err = result.unwrap_err();
-    assert!(err.contains(".tdd.new"), "{err}");
-    assert!(!repo.path().join(".orqadence/skills/tdd/locked").exists());
+    assert!(err.contains(".orqa-tdd.new"), "{err}");
+    assert!(!repo
+        .path()
+        .join(".orqadence/skills/orqa-tdd/locked")
+        .exists());
     assert_eq!(
-        Manifest::load(repo.path()).unwrap().skills["tdd"].commit,
+        Manifest::load(repo.path()).unwrap().skills["orqa-tdd"].commit,
         "abc123"
     );
 }
@@ -267,13 +278,13 @@ fn update_stops_when_an_earlier_staging_folder_cannot_be_cleared() {
 fn each_job_takes_its_default_until_a_pick_is_recorded() {
     let mut manifest = Manifest::default();
     for (job, default) in [
-        ("test-first", "tdd"),
-        ("self-review", "code-review"),
-        ("working-mode", "ponytail"),
-        ("prose", "caveman"),
+        ("test-first", "orqa-tdd"),
+        ("self-review", "orqa-code-review"),
+        ("working-mode", "orqa-ponytail"),
+        ("prose", "orqa-caveman"),
         ("review", NONE),
-        ("audit", "ponytail-review"),
-        ("merge-conflicts", "resolving-merge-conflicts"),
+        ("audit", "orqa-ponytail-review"),
+        ("merge-conflicts", "orqa-resolving-merge-conflicts"),
     ] {
         assert_eq!(manifest.pick(job), default, "{job}");
     }
@@ -284,14 +295,18 @@ fn each_job_takes_its_default_until_a_pick_is_recorded() {
     manifest.picks.insert("prose".into(), NONE.into());
     assert_eq!(manifest.pick("test-first"), "test-driven-development");
     assert_eq!(manifest.pick("prose"), NONE);
-    // Every suggestion to install is a source add takes, the skill's own folder.
+    // Every suggestion to install is a source add takes, the skill's own
+    // folder, named with the prefix.
     for (job, suggestions) in JOBS {
         for (name, source) in *suggestions {
             if source.is_empty() {
                 continue;
             }
             let path = parse_source(source).unwrap().path;
-            assert!(path.ends_with(name), "{job}: {name} from {source}");
+            let upstream = name
+                .strip_prefix("orqa-")
+                .unwrap_or_else(|| panic!("{name}"));
+            assert!(path.ends_with(upstream), "{job}: {name} from {source}");
         }
     }
 }
@@ -304,10 +319,12 @@ fn removing_a_skill_a_job_uses_sets_that_job_to_none() {
         add(repo.path(), &*tools, "mattpocock/skills", Some(name)).unwrap();
     }
     let mut manifest = Manifest::load(repo.path()).unwrap();
-    manifest.picks.insert("test-first".into(), "tdd".into()); // self-review takes code-review by default
+    manifest
+        .picks
+        .insert("test-first".into(), "orqa-tdd".into()); // self-review takes orqa-code-review by default
     manifest.save(repo.path()).unwrap();
 
-    for name in ["tdd", "code-review"] {
+    for name in ["orqa-tdd", "orqa-code-review"] {
         remove(repo.path(), name).unwrap();
         assert!(
             !repo.path().join(".orqadence/skills").join(name).exists(),
@@ -326,10 +343,10 @@ fn removing_a_skill_a_job_uses_sets_that_job_to_none() {
     assert_eq!(manifest.pick("self-review"), NONE);
     assert_eq!(
         manifest.pick("audit"),
-        "ponytail-review",
+        "orqa-ponytail-review",
         "a job it did not do changed"
     );
-    let err = remove(repo.path(), "tdd").unwrap_err();
+    let err = remove(repo.path(), "orqa-tdd").unwrap_err();
     assert!(err.contains("not installed"), "{err}");
 }
 
@@ -337,12 +354,12 @@ fn removing_a_skill_a_job_uses_sets_that_job_to_none() {
 fn a_shipped_skill_refuses_removal() {
     let repo = TempDir::new();
     write_file(
-        &repo.path().join(".agents/skills/stage-fix/SKILL.md"),
+        &repo.path().join(".agents/skills/orqa-stage-fix/SKILL.md"),
         "shipped",
     );
     let mut manifest = Manifest::default();
     manifest.skills.insert(
-        "stage-fix".into(),
+        "orqa-stage-fix".into(),
         Installed {
             shipped: true,
             ..Installed::default()
@@ -350,11 +367,11 @@ fn a_shipped_skill_refuses_removal() {
     );
     manifest.save(repo.path()).unwrap();
 
-    let err = remove(repo.path(), "stage-fix").unwrap_err();
+    let err = remove(repo.path(), "orqa-stage-fix").unwrap_err();
     assert!(err.contains("Shipped"), "{err}");
     assert!(repo
         .path()
-        .join(".agents/skills/stage-fix/SKILL.md")
+        .join(".agents/skills/orqa-stage-fix/SKILL.md")
         .exists());
     assert_eq!(Manifest::load(repo.path()).unwrap(), manifest);
 }
@@ -381,7 +398,7 @@ fn list_finds_the_repos_the_users_and_the_plugins_skills() {
         other => Err(format!("unexpected: {other}")),
     });
 
-    let found = list(repo.path(), home.path(), &*tools);
+    let found = list(repo.path(), home.path(), &*tools, true);
     assert_eq!(
         found,
         [
@@ -395,7 +412,14 @@ fn list_finds_the_repos_the_users_and_the_plugins_skills() {
     );
 
     let no_claude = Fake::new(|_, _| Err("claude: not found".to_string()));
-    assert_eq!(list(repo.path(), home.path(), &*no_claude).len(), 2);
+    assert_eq!(list(repo.path(), home.path(), &*no_claude, true).len(), 2);
+
+    // Personal skills off: the repo's alone, claude not even asked.
+    let found = list(repo.path(), home.path(), &*no_claude, false);
+    assert_eq!(
+        found,
+        [("own".to_string(), repo.path().join(".agents/skills/own"))]
+    );
 }
 
 #[test]
@@ -479,25 +503,25 @@ fn a_skill_under_a_linked_skills_folder_is_neither_removed_nor_updated() {
     // .orqadence/skills swapped for a link out of the checkout, to a folder
     // Orqadence never wrote.
     let outside = TempDir::new();
-    write_file(&outside.path().join("skills/tdd/SKILL.md"), "not ours");
+    write_file(&outside.path().join("skills/orqa-tdd/SKILL.md"), "not ours");
     fs::remove_dir_all(repo.path().join(".orqadence/skills")).unwrap();
     std::os::unix::fs::symlink(
         outside.path().join("skills"),
         repo.path().join(".orqadence/skills"),
     )
     .unwrap();
-    let err = remove(repo.path(), "tdd").unwrap_err();
+    let err = remove(repo.path(), "orqa-tdd").unwrap_err();
     assert!(err.contains("will not touch"), "{err}");
-    let err = update(repo.path(), &*tools, "tdd").unwrap_err();
+    let err = update(repo.path(), &*tools, "orqa-tdd").unwrap_err();
     assert!(err.contains("will not touch"), "{err}");
     assert_eq!(
-        fs::read_to_string(outside.path().join("skills/tdd/SKILL.md")).unwrap(),
+        fs::read_to_string(outside.path().join("skills/orqa-tdd/SKILL.md")).unwrap(),
         "not ours"
     );
     assert!(Manifest::load(repo.path())
         .unwrap()
         .skills
-        .contains_key("tdd"));
+        .contains_key("orqa-tdd"));
 }
 
 #[test]
@@ -531,17 +555,20 @@ fn a_skill_linked_from_a_linked_claude_folder_is_not_removed() {
     let repo = TempDir::new();
     let tools = git(&remote("abc123", TWO_SKILLS));
     add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
-    // .claude swapped for a link out of the checkout, whose skills/tdd is a
+    // .claude swapped for a link out of the checkout, whose skills/orqa-tdd is a
     // link Orqadence never made.
     let outside = TempDir::new();
     fs::create_dir(outside.path().join("skills")).unwrap();
-    std::os::unix::fs::symlink("/elsewhere", outside.path().join("skills/tdd")).unwrap();
+    std::os::unix::fs::symlink("/elsewhere", outside.path().join("skills/orqa-tdd")).unwrap();
     fs::remove_dir_all(repo.path().join(".claude")).unwrap();
     std::os::unix::fs::symlink(outside.path(), repo.path().join(".claude")).unwrap();
-    let err = remove(repo.path(), "tdd").unwrap_err();
+    let err = remove(repo.path(), "orqa-tdd").unwrap_err();
     assert!(err.contains("will not touch"), "{err}");
-    assert!(fs::symlink_metadata(outside.path().join("skills/tdd")).is_ok());
-    assert!(repo.path().join(".agents/skills/tdd/SKILL.md").exists());
+    assert!(fs::symlink_metadata(outside.path().join("skills/orqa-tdd")).is_ok());
+    assert!(repo
+        .path()
+        .join(".agents/skills/orqa-tdd/SKILL.md")
+        .exists());
 }
 
 #[test]
@@ -549,15 +576,15 @@ fn removing_a_skill_keeps_a_link_the_user_put_in_place_of_the_orqadence_one() {
     let repo = TempDir::new();
     let tools = git(&remote("abc123", TWO_SKILLS));
     add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
-    let link = repo.path().join(".claude/skills/tdd");
+    let link = repo.path().join(".claude/skills/orqa-tdd");
     fs::remove_file(&link).unwrap();
     std::os::unix::fs::symlink("../../my-skills/tdd", &link).unwrap();
-    remove(repo.path(), "tdd").unwrap();
+    remove(repo.path(), "orqa-tdd").unwrap();
     assert_eq!(
         fs::read_link(&link).unwrap(),
         Path::new("../../my-skills/tdd")
     );
-    assert!(!repo.path().join(".agents/skills/tdd").exists());
+    assert!(!repo.path().join(".agents/skills/orqa-tdd").exists());
 }
 
 #[test]
@@ -592,12 +619,12 @@ fn a_source_folder_that_links_out_of_the_clone_is_not_taken() {
     )
     .unwrap_err();
     assert!(err.contains("no folder"), "{err}");
-    let err = update(repo.path(), &*linked, "tdd").unwrap_err();
-    assert!(err.contains("no longer has tdd"), "{err}");
-    assert!(!repo.path().join(".agents/skills/tdd/secret").exists());
+    let err = update(repo.path(), &*linked, "orqa-tdd").unwrap_err();
+    assert!(err.contains("no longer has orqa-tdd"), "{err}");
+    assert!(!repo.path().join(".agents/skills/orqa-tdd/secret").exists());
     assert_eq!(
-        fs::read_to_string(repo.path().join(".agents/skills/tdd/SKILL.md")).unwrap(),
-        TDD
+        fs::read_to_string(repo.path().join(".agents/skills/orqa-tdd/SKILL.md")).unwrap(),
+        INSTALLED
     );
 }
 
@@ -625,11 +652,11 @@ fn a_skill_whose_skill_md_is_a_link_is_not_taken() {
     });
     let err = add(repo.path(), &*linked, "someone/linked", None).unwrap_err();
     assert!(err.contains("no skill"), "{err}");
-    let err = update(repo.path(), &*linked, "tdd").unwrap_err();
-    assert!(err.contains("no longer has tdd"), "{err}");
+    let err = update(repo.path(), &*linked, "orqa-tdd").unwrap_err();
+    assert!(err.contains("no longer has orqa-tdd"), "{err}");
     assert_eq!(
-        fs::read_to_string(repo.path().join(".agents/skills/tdd/SKILL.md")).unwrap(),
-        TDD
+        fs::read_to_string(repo.path().join(".agents/skills/orqa-tdd/SKILL.md")).unwrap(),
+        INSTALLED
     );
 }
 
@@ -671,18 +698,18 @@ fn a_skill_is_not_linked_through_a_linked_links_folder() {
 #[test]
 fn the_shipped_stage_skills_hold_every_jobs_placeholder_and_no_slash_call() {
     let want = [
-        ("test-first", "stage-implement"),
-        ("self-review", "stage-implement"),
-        ("working-mode", "stage-implement"),
-        ("prose", "stage-implement"),
-        ("review", "stage-review"),
-        ("audit", "stage-moderate"),
-        ("merge-conflicts", "stage-address"),
+        ("test-first", "orqa-stage-implement"),
+        ("self-review", "orqa-stage-implement"),
+        ("working-mode", "orqa-stage-implement"),
+        ("prose", "orqa-stage-implement"),
+        ("review", "orqa-stage-review"),
+        ("audit", "orqa-stage-moderate"),
+        ("merge-conflicts", "orqa-stage-address"),
     ];
     assert_eq!(want.len(), JOBS.len());
     let slash = regex::Regex::new(r"(?m)(^|[\s`(])/[a-z]").unwrap();
     for (name, body) in crate::skills::SKILLS {
-        if !name.starts_with("stage-") {
+        if !name.starts_with("orqa-stage-") {
             continue;
         }
         for (job, _) in JOBS {
@@ -698,4 +725,15 @@ fn the_shipped_stage_skills_hold_every_jobs_placeholder_and_no_slash_call() {
                 .map(|m| &body[m.start()..(m.end() + 20).min(body.len())])
         );
     }
+}
+
+/// The name line in the frontmatter alone takes the new name.
+#[test]
+fn renamed_changes_only_the_frontmatters_name() {
+    let skill = "---\nname: tdd\ndescription: x\n---\nname: in the body\n";
+    assert_eq!(
+        renamed(skill, "orqa-tdd"),
+        "---\nname: orqa-tdd\ndescription: x\n---\nname: in the body\n"
+    );
+    assert_eq!(renamed("no frontmatter\n", "orqa-x"), "no frontmatter\n");
 }

@@ -1,9 +1,9 @@
 ---
-name: create-pr
+name: orqa-create-pr
 description: Open a pull request for the current branch in any repo - find and run the repo's own checks, push, and create the PR with gh. Use when a ticket's work is committed and ready for review. Never merges; merging is human-only.
 ---
 
-# create-pr
+# orqa-create-pr
 
 Open a pull request for the current branch. This skill ends at "PR created".
 

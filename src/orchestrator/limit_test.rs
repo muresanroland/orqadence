@@ -770,12 +770,12 @@ fn a_codex_limit_on_a_review_asks_once_and_unreviewed_skips_review_and_debate_un
     assert_eq!(review_questions(&w).len(), 1, "asked again");
     let fix = SKILLS
         .iter()
-        .find(|(name, _)| *name == "stage-fix")
+        .find(|(name, _)| *name == "orqa-stage-fix")
         .unwrap()
         .1;
     assert!(
         fix.contains("**Unreviewed**"),
-        "stage-fix has no Unreviewed rule"
+        "orqa-stage-fix has no Unreviewed rule"
     );
 
     // After the reset Reviews start on codex again.
@@ -960,12 +960,12 @@ fn the_moderator_is_told_which_side_is_limited() {
     );
     let moderate = SKILLS
         .iter()
-        .find(|(name, _)| *name == "stage-moderate")
+        .find(|(name, _)| *name == "orqa-stage-moderate")
         .unwrap()
         .1;
     assert!(
         moderate.contains("Side B: limited until"),
-        "stage-moderate has no rule for a limited side"
+        "orqa-stage-moderate has no rule for a limited side"
     );
 }
 

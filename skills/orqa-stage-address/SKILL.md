@@ -1,5 +1,5 @@
 ---
-name: stage-address
+name: orqa-stage-address
 description: Orqadence address Stage. Acts on a Ticket's pull request review comments and merge conflicts, then pushes to the same PR. Run by the Orqadence Orchestrator on the user's command, not by hand.
 ---
 

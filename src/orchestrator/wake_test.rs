@@ -469,7 +469,7 @@ fn a_blocked_session_is_parked_by_you_or_carries_on() {
 #[test]
 fn an_unreadable_stage_skill_wakes_naming_it() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    let skill = ".orqadence/skills/stage-implement/SKILL.md";
+    let skill = ".orqadence/skills/orqa-stage-implement/SKILL.md";
     std::fs::remove_file(w.repo.join(skill)).unwrap();
     std::fs::create_dir_all(w.repo.join(skill)).unwrap(); // a directory cannot be read
     w.session(succeed);
