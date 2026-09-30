@@ -13,7 +13,11 @@
   },
   "review": {
     "effort": "high",
-    "model": "gpt-6-sol"
+    "model": "gpt-6.1-sol"
+  },
+  "review_if_limited": {
+    "effort": "high",
+    "model": "fable"
   },
   "side_a": {
     "effort": "high",
