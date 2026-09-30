@@ -5,7 +5,7 @@ description: Orqadence's review for orqa:infra Tickets. Runs the offline infrast
 
 # Infra review
 
-You run the offline checks on the infrastructure files the Ticket's diff touches. Every result is a Finding: the review cannot change code, and the Fix fixes what fails. Your Findings are the checks' results only, formatting included; the Review Stage's rule to drop style-only items does not apply to them, and you add none of your own judgment.
+You run the offline checks on the infrastructure files the Ticket's diff touches. Every result is a Finding: the review cannot change code, and the Fix fixes what fails. Your Findings are the checks' results only, formatting included; every item you report is a Finding, so the Review Stage keeps its style-only ones, and you add none of your own judgment.
 
 There is no network, and the Worktree is read-only. Before you started, the Orchestrator ran `fetch.sh` (beside this file) with network into the **Cache** Input: `providers/`, `tflint/` and `kubeconform/` under it. Every other tool runs offline as it is.
 

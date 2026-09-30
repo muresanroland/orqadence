@@ -3,7 +3,8 @@
 # reads (Terraform providers, tflint plugins, kubeconform schemas) for the
 # files the diff against ORQA_BASE touches. The Orchestrator runs it with
 # network in the Ticket's worktree before each orqa:infra Extra review. It
-# works on a temp copy of the committed tree and never writes the worktree.
+# only reads the worktree: Terraform inits in a temp copy of the committed
+# tree, and kubeconform reads the manifests and charts where they are.
 # Exit 0 is ready; on a failure the last lines of stderr say why.
 set -euo pipefail
 IFS=$'\n'
@@ -20,8 +21,10 @@ chart_of() {
 	echo "$dir"
 }
 
+# Read first: a failing git in a for list would not stop the script.
+touched=$(git -c core.quotePath=false diff --name-only "$ORQA_BASE...HEAD")
 roots='' charts='' manifests=''
-for f in $(git diff --name-only "$ORQA_BASE...HEAD"); do
+for f in $touched; do
 	case $f in
 	*.tf | *.tf.json | *.tfvars | *.tftest.hcl | *.terraform.lock.hcl)
 		dir=$(dirname "$f")

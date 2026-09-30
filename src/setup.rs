@@ -244,11 +244,11 @@ pub(crate) fn install_skills(
     for &(name, body) in SKILLS {
         manifest::move_in(repo, name)?;
         let dir = manifest::skill_dir(repo, name);
-        let link = |path: &Path| {
+        let is_link = |path: &Path| {
             fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
         };
         // A link is the repo's own arrangement: never written through.
-        if link(&dir.join("SKILL.md")) {
+        if is_link(&dir.join("SKILL.md")) {
             continue;
         }
         let extra = EXTRA_FILES
@@ -257,7 +257,7 @@ pub(crate) fn install_skills(
             .map(|&(_, file, body)| (file, body));
         for (file, body) in iter::once(("SKILL.md", body)).chain(extra) {
             let (rel, dest) = (record_key(name, file), dir.join(file));
-            if link(&dest) {
+            if is_link(&dest) {
                 continue;
             }
             let write = match mode {

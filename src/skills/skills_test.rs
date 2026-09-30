@@ -41,17 +41,14 @@ fn infra_review_is_shipped_and_names_its_checks() {
         "TFLINT_PLUGIN_DIR",
         "-ignore-missing-schemas",
         // the severities
-        "CRITICAL",
-        "UNKNOWN",
-        "style",
-        "notice",
-        "[expression]",
-        "[syntax-check]",
-        "[shellcheck]",
-        "[ERROR]",
-        "[WARNING]",
-        "run terraform fmt",
-        ".tftest.hcl",
+        "- terraform validate: error `high`, warning `medium`.",
+        "- tflint: error `high`, warning `medium`, notice `low`.",
+        "- trivy config: CRITICAL and HIGH `high`, MEDIUM `medium`, LOW and UNKNOWN `low`.",
+        "- hadolint: error `high`, warning `medium`, info and style `low`.",
+        "- actionlint: `[expression]` on untrusted input and `[syntax-check]` `high`, `[shellcheck]` by its SC level (error `high`, warning `medium`, info and style `low`), every other kind `medium`.",
+        "- kubeconform: invalid `high`. helm lint: `[ERROR]` `high`, `[WARNING]` `medium`.",
+        "- (low) infra/main.tf — run terraform fmt",
+        "a failing mocked run is `(high)` on its `.tftest.hcl` file",
         // what did not run, and why
         "## Not run",
         "**Fetch**",
@@ -67,6 +64,7 @@ fn fetch_sh() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("skills/orqa-infra-review/fetch.sh")
 }
 
+/// fetch.sh is valid bash.
 #[test]
 fn fetch_sh_parses() {
     let out = Command::new("bash")
@@ -121,7 +119,7 @@ fn fetch(files: &[(&str, &str)]) -> (TempDir, String) {
         let stub = stubs.path().join(tool);
         write_file(
             &stub,
-            "#!/bin/sh\necho \"$(basename \"$0\") $PWD $*\" >> \"$STUB_LOG\"\n",
+            "#!/bin/sh\necho \"$(basename \"$0\") $(pwd -P) $*\" >> \"$STUB_LOG\"\n",
         );
         fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
     }
@@ -170,7 +168,9 @@ fn fetch_inits_a_touched_terraform_root_in_a_temp_copy() {
             (tool, words.next().unwrap(), words.next().unwrap_or(""))
         })
         .collect();
-    let worktree = repo.path().to_str().unwrap();
+    // the stubs log the cwd with links resolved (/var is /private/var on macOS)
+    let worktree = fs::canonicalize(repo.path()).unwrap();
+    let worktree = worktree.to_str().unwrap();
     let init = calls
         .iter()
         .find(|(tool, _, args)| *tool == "terraform" && args.starts_with("init -backend=false"))
