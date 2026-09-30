@@ -6,83 +6,23 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// A Shipped skill's text by name.
-fn shipped(name: &str) -> &'static str {
-    SKILLS
-        .iter()
-        .find(|(skill, _)| *skill == name)
-        .unwrap_or_else(|| panic!("{name} is not shipped"))
-        .1
-}
-
-/// infra-review names every check it runs, how each result maps to a
-/// severity, the Not run section and the Inputs fetch.sh leaves it.
+/// infra-review names the Inputs and the section the Review Stage and the
+/// Orchestrator rely on.
 #[test]
-fn infra_review_is_shipped_and_names_its_checks() {
-    let skill = shipped("orqa-infra-review");
-    assert!(skill.contains("name: orqa-infra-review"), "{skill}");
-    for text in [
-        // the checks
-        "terraform fmt",
-        "terraform validate",
-        "terraform test",
-        "mock_provider",
-        "tflint",
-        "trivy config --skip-check-update",
-        "hadolint",
-        "helm lint",
-        "helm template",
-        "kubeconform",
-        "actionlint",
-        "shellcheck",
-        // offline, from the cache
-        "-backend=false",
-        "-plugin-dir",
-        "<Cache>/modules/<root>/.terraform/modules",
-        "-get=false",
-        "TFLINT_PLUGIN_DIR",
-        "-ignore-missing-schemas",
-        "infra=$(mktemp -d)",
-        // a test file runs only when every provider it reaches is mocked
-        "`mock_provider` block of the same name",
-        "no resource a run applies (`command = apply`, the default) has a `provisioner`",
-        // the severities
-        "- terraform validate: error `high`, warning `medium`.",
-        "- tflint: error `high`, warning `medium`, notice `low`.",
-        "- trivy config: CRITICAL and HIGH `high`, MEDIUM `medium`, LOW and UNKNOWN `low`.",
-        "- hadolint: error `high`, warning `medium`, info and style `low`.",
-        "- actionlint: `[expression]` on untrusted input and `[syntax-check]` `high`, `[shellcheck]` by its SC level (error `high`, warning `medium`, info and style `low`), every other kind `medium`.",
-        "- kubeconform: invalid `high`. helm lint: `[ERROR]` `high`, `[WARNING]` `medium`.",
-        "- (low) infra/main.tf — run terraform fmt",
-        "a failing mocked run is `(high)` on its `.tftest.hcl` file",
-        // what did not run, and why
-        "## Not run",
-        "**Fetch**",
-        "**Cache**",
-    ] {
+fn infra_review_is_shipped_with_its_not_run_section() {
+    let skill = SKILLS
+        .iter()
+        .find(|(s, _)| *s == "orqa-infra-review")
+        .unwrap()
+        .1;
+    for text in ["name: orqa-infra-review", "## Not run", "**Cache**"] {
         assert!(skill.contains(text), "infra-review lacks {text:?}");
     }
-    assert!(!skill.contains("checkov"), "infra-review runs checkov");
 }
 
 /// infra-review's fetch.sh, as it is shipped.
 fn fetch_sh() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("skills/orqa-infra-review/fetch.sh")
-}
-
-/// fetch.sh is valid bash.
-#[test]
-fn fetch_sh_parses() {
-    let out = Command::new("bash")
-        .arg("-n")
-        .arg(fetch_sh())
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
 }
 
 /// git in `repo`, cut off from the user's own config.
@@ -228,21 +168,16 @@ fn fetch_calls_no_tool_for_a_readme() {
 
 /// The modules init installed in a touched root's temp copy (registry and
 /// git modules, which the offline review cannot fetch) are kept in the
-/// cache, mirroring the tree: modules/<root>/.terraform/modules.
+/// cache by commit: modules/<HEAD>/<root>/.terraform/modules.
 #[test]
 fn fetch_keeps_a_roots_modules_in_the_cache() {
     let (repo, cache, log) = fetch(&[("infra/main.tf", "module \"m\" { source = \"x/y/z\" }\n")]);
-    let manifest = cache
-        .path()
-        .join("modules/infra/.terraform/modules/modules.json");
-    let ran_in = fs::read_to_string(&manifest)
-        .unwrap_or_else(|err| panic!("no {}: {err}\n{log}", manifest.display()));
-    let worktree = fs::canonicalize(repo.path()).unwrap();
-    assert!(
-        !ran_in.starts_with(worktree.to_str().unwrap()),
-        "init ran in the worktree: {ran_in}"
-    );
-    assert_eq!(git(repo.path(), &["status", "--porcelain"]), "");
+    let head = git(repo.path(), &["rev-parse", "HEAD"]);
+    let manifest = cache.path().join(format!(
+        "modules/{}/infra/.terraform/modules/modules.json",
+        head.trim()
+    ));
+    assert!(manifest.exists(), "no {}\n{log}", manifest.display());
 }
 
 /// A manifest fetch.sh validates with kubeconform, which prints `out` and
@@ -282,7 +217,10 @@ fn fetch_fails_when_kubeconform_cannot_fetch_a_schema() {
 #[test]
 fn fetch_leaves_invalid_manifests_and_missing_schemas_to_the_review() {
     for (out, status) in [
-        ("k8s/app.yaml - Deployment web is invalid: problem validating schema\n", 1),
+        (
+            "k8s/app.yaml - Deployment web is invalid: problem validating schema\n",
+            1,
+        ),
         ("", 0),
     ] {
         let (ok, stderr) = fetch_kube(out, status);

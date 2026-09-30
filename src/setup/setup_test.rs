@@ -467,6 +467,31 @@ fn install_skills_refresh_treats_a_file_without_a_record_as_edited() {
     assert_eq!(read(repo.path(), STAGE_FIX), "from the Go binary");
 }
 
+/// A skill an older release did not ship has no record and no files: a
+/// refresh writes them.
+#[test]
+fn install_skills_refresh_writes_a_skill_the_record_lacks() {
+    let repo = TempDir::new();
+    install(repo.path(), "");
+    let dir = repo.path().join(".orqadence/skills/orqa-infra-review");
+    fs::remove_dir_all(&dir).unwrap();
+    let mut rec = record(repo.path());
+    rec.retain(|rel, _| !rel.contains("orqa-infra-review"));
+    fs::write(
+        repo.path().join(RECORD),
+        serde_json::to_string(&rec).unwrap(),
+    )
+    .unwrap();
+    install(repo.path(), "2");
+    for file in ["SKILL.md", "fetch.sh"] {
+        assert!(dir.join(file).exists(), "refresh left out {file}");
+        assert!(
+            record(repo.path()).contains_key(&format!(".agents/skills/orqa-infra-review/{file}")),
+            "refresh did not record {file}"
+        );
+    }
+}
+
 #[test]
 fn install_skills_cancel_and_a_closed_stdin_touch_nothing() {
     for answer in ["1", "\r", "", "\x1b[B\x1b[A\r"] {

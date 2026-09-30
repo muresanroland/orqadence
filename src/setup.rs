@@ -262,9 +262,12 @@ pub(crate) fn install_skills(
             }
             let write = match mode {
                 Mode::Overwrite => true,
-                Mode::Refresh => record
-                    .get(&rel)
-                    .is_some_and(|wrote| fs::read_to_string(&dest).is_ok_and(|now| now == *wrote)),
+                // A file with no record is one an older release did not ship,
+                // written when absent, or one it did ship, kept as edited.
+                Mode::Refresh => match record.get(&rel) {
+                    Some(wrote) => fs::read_to_string(&dest).is_ok_and(|now| now == *wrote),
+                    None => !dest.exists(),
+                },
                 Mode::Fresh => !dest.exists(),
             };
             if write {
