@@ -1,7 +1,8 @@
-# Builds the release binaries for a v* tag and attaches them to a GitHub
-# Release. The tag must equal Cargo.toml's version. After the merge the human
-# creates the release on GitHub (or pushes the tag); either starts this. Run
-# it by hand from the Actions tab to rebuild an existing tag.
+# Builds the release binaries for a v* tag and creates the GitHub Release with
+# them. The tag must equal Cargo.toml's version. After the merge the human
+# pushes the tag, which starts this. Releases are immutable once published, so
+# don't create the release on GitHub: it would publish with no binaries. Run
+# it by hand from the Actions tab to retry a tag whose run failed.
 name: release
 
 on:
@@ -60,15 +61,11 @@ jobs:
           merge-multiple: true
       - name: third-party license notices
         run: scripts/third-party-licenses.sh > THIRD-PARTY-LICENSES.txt
-      # A release made on GitHub already exists by now: it gets the assets.
-      # A plain tag push has none yet: this creates it.
-      - name: attach the assets to the release, creating it if needed
+      # gh drafts the release, uploads the assets, then publishes it: an
+      # immutable release takes no assets after it is published.
+      - name: create the release with the assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -- orqa-aarch64-apple-darwin orqa-x86_64-unknown-linux-gnu THIRD-PARTY-LICENSES.txt
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$@"
-          else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes "$@"
-          fi
+        run: >-
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes
+          orqa-aarch64-apple-darwin orqa-x86_64-unknown-linux-gnu THIRD-PARTY-LICENSES.txt
