@@ -478,7 +478,8 @@ impl Orchestrator {
     /// Pipeline is over. The run directory is the Codex sandbox's only
     /// writable root, so a Stage that has to compile puts its build cache
     /// there: a Go cache runs to some 100MB per Ticket, and nothing reads it
-    /// again. Keeping only the evidence survives the next Stage inventing a
+    /// again. The last Fix's screenshots in pr/ go too, attached by then.
+    /// Keeping only the evidence survives the next Stage inventing a
     /// fifth name for its cache. Best effort: scratch that cannot be removed
     /// is only disk.
     fn prune_run_dir(&self, ticket: &str) {

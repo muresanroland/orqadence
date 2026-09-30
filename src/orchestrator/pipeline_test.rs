@@ -222,6 +222,28 @@ fn open_pr_prunes_build_scratch_and_keeps_evidence() {
     }
 }
 
+/// The last Fix's screenshots wait in the Run directory's pr/ folder for
+/// create-pr to attach them, and go once the PR is open.
+#[test]
+fn open_pr_prunes_the_screenshots_folder() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    let run_dir = o.run_dir("hx-1");
+    let dir = run_dir.clone();
+    w.session(move |p| {
+        if p.stage == "fix" && p.open_pr {
+            write_file(&dir.join("pr/home.png"), "a screenshot");
+            write_file(&dir.join("pr/home-dark.png"), "a dark one");
+        }
+        succeed(p)
+    });
+
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened after 1 round");
+    assert!(!run_dir.join("pr").exists(), "pr/ outlived the PR opening");
+    assert!(run_dir.join("fix-1.md").exists(), "evidence pruned");
+}
+
 /// A Ticket runs the Stage skill committed on its base, as its worktree
 /// checks it out, not the checkout's.
 #[test]
