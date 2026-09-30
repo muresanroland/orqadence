@@ -36,7 +36,7 @@ use crate::tools::Tools;
 use crate::update::{self, Checked, Ready, Releases};
 use summary::Summary;
 
-mod brand;
+pub(crate) mod brand;
 mod config;
 mod demo;
 mod draw;

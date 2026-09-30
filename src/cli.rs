@@ -59,12 +59,19 @@ pub fn run(
             // stdin is neither, nothing: a non-interactive init cancels and skips.
             let (mut stdin, mut silent) = (io::stdin(), io::empty());
             let tty = input.is_none() && stdin.is_terminal();
+            let home = PathBuf::from(env("HOME"));
+            if tty {
+                let folder = match repo.strip_prefix(&home) {
+                    Ok(rest) if !home.as_os_str().is_empty() => Path::new("~").join(rest),
+                    _ => repo.to_path_buf(),
+                };
+                let _ = setup::banner(out, &folder.display().to_string());
+            }
             let input: &mut dyn Read = match input {
                 Some(scripted) => scripted,
                 None if tty => &mut stdin,
                 None => &mut silent,
             };
-            let home = PathBuf::from(env("HOME"));
             let tidied = setup::clean_old_checkout(repo, &*tools, out, &mut *input, tty);
             // After the tidy step, which refuses before any tool runs.
             let committed = tidied.is_ok() && setup::committed(repo, &*tools);
@@ -171,6 +178,7 @@ fn preflight(
     tools: &dyn Tools,
     env: &dyn Fn(&str) -> String,
 ) -> i32 {
+    let _ = setup::step(out, setup::named("PREFLIGHT"));
     if !app::typesafe(repo) {
         let _ = writeln!(
             out,

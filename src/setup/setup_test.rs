@@ -1,4 +1,4 @@
-use super::{ask_typesafe, install_skills, preflight, typesafe_key, warnings};
+use super::{ask_typesafe, install_skills, preflight, typesafe_key, warnings, yes};
 use crate::orchestrator::write_file;
 use crate::skills::manifest::{Manifest, JOBS, NONE};
 use crate::skills::SKILLS;
@@ -721,5 +721,38 @@ fn preflight_warns_of_a_stage_skill_that_lost_a_placeholder() {
     assert_eq!(
         warnings(repo.path(), &*Fake::quiet()),
         ["the installed orqa-stage-implement lacks {{test-first}}: the test first skill you pick never runs there; put the line back, or refresh it with orqa init"]
+    );
+}
+
+/// A yes/no menu: y and n select and enter answers, the arrow keys move,
+/// Ctrl-C is no, and nothing typed is nobody there.
+#[test]
+fn yes_selects_on_a_key_and_answers_on_enter() {
+    for (keys, default, want) in [
+        ("\r", true, Some(true)),
+        ("\r", false, Some(false)),
+        ("n\n", true, Some(false)),
+        ("y\n", false, Some(true)),
+        ("\x1b[B\r", true, Some(false)), // down to No
+        ("\x1b[B\x1b[A\r", true, Some(true)),
+        ("2", true, Some(false)),
+        ("\x03", true, Some(false)),
+        ("y", false, Some(true)), // a key, then the input ends
+        ("", true, None),
+    ] {
+        let mut out = Vec::new();
+        let got = yes(&mut out, &mut keys.as_bytes(), false, "Go?", default).unwrap();
+        assert_eq!(got, want, "{keys:?}, default {default}");
+    }
+    // "y\n" is two keys: the enter answers this question, not the next.
+    let mut input: &[u8] = b"y\n\n";
+    let mut out = Vec::new();
+    assert_eq!(
+        yes(&mut out, &mut input, false, "Go?", false).unwrap(),
+        Some(true)
+    );
+    assert_eq!(
+        yes(&mut out, &mut input, false, "Go?", false).unwrap(),
+        Some(false)
     );
 }
