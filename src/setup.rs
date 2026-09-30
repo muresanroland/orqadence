@@ -794,12 +794,6 @@ pub(crate) const TEMPLATE_DIR: &str = ".github/PULL_REQUEST_TEMPLATE";
 /// Where init writes the default template.
 pub(crate) const DEFAULT_TEMPLATE: &str = ".github/pull_request_template.md";
 
-/// A label's template: the default's frame plus the label's section.
-pub(crate) fn label_template(frame: &str, section: &str) -> String {
-    let gap = if frame.ends_with('\n') { "\n" } else { "\n\n" };
-    format!("{frame}{gap}{section}")
-}
-
 /// The repo's default PR template, where GitHub reads one: .github, the
 /// root or docs, named pull_request_template.md in any case.
 fn default_template(repo: &Path) -> Option<PathBuf> {
@@ -824,9 +818,9 @@ fn default_template(repo: &Path) -> Option<PathBuf> {
 /// is overwritten, and nothing is asked when every file is there. A
 /// default the repo has, wherever GitHub reads it, is asked to frame the
 /// label templates (yes, or nobody answering; no writes nothing) and stays
-/// where it is; with only a template directory, one of its files, a
-/// label's own aside, is picked as the default and copied there, or none,
-/// which writes the generic one.
+/// where it is; with only a template directory, one of its files is
+/// picked as the default and copied there, or none, which writes the
+/// generic one.
 fn write_pr_templates(
     repo: &Path,
     labels: &[&ShippedLabel],
@@ -861,25 +855,21 @@ fn write_pr_templates(
                 .flatten()
                 .flatten()
                 .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                // A shipped label's own file is a label template, not a default.
-                .filter(|name| {
-                    name.ends_with(".md")
-                        && !LABELS.iter().any(|label| *name == label.template_file())
-                })
+                .filter(|name| name.ends_with(".md"))
                 .collect();
             files.sort();
-            let mut picked = None;
-            if !files.is_empty() {
-                let mut options: Vec<&str> = files.iter().map(String::as_str).collect();
-                options.push("none");
-                let none = options.len() - 1;
+            let picked = if files.is_empty() {
+                None
+            } else {
+                let options: Vec<&str> = files.iter().map(String::as_str).chain(["none"]).collect();
+                let none = files.len();
                 let question = "Which of these is the default template?";
-                picked = raw(tty, || {
+                raw(tty, || {
                     choose(out, &mut *input, question, &options, (none, none), "")
                 })?
                 .filter(|&i| i != none)
-                .map(|i| dir.join(&files[i]));
-            }
+                .map(|i| dir.join(&files[i]))
+            };
             let frame = match &picked {
                 Some(path) => fs::read_to_string(path)?,
                 None => PR_TEMPLATE.to_string(),
@@ -891,10 +881,11 @@ fn write_pr_templates(
             frame
         }
     };
+    let gap = if frame.ends_with('\n') { "\n" } else { "\n\n" };
     for label in missing {
         let name = label.template_file();
         fs::create_dir_all(&dir)?;
-        fs::write(dir.join(&name), label_template(&frame, label.pr_section))?;
+        fs::write(dir.join(&name), format!("{frame}{gap}{}", label.pr_section))?;
         write!(out, "init: wrote {TEMPLATE_DIR}/{name}\r\n")?;
     }
     Ok(())

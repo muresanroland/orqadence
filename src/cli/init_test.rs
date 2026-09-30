@@ -2,7 +2,7 @@ use super::run;
 use crate::orchestrator::app::{self, Label};
 use crate::orchestrator::write_file;
 use crate::setup::setup_test::snapshot;
-use crate::setup::{DEFAULT_TEMPLATE, LABELS, TEMPLATE_DIR, TYPESAFE_SKILL};
+use crate::setup::{DEFAULT_TEMPLATE, LABELS, PR_TEMPLATE, TEMPLATE_DIR, TYPESAFE_SKILL};
 use crate::skills::manifest::{Installed, Manifest, JOBS};
 use crate::skills::SKILLS;
 use crate::tempdir::TempDir;
@@ -1268,19 +1268,7 @@ fn init_writes_the_default_template_and_one_per_checked_area_label() {
     let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
     assert_eq!(code, 0, "{out}");
     let default = read(repo.path(), DEFAULT_TEMPLATE);
-    for heading in ["## What", "## Why", "## Impact", "## Testing", "## Ticket"] {
-        let after = &default[default
-            .find(heading)
-            .unwrap_or_else(|| panic!("{heading}:\n{default}"))..];
-        assert!(
-            after
-                .lines()
-                .nth(1)
-                .is_some_and(|line| line.starts_with("<!-- ") && line.ends_with(" -->")),
-            "{heading}:\n{default}"
-        );
-    }
-    assert_eq!(default.matches("<!--").count(), 5, "{default}");
+    assert_eq!(default, PR_TEMPLATE);
     let labels = labels_in(repo.path());
     for (name, heading) in AREA_SECTIONS {
         let path = format!("{TEMPLATE_DIR}/{name}.md");
@@ -1408,15 +1396,17 @@ fn a_template_directory_alone_answered_none_gets_the_generic_default() {
     );
 }
 
-/// An existing <name>.md in the directory is kept and mapped; the rest are
-/// built.
+/// An existing <name>.md in the directory is kept and mapped, and offered
+/// as the default; nobody answering picks none, the generic one. The rest
+/// are built.
 #[test]
 fn an_existing_label_template_is_kept_and_mapped() {
     let repo = bare_repo();
     write_file(&repo.path().join(TEMPLATE_DIR).join("fe.md"), "mine\n");
     let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
     assert_eq!(code, 0, "{out}");
-    assert!(!out.contains("Which of these"), "{out}");
+    assert!(out.contains("Which of these"), "{out}");
+    assert_eq!(read(repo.path(), DEFAULT_TEMPLATE), PR_TEMPLATE);
     assert_eq!(
         read(repo.path(), &format!("{TEMPLATE_DIR}/fe.md")),
         "mine\n"
