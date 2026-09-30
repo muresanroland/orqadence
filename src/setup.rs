@@ -656,9 +656,17 @@ pub(crate) struct ShippedLabel {
     pub(crate) review: Option<(&'static str, &'static str, bool)>,
     /// Row overrides: (row, field, value).
     pub(crate) rows: &'static [(&'static str, &'static str, &'static str)],
+    /// The section its PR template adds to the default: a heading and a
+    /// comment saying what goes there. Empty for a Modifier label.
+    pub(crate) pr_section: &'static str,
 }
 
 impl ShippedLabel {
+    /// Its PR template's file name in TEMPLATE_DIR.
+    fn template_file(&self) -> String {
+        format!("{}.md", self.name)
+    }
+
     /// Every skill the label needs from a source, its Extra review's too:
     /// (installed name, manifest source).
     pub(crate) fn sources(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
@@ -692,6 +700,7 @@ pub(crate) const LABELS: [ShippedLabel; 7] = [
         guidance: "Front-end work: the pull request carries screenshots of every changed screen.",
         review: None,
         rows: &[],
+        pr_section: "## Screenshots\n<!-- every changed screen after the change, attached; light and dark only if theming changed; a short video for a new flow; if the app cannot start, why -->\n",
     },
     ShippedLabel {
         name: "be",
@@ -700,6 +709,7 @@ pub(crate) const LABELS: [ShippedLabel; 7] = [
         guidance: "Keep the contract explicit: requests, responses, status codes, compatibility.",
         review: None,
         rows: &[],
+        pr_section: "## Contract\n<!-- before and after request and response, status codes, a compatibility note; an oasdiff changelog if there is an OpenAPI spec and oasdiff is installed, else by hand from the diff; a Mermaid sequenceDiagram if async -->\n",
     },
     ShippedLabel {
         name: "db",
@@ -711,6 +721,7 @@ pub(crate) const LABELS: [ShippedLabel; 7] = [
         guidance: "Expand/contract migrations; say what locks or rewrites a table; give a rollback path.",
         review: None,
         rows: &[],
+        pr_section: "## Schema\n<!-- a Mermaid erDiagram of the touched tables; locks, backfill, rollback; squawk output if it is installed, else by hand from the diff -->\n",
     },
     ShippedLabel {
         name: "security",
@@ -719,6 +730,7 @@ pub(crate) const LABELS: [ShippedLabel; 7] = [
         guidance: "An item of security-and-hardening's Ask First tier (a new auth flow, a new PII category, CORS, upload handlers, rate limits) goes in the Plan under Open question.",
         review: Some(("orqa-security-review", "getsentry/skills/skills/security-review", true)),
         rows: &[],
+        pr_section: "## Threat note\n<!-- the trust boundary touched; the Extra review Findings fixed and declined, with the reason -->\n",
     },
     ShippedLabel {
         name: "architecture",
@@ -730,6 +742,7 @@ pub(crate) const LABELS: [ShippedLabel; 7] = [
         guidance: "Record a decision as an ADR and a new term in CONTEXT.md.",
         review: None,
         rows: &[],
+        pr_section: "## Structure\n<!-- a Mermaid flowchart or sequenceDiagram of the new structure; the ADR if one was written -->\n",
     },
     ShippedLabel {
         name: "infra",
@@ -745,6 +758,7 @@ pub(crate) const LABELS: [ShippedLabel; 7] = [
         guidance: "Validate with offline commands only: never terraform plan, apply, destroy, state, import, force-unlock or workspace, init with a backend, kubectl or helm against a cluster, docker push or login, gh secret, gh variable or gh workflow run, or anything that reads a secret; terraform test with mock_provider only. Anything needing a credential is filed as Manual work. Commit a .terraform.lock.hcl change only when the Ticket adds or upgrades a provider, regenerated with terraform providers lock for every platform the lock file lists; without network, file it as Manual work.",
         review: Some(("orqa-infra-review", "", false)),
         rows: &[],
+        pr_section: "## Infra\n<!-- a Mermaid diagram of the resources touched; replacement risks; rollout and rollback; the offline checks' output; Manual work for plan and apply; never a plan -->\n",
     },
     ShippedLabel {
         name: "codex-review",
@@ -753,15 +767,136 @@ pub(crate) const LABELS: [ShippedLabel; 7] = [
         guidance: "",
         review: None,
         rows: &[("review", "app", "codex")],
+        pr_section: "",
     },
 ];
+
+/// The generic default PR template init writes: create-pr's five sections,
+/// each with a one-line comment saying what goes there.
+pub(crate) const PR_TEMPLATE: &str = "## What
+<!-- one or two sentences, concrete -->
+
+## Why
+<!-- the Ticket or decision behind it -->
+
+## Impact
+<!-- what a reviewer should look at: migrations, public API or contract changes, security- or auth-adjacent paths, anything the checks do not cover -->
+
+## Testing
+<!-- the exact commands run and their result -->
+
+## Ticket
+<!-- the issue this closes -->
+";
+
+/// Where the label templates go.
+pub(crate) const TEMPLATE_DIR: &str = ".github/PULL_REQUEST_TEMPLATE";
+/// Where init writes the default template.
+pub(crate) const DEFAULT_TEMPLATE: &str = ".github/pull_request_template.md";
+
+/// The repo's default PR template, where GitHub reads one: .github, the
+/// root or docs, named pull_request_template.md in any case.
+fn default_template(repo: &Path) -> Option<PathBuf> {
+    [".github", "", "docs"].into_iter().find_map(|dir| {
+        fs::read_dir(repo.join(dir))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name().is_some_and(|name| {
+                    name.to_string_lossy()
+                        .eq_ignore_ascii_case("pull_request_template.md")
+                })
+            })
+    })
+}
+
+/// Writes the PR templates for the checked Area labels: the default at
+/// .github/pull_request_template.md and TEMPLATE_DIR/<name>.md, the default
+/// plus the label's section, for each label without one. Nothing existing
+/// is overwritten, and nothing is asked when every file is there. A
+/// default the repo has, wherever GitHub reads it, is asked to frame the
+/// label templates (yes, or nobody answering; no writes nothing) and stays
+/// where it is; with only a template directory, one of its files is
+/// picked as the default and copied there, or none, which writes the
+/// generic one.
+fn write_pr_templates(
+    repo: &Path,
+    labels: &[&ShippedLabel],
+    out: &mut dyn Write,
+    input: &mut dyn Read,
+    tty: bool,
+) -> io::Result<()> {
+    let dir = repo.join(TEMPLATE_DIR);
+    let missing: Vec<&ShippedLabel> = labels
+        .iter()
+        .copied()
+        .filter(|label| !dir.join(label.template_file()).exists())
+        .collect();
+    let default = default_template(repo);
+    if default.is_some() && missing.is_empty() {
+        return Ok(());
+    }
+    step(out, named("PR TEMPLATES"))?;
+    let frame = match default {
+        Some(path) => {
+            let name = path.strip_prefix(repo).unwrap_or(&path).display();
+            let question =
+                format!("Make {name} the default and add the label templates built from it?");
+            if yes(out, input, tty, &question, true)? == Some(false) {
+                return Ok(());
+            }
+            fs::read_to_string(&path)?
+        }
+        None => {
+            let mut files: Vec<String> = fs::read_dir(&dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.ends_with(".md"))
+                .collect();
+            files.sort();
+            let picked = if files.is_empty() {
+                None
+            } else {
+                let options: Vec<&str> = files.iter().map(String::as_str).chain(["none"]).collect();
+                let none = files.len();
+                let question = "Which of these is the default template?";
+                raw(tty, || {
+                    choose(out, &mut *input, question, &options, (none, none), "")
+                })?
+                .filter(|&i| i != none)
+                .map(|i| fs::read_to_string(dir.join(&files[i])))
+                .transpose()?
+            };
+            let frame = picked.unwrap_or_else(|| PR_TEMPLATE.to_string());
+            let at = repo.join(DEFAULT_TEMPLATE);
+            fs::create_dir_all(at.parent().unwrap())?;
+            fs::write(&at, &frame)?;
+            write!(out, "init: wrote {DEFAULT_TEMPLATE}\r\n")?;
+            frame
+        }
+    };
+    let gap = if frame.ends_with('\n') { "\n" } else { "\n\n" };
+    for label in missing {
+        let name = label.template_file();
+        fs::create_dir_all(&dir)?;
+        fs::write(dir.join(&name), format!("{frame}{gap}{}", label.pr_section))?;
+        write!(out, "init: wrote {TEMPLATE_DIR}/{name}\r\n")?;
+    }
+    Ok(())
+}
 
 /// The shipped Ticket labels as a checklist, all checked: the user unchecks
 /// the ones this repo will not use. Each checked label gets its entry in
 /// config.json's labels, unless it has one already, which is never
 /// overwritten, and its skills installed through the Skill manifest. An
 /// unchecked label's entry, if any, is left too: init never deletes one.
-/// Nobody answering keeps every label.
+/// Nobody answering keeps every label. Then the PR templates
+/// (write_pr_templates), and each checked Area label whose template file
+/// is there gets it as its pr_template, unless the entry names one.
 fn ask_labels(
     repo: &Path,
     tools: &dyn Tools,
@@ -795,6 +930,21 @@ fn ask_labels(
     for (label, _) in picked() {
         if doc["labels"][label.name].is_null() {
             doc["labels"][label.name] = label.entry();
+        }
+    }
+    let areas: Vec<&ShippedLabel> = picked()
+        .map(|(label, _)| label)
+        .filter(|label| label.kind == "area")
+        .collect();
+    write_pr_templates(repo, &areas, out, input, tty)?;
+    // The mapping follows the file, written now or kept: an entry's own
+    // non-empty pr_template stays, and a broken entry is not init's to fix.
+    for label in areas {
+        let file = label.template_file();
+        let entry = &mut doc["labels"][label.name];
+        let unset = entry["pr_template"].as_str().unwrap_or_default().is_empty();
+        if entry.is_object() && unset && repo.join(TEMPLATE_DIR).join(&file).exists() {
+            entry["pr_template"] = json!(file);
         }
     }
     app::write(&path, &doc).map_err(io::Error::other)?;
