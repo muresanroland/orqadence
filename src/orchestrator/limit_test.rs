@@ -1098,6 +1098,7 @@ fn a_codex_review_ticket_holds_its_review_at_a_codex_limit_and_carries_on_at_the
     let mut run = spawn_ticket(o.clone(), "hx-1");
     w.await_line("hx-1 codex usage limit until 3:05pm: review 1 holds (pane 1-1)");
     wait_until("hx-1 held on codex", || o.ticket("hx-1").limited == "codex");
+    thread::sleep(std::time::Duration::from_millis(20));
     let pane = o.ticket("hx-1").panes["review"].clone();
     let go_on = format!("herdr agent prompt {pane} continue");
     assert!(w.called(&go_on).is_empty());
