@@ -756,10 +756,9 @@ pub(crate) fn prefix(repo: &Path, manifest: &mut Manifest) -> io::Result<(Rename
         let named = skill_in(&to);
         // A folder at the new name the manifest does not name is not this
         // skill's to take. With none at the old name, an earlier init
-        // renamed it before it failed, unless its SKILL.md names another
-        // skill.
-        let other = named.as_ref().is_some_and(|n| *n != name && *n != new);
-        if there && !stale && (had || other) || had && stale && !own(repo, FILES) {
+        // renamed it before it failed, when its SKILL.md names this skill.
+        let ours = named.as_ref().is_some_and(|n| *n == name || *n == new);
+        if there && !stale && (had || !ours) || had && stale && !own(repo, FILES) {
             left.push((name, new));
             continue;
         }
