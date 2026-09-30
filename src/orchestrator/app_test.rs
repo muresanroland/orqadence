@@ -2,8 +2,8 @@
 //! effort, read when the Stage starts.
 
 use super::app::{
-    app, canonical, checks, debate_inputs, floor_in, labels, row, ExtraReview, Floor, Label,
-    IF_LIMITED,
+    app, canonical, checks, debate_inputs, fallback_row, floor_in, labels, row, ExtraReview, Floor,
+    Label, IF_LIMITED,
 };
 use super::world::{new_world, spawn_ticket, succeed, BdTicket, World};
 use super::write_file;
@@ -784,6 +784,39 @@ fn an_orqa_be_implement_model_wins_over_the_repos_and_an_empty_field_falls_throu
     let said = |labels: &[&str]| row(repo.path(), "implement", &names(labels)).map(|r| r.said());
     assert_eq!(said(&["be"]), Ok("claude opus/high".to_string()));
     assert_eq!(said(&[]), Ok("claude sonnet/high".to_string()));
+}
+
+/// A label setting only the fallback's effort leaves it off: the row it
+/// makes keeps the inherited model none.
+#[test]
+fn an_effort_only_label_leaves_the_missing_fallback_off() {
+    let repo = repo_with(&json!({"labels": {"fast": {"kind": "modifier",
+        "rows": {IF_LIMITED: {"effort": "low"}}}}}));
+    assert!(matches!(
+        fallback_row(repo.path(), &names(&["fast"])),
+        Ok(None)
+    ));
+}
+
+/// Labels' rows together keep the Review's rule: an Area pinning Implement
+/// and a Modifier pinning the Review, each fine alone, put the Review on
+/// Implement's model, so either row refuses.
+#[test]
+fn an_area_and_a_modifier_together_putting_review_on_implements_model_refuse() {
+    let repo = repo_with(&json!({"labels": {
+        "be": {"kind": "area", "rows": {"implement": {"app": "claude", "model": "opus"}}},
+        "cr": {"kind": "modifier", "rows": {"review": {"app": "claude", "model": "opus"}}},
+    }}));
+    let row = |key: &str, labels: &[&str]| row(repo.path(), key, &names(labels));
+    for key in ["implement", "review"] {
+        let err = row(key, &["be", "cr"]).err().unwrap_or_default();
+        assert!(
+            err.starts_with("The Review would run on Implement's model"),
+            "{err}"
+        );
+    }
+    assert!(row("fix", &["be", "cr"]).is_ok());
+    assert!(row("review", &["cr"]).is_ok());
 }
 
 /// Labels that clash are not guessed at: two Area labels, two Modifiers

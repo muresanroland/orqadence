@@ -725,11 +725,13 @@ fn set(label: &Label) -> impl Iterator<Item = (&String, &String, &String)> {
 }
 
 /// doc with the label's row fields put over its own: each non-empty one
-/// wins, an empty one falls through.
+/// wins, an empty one falls through. A row made here keeps the model it
+/// had, so an effort-only label leaves the fallback's none off.
 fn put_rows(doc: &mut Value, label: &Label) {
     for (key, name, value) in set(label) {
         if !doc[key].is_object() {
-            doc[key] = json!({});
+            let model = field(doc, key, "model").unwrap_or_default();
+            doc[key] = json!({"model": model});
         }
         doc[key][name] = json!(value);
     }
@@ -778,10 +780,19 @@ fn labelled(doc: &Value, names: &[String]) -> Result<Value, String> {
 }
 
 /// The row under key: a Stage's, or a Debate side's (side_a, side_b), with
-/// the Ticket's labels, by name, over config.json's.
+/// the Ticket's labels, by name, over config.json's. With labels, the rows
+/// together keep checks' rules: a broken one reading key refuses.
 pub(crate) fn row(repo: &Path, key: &str, labels: &[String]) -> Result<Row, String> {
     let (path, doc) = read(repo)?;
-    row_in(&labelled(&doc, labels)?, key, &path)
+    let doc = labelled(&doc, labels)?;
+    let row = row_in(&doc, key, &path)?;
+    let broken = match labels.is_empty() {
+        true => None,
+        false => rules(&doc)
+            .into_iter()
+            .find(|c| !c.holds && c.rows.contains(&key)),
+    };
+    broken.map_or(Ok(row), |c| Err(c.text))
 }
 
 /// .orqadence/config.json and its path; a missing file is Null.
