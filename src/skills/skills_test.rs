@@ -266,6 +266,10 @@ fn stage_fix_takes_screenshots_for_a_screenshots_section() {
     }
     let at = |part: &str| fix.find(part).unwrap_or_else(|| panic!("no {part:?}"));
     assert!(at("**Screenshots**") < at("Run the orqa-create-pr skill"));
+    // The "not attached and why" note follows the --attach recheck, so a
+    // retry that succeeds cannot leave it false; create-pr writes none.
+    assert!(at("`gh pr edit --attach`") < at("names each file still missing"));
+    assert!(!skill("orqa-create-pr").contains("did not attach"));
 }
 
 /// stage-fix fills the PR template, then puts Orqadence's run parts under

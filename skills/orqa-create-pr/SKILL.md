@@ -55,7 +55,6 @@ Files you are told to attach (the Orqadence Fix Stage's screenshots) go on the s
 gh appends the ones not referenced. If `gh pr create --attach` fails, the PR may or
 may not exist (gh creates none when every upload fails). Keep it only if gh printed its URL or
 `gh pr view` finds one for the branch; otherwise run `gh pr create` again without `--attach`.
-Either way, say in the body which files did not attach and why.
 
 A template you are given comes before any you find yourself (the Orqadence Fix Stage gives
 one as **PR template**). Without one, use the repo's template (`.github/pull_request_template.md`,
