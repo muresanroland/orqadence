@@ -868,12 +868,10 @@ fn write_pr_templates(
                     choose(out, &mut *input, question, &options, (none, none), "")
                 })?
                 .filter(|&i| i != none)
-                .map(|i| dir.join(&files[i]))
+                .map(|i| fs::read_to_string(dir.join(&files[i])))
+                .transpose()?
             };
-            let frame = match &picked {
-                Some(path) => fs::read_to_string(path)?,
-                None => PR_TEMPLATE.to_string(),
-            };
+            let frame = picked.unwrap_or_else(|| PR_TEMPLATE.to_string());
             let at = repo.join(DEFAULT_TEMPLATE);
             fs::create_dir_all(at.parent().unwrap())?;
             fs::write(&at, &frame)?;
