@@ -182,7 +182,7 @@ pub(crate) struct Question {
 }
 
 /// A Notice modal's kind: red and titled ERROR, or green and titled NOTICE.
-#[allow(dead_code)] // nothing raises one yet: /config's App errors and the update notice will
+#[allow(dead_code)] // nothing raises an Error yet: /config's App errors will
 pub(crate) enum NoticeKind {
     Error,
     Info,
@@ -416,11 +416,25 @@ impl Screen {
         match update::exe_path() {
             Ok(exe) => {
                 screen.cfg.exe = exe;
+                screen.notify_updated();
                 screen.check_updates(Arc::new(update::GitHub), update::EVERY);
             }
             Err(err) => screen.say(&format!("update check failed: {err}")),
         }
         screen
+    }
+
+    /// The update notice: an install that put this version in place, the
+    /// last Shell's or init's, left its marker beside the exe.
+    pub(crate) fn notify_updated(&mut self) {
+        if update::take_marker(&self.cfg.exe, &self.version) {
+            let text = format!(
+                "Updated to version {}. See release notes: {}",
+                self.version,
+                update::release_notes(&self.version)
+            );
+            self.notify(NoticeKind::Info, &text, Some(Duration::from_secs(30)));
+        }
     }
 
     /// The updater thread: one check now, then one every `every`, each handed
@@ -2103,7 +2117,6 @@ impl Screen {
 
     /// Raises a Notice modal; one raised while another shows waits behind it.
     /// An autoclose counts down only while it shows.
-    #[allow(dead_code)] // nothing raises one yet: /config's App errors and the update notice will
     pub(crate) fn notify(&mut self, kind: NoticeKind, text: &str, autoclose: Option<Duration>) {
         self.notices.push(Notice {
             kind,
