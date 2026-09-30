@@ -102,8 +102,13 @@ impl Orchestrator {
                         plural(review.found.len(), "finding")
                     ),
                 );
-                let extra_file = self.run_dir(ticket).join(result_name(&EXTRA_REVIEW, round));
-                let mut inputs = vec![("Review file", review_file.display().to_string())];
+                let review_file = review_file.display().to_string();
+                let extra_file = self
+                    .run_dir(ticket)
+                    .join(result_name(&EXTRA_REVIEW, round))
+                    .display()
+                    .to_string();
+                let mut inputs = vec![("Review file", review_file.as_str())];
                 let mut findings = review.found.len();
                 // Debate off: its Findings are fix items, not debated.
                 let mut not_debated = Vec::new();
@@ -123,7 +128,7 @@ impl Orchestrator {
                         ),
                     );
                     if extra.debate {
-                        inputs.push(("Extra review file", extra_file.display().to_string()));
+                        inputs.push(("Extra review file", extra_file.as_str()));
                         findings += found.found.len();
                     } else {
                         not_debated = found
@@ -135,8 +140,6 @@ impl Orchestrator {
                             .collect();
                     }
                 }
-                let inputs: Vec<(&str, &str)> =
-                    inputs.iter().map(|(n, v)| (*n, v.as_str())).collect();
                 let verdict = self.run_read_only(
                     ticket,
                     &DEBATE,

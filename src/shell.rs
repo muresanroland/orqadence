@@ -1007,10 +1007,14 @@ impl Screen {
             }) => ["wait for the reset".to_string()]
                 .into_iter()
                 .chain(fallback.iter().map(|f| format!("review with {f}")))
-                .chain([match extra_review {
-                    true => "open the PR unreviewed, the extra review skipped too".to_string(),
-                    false => "open the PR unreviewed".to_string(),
-                }])
+                .chain([format!(
+                    "open the PR unreviewed{}",
+                    if *extra_review {
+                        ", the extra review skipped too"
+                    } else {
+                        ""
+                    }
+                )])
                 .collect(),
             About::Asked(Ask::StageQuestion { options, .. }) => options
                 .iter()

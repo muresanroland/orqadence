@@ -796,8 +796,8 @@ impl Orchestrator {
             Ok(labels) => labels,
             Err(err) => return Held::Woke(format!("Ticket labels not read: {err}")),
         };
-        let row = match self.row_for(st, &labels) {
-            Ok(row) => row,
+        let (row, extra_skill) = match self.row_for(st, &labels) {
+            Ok(got) => got,
             Err(err) => return Held::Woke(err),
         };
         // A Review on a Limited App goes as the user answered.
@@ -848,12 +848,8 @@ impl Orchestrator {
             Err(err) => return Held::Woke(err),
         };
         // The Extra review's skill takes the review pick's line.
-        if st.name == EXTRA_REVIEW.name {
-            match extra_review(&self.cfg.repo, &labels) {
-                Ok(Some(extra)) => manifest.picks.insert("review".to_string(), extra.skill),
-                Ok(None) => return Held::Woke("its label has no Extra review now".to_string()),
-                Err(err) => return Held::Woke(err),
-            };
+        if let Some(skill) = extra_skill {
+            manifest.picks.insert("review".to_string(), skill);
         }
         // Known limit, short of ADR 0006: the Review's pane starts in the
         // Run directory, under .orqadence-local/ inside the checkout, so
@@ -1109,7 +1105,7 @@ impl Orchestrator {
         session: &Session,
         file: &Path,
     ) -> Result<String, String> {
-        let row = self.row_for(st, &self.labels(ticket)?)?;
+        let row = self.row_for(st, &self.labels(ticket)?)?.0;
         if row.app.name != session.app {
             return Err(format!("its App is now {}", row.app.name));
         }
@@ -1178,13 +1174,16 @@ impl Orchestrator {
     }
 
     /// The Stage's row with the Ticket's labels: the Extra review's is the
-    /// Review's with its label's fields over it.
-    fn row_for(&self, st: &Stage, labels: &[String]) -> Result<Row, String> {
+    /// Review's with its label's fields over it, and its label's skill.
+    fn row_for(&self, st: &Stage, labels: &[String]) -> Result<(Row, Option<String>), String> {
         if st.name != EXTRA_REVIEW.name {
-            return stage_row(&self.cfg.repo, st, labels);
+            return Ok((stage_row(&self.cfg.repo, st, labels)?, None));
         }
         match extra_review(&self.cfg.repo, labels)? {
-            Some(extra) => extra_row(&self.cfg.repo, labels, &extra),
+            Some(extra) => Ok((
+                extra_row(&self.cfg.repo, labels, &extra)?,
+                Some(extra.skill),
+            )),
             None => Err("its label has no Extra review now".to_string()),
         }
     }
