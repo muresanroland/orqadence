@@ -1086,15 +1086,63 @@ pub(crate) fn preflight(
             missing.push(format!("{key} runs on {name}, which is not on PATH"));
         }
     }
+    if has_label(repo, "infra") {
+        for tool in INFRA_TOOLS {
+            if tools.run(repo, &["which", tool]).is_err() {
+                missing.push(format!(
+                    "orqa:infra's Extra review needs {tool}, which is not on PATH"
+                ));
+            } else if tool == "terraform" {
+                let version = tools
+                    .run(repo, &["terraform", "version", "-json"])
+                    .ok()
+                    .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                    .and_then(|doc| major_minor(doc["terraform_version"].as_str()?));
+                if !version.is_some_and(|found| found >= (1, 7)) {
+                    missing.push(
+                        "orqa:infra's Extra review needs terraform 1.7 or newer (for mock_provider)"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    }
     if env("HERDR_ENV") != "1" {
         missing.push("HERDR_ENV is not 1: run Orqadence from a pane inside herdr".to_string());
     }
     missing
 }
 
-/// What the preflight warns of without failing: the superpowers plugin, and
-/// an installed Stage skill that lost a job's placeholder, which the shipped
-/// one holds. A personal skill shadowing a committed one is a Question when
+/// The tools orqa:infra's Extra review runs (infra-review's checks), every
+/// one wanted whether or not the repo uses it.
+const INFRA_TOOLS: [&str; 8] = [
+    "terraform",
+    "tflint",
+    "trivy",
+    "hadolint",
+    "helm",
+    "kubeconform",
+    "actionlint",
+    "shellcheck",
+];
+
+/// Whether config.json's labels has an entry under name, readable or not:
+/// a broken one is app::checks' to report.
+fn has_label(repo: &Path, name: &str) -> bool {
+    app::read(repo).is_ok_and(|(_, doc)| !doc["labels"][name].is_null())
+}
+
+/// 1.2.3 as (1, 2), the patch dropped; anything else is None.
+fn major_minor(version: &str) -> Option<(u32, u32)> {
+    let mut parts = version.splitn(3, '.');
+    let mut next = || parts.next()?.parse().ok();
+    Some((next()?, next()?))
+}
+
+/// What the preflight warns of without failing: the superpowers plugin, an
+/// installed Stage skill that lost a job's placeholder, which the shipped
+/// one holds, and, with orqa:fe configured, a gh too old to attach its
+/// screenshots. A personal skill shadowing a committed one is a Question when
 /// a Ticket starts (ask_shadowed).
 pub(crate) fn warnings(repo: &Path, tools: &dyn Tools) -> Vec<String> {
     let mut warn = Vec::new();
@@ -1120,6 +1168,17 @@ pub(crate) fn warnings(repo: &Path, tools: &dyn Tools) -> Vec<String> {
             "the superpowers Claude Code plugin is enabled: its SessionStart hook can stall Stages"
                 .to_string(),
         );
+    }
+    // An unreadable gh version says nothing: preflight's gh auth status blocks.
+    if has_label(repo, "fe") {
+        if let Ok(text) = tools.run(repo, &["gh", "--version"]) {
+            let version = text.split_whitespace().nth(2).unwrap_or_default();
+            if major_minor(version).is_some_and(|found| found < (2, 99)) {
+                warn.push(format!(
+                    "orqa:fe is configured, and gh {version} cannot attach screenshots to the pull request: gh --attach needs 2.99 (github.com or Enterprise Cloud); upgrade gh"
+                ));
+            }
+        }
     }
     warn
 }
