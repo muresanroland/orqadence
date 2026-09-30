@@ -93,26 +93,3 @@ fn a_mapped_file_removed_falls_back_to_the_default_with_a_recent_line() {
     );
     assert_eq!(template_input(&w, "fix-1.md"), None);
 }
-
-/// A resumed run whose PR-opening Fix is done resolves no template, so
-/// RECENT says nothing of one gone.
-#[test]
-fn a_done_fix_resolves_no_template() {
-    let (w, o) = be_ticket(json!({"kind": "area", "pr_template": "be.md"}));
-    let dir = o.run_dir("hx-1");
-    for (file, text) in [
-        ("implement.md", "STATUS: done\n"),
-        ("review-1.md", "STATUS: done\n"),
-        ("verdict-1.md", "STATUS: done\n"),
-        (
-            "fix-1.md",
-            "STATUS: done\nPR: https://example.test/pr/hx-1\n",
-        ),
-    ] {
-        write_file(&dir.join(file), text);
-    }
-    o.run_ticket("hx-1");
-
-    w.await_line("hx-1 PR #hx-1 opened after 1 round");
-    assert!(!w.lines().iter().any(|l| l.contains("PR template")));
-}

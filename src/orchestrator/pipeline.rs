@@ -258,12 +258,7 @@ impl Orchestrator {
             require_pr: open_pr,
             ..Default::default()
         };
-        // resolved for a Fix that runs: a resumed one already done says nothing
-        let file = self.run_dir(ticket).join(result_name(&FIX, round));
-        let done = read_stage_result(&file, want).1.is_empty();
-        let template = (open_pr && !done)
-            .then(|| self.pr_template(ticket))
-            .flatten();
+        let template = open_pr.then(|| self.pr_template(ticket)).flatten();
         let extra_files: Vec<_> = (1..=FINAL)
             .map(|round| self.run_dir(ticket).join(result_name(&EXTRA_REVIEW, round)))
             .filter(|file| file.exists())
