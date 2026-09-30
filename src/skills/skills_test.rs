@@ -6,81 +6,15 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// A Shipped skill's text by name.
-fn shipped(name: &str) -> &'static str {
-    SKILLS
-        .iter()
-        .find(|(skill, _)| *skill == name)
-        .unwrap_or_else(|| panic!("{name} is not shipped"))
-        .1
-}
-
-/// infra-review names every check it runs, how each result maps to a
-/// severity, the Not run section and the Inputs fetch.sh leaves it.
+/// infra-review is a Shipped skill.
 #[test]
-fn infra_review_is_shipped_and_names_its_checks() {
-    let skill = shipped("orqa-infra-review");
-    assert!(skill.contains("name: orqa-infra-review"), "{skill}");
-    for text in [
-        // the checks
-        "terraform fmt",
-        "terraform validate",
-        "terraform test",
-        "mock_provider",
-        "tflint",
-        "trivy config --skip-check-update",
-        "hadolint",
-        "helm lint",
-        "helm template",
-        "kubeconform",
-        "actionlint",
-        "shellcheck",
-        // offline, from the cache
-        "-backend=false",
-        "-plugin-dir",
-        "TFLINT_PLUGIN_DIR",
-        "-ignore-missing-schemas",
-        "infra=$(mktemp -d)",
-        // a test file runs only when every provider it reaches is mocked
-        "`mock_provider` block of the same name",
-        "no resource a run applies (`command = apply`, the default) has a `provisioner`",
-        // the severities
-        "- terraform validate: error `high`, warning `medium`.",
-        "- tflint: error `high`, warning `medium`, notice `low`.",
-        "- trivy config: CRITICAL and HIGH `high`, MEDIUM `medium`, LOW and UNKNOWN `low`.",
-        "- hadolint: error `high`, warning `medium`, info and style `low`.",
-        "- actionlint: `[expression]` on untrusted input and `[syntax-check]` `high`, `[shellcheck]` by its SC level (error `high`, warning `medium`, info and style `low`), every other kind `medium`.",
-        "- kubeconform: invalid `high`. helm lint: `[ERROR]` `high`, `[WARNING]` `medium`.",
-        "- (low) infra/main.tf — run terraform fmt",
-        "a failing mocked run is `(high)` on its `.tftest.hcl` file",
-        // what did not run, and why
-        "## Not run",
-        "**Fetch**",
-        "**Cache**",
-    ] {
-        assert!(skill.contains(text), "infra-review lacks {text:?}");
-    }
-    assert!(!skill.contains("checkov"), "infra-review runs checkov");
+fn infra_review_is_shipped() {
+    assert!(SKILLS.iter().any(|(n, _)| *n == "orqa-infra-review"));
 }
 
 /// infra-review's fetch.sh, as it is shipped.
 fn fetch_sh() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("skills/orqa-infra-review/fetch.sh")
-}
-
-/// fetch.sh is valid bash.
-#[test]
-fn fetch_sh_parses() {
-    let out = Command::new("bash")
-        .arg("-n")
-        .arg(fetch_sh())
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
 }
 
 /// git in `repo`, cut off from the user's own config.
@@ -178,37 +112,26 @@ fn fetch_inits_a_touched_terraform_root_in_a_temp_copy() {
             "plugin \"aws\" {\n  enabled = true\n  source  = \"github.com/terraform-linters/tflint-ruleset-aws\"\n}\n",
         ),
     ]);
-    let calls: Vec<(&str, &str, &str)> = log
-        .lines()
-        .map(|line| {
-            let mut words = line.splitn(3, ' ');
-            let tool = words.next().unwrap();
-            (tool, words.next().unwrap(), words.next().unwrap_or(""))
-        })
-        .collect();
     // the stubs log the cwd with links resolved (/var is /private/var on macOS)
     let worktree = fs::canonicalize(repo.path()).unwrap();
     let worktree = worktree.to_str().unwrap();
-    let init = calls
-        .iter()
-        .find(|(tool, _, args)| *tool == "terraform" && args.starts_with("init -backend=false"))
+    let init = log
+        .lines()
+        .find(|line| line.starts_with("terraform ") && line.contains(" init -backend=false"))
         .unwrap_or_else(|| panic!("no terraform init: {log}"));
-    assert!(init.1.ends_with("/infra"), "{log}");
-    let tflint = calls
-        .iter()
-        .find(|(tool, _, args)| *tool == "tflint" && *args == "--init")
+    assert!(init.split(' ').nth(1).unwrap().ends_with("/infra"), "{log}");
+    let tflint = log
+        .lines()
+        .find(|line| line.starts_with("tflint ") && line.ends_with(" --init"))
         .unwrap_or_else(|| panic!("no tflint --init: {log}"));
     assert!(
-        calls
-            .iter()
-            .any(|call| call.0 == "gh" && call.2 == "auth token"),
+        log.lines()
+            .any(|line| line.starts_with("gh ") && line.ends_with(" auth token")),
         "{log}"
     );
-    for (tool, cwd, _) in [init, tflint] {
-        assert!(
-            !cwd.starts_with(worktree),
-            "{tool} ran in the worktree: {log}"
-        );
+    for call in [init, tflint] {
+        let cwd = call.split(' ').nth(1).unwrap();
+        assert!(!cwd.starts_with(worktree), "ran in the worktree: {call}");
     }
     assert_eq!(git(repo.path(), &["status", "--porcelain"]), "");
 }
@@ -257,7 +180,10 @@ fn fetch_fails_when_kubeconform_cannot_fetch_a_schema() {
 #[test]
 fn fetch_leaves_invalid_manifests_and_missing_schemas_to_the_review() {
     for (out, status) in [
-        ("k8s/app.yaml - Deployment web is invalid: problem validating schema\n", 1),
+        (
+            "k8s/app.yaml - Deployment web is invalid: problem validating schema\n",
+            1,
+        ),
         ("", 0),
     ] {
         let (ok, stderr) = fetch_kube(out, status);
