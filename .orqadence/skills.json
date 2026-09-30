@@ -1,51 +1,51 @@
 {
   "skills": {
-    "caveman": {
+    "orqa-caveman": {
       "repo": "https://github.com/JuliusBrussee/caveman",
       "path": "skills/caveman",
       "commit": "2fd153c67988e980fb0b2455c90832159a6a5a25"
     },
-    "code-review": {
+    "orqa-code-review": {
       "repo": "https://github.com/mattpocock/skills",
       "path": "skills/engineering/code-review",
       "commit": "c55ee46073ed923f86ce59a5eb3b6d895095d1b7"
     },
-    "ponytail": {
+    "orqa-ponytail": {
       "repo": "https://github.com/DietrichGebert/ponytail",
       "path": "skills/ponytail",
       "commit": "e3ba2aa6f1e6f0bc4d69eb09c9f0d0a93af56156"
     },
-    "ponytail-review": {
+    "orqa-ponytail-review": {
       "repo": "https://github.com/DietrichGebert/ponytail",
       "path": "skills/ponytail-review",
       "commit": "e3ba2aa6f1e6f0bc4d69eb09c9f0d0a93af56156"
     },
-    "resolving-merge-conflicts": {
+    "orqa-resolving-merge-conflicts": {
       "repo": "https://github.com/mattpocock/skills",
       "path": "skills/engineering/resolving-merge-conflicts",
       "commit": "c55ee46073ed923f86ce59a5eb3b6d895095d1b7"
     },
-    "stage-address": {
+    "orqa-stage-address": {
       "shipped": true
     },
-    "stage-fix": {
+    "orqa-stage-fix": {
       "shipped": true
     },
-    "stage-implement": {
+    "orqa-stage-implement": {
       "shipped": true
     },
-    "stage-moderate": {
+    "orqa-stage-moderate": {
       "shipped": true
     },
-    "stage-review": {
+    "orqa-stage-review": {
       "shipped": true
     },
-    "tdd": {
+    "orqa-tdd": {
       "repo": "https://github.com/mattpocock/skills",
       "path": "skills/engineering/tdd",
       "commit": "c55ee46073ed923f86ce59a5eb3b6d895095d1b7"
     },
-    "typesafe-ai": {
+    "orqa-typesafe-ai": {
       "repo": "https://github.com/typesafe-ai/skills",
       "path": "skills/typesafe-ai",
       "commit": "65a39f393687675ce170e6094757de20370365b9"

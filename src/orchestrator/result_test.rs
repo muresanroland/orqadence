@@ -248,13 +248,13 @@ Not a finding: - [fix] inside prose is ignored only when it does not start the l
 
 #[test]
 fn stage_prompt_is_skill_body_plus_inputs() {
-    let skill = "---\nname: stage-review\ndescription: x\n---\n\nReview the branch.\n";
+    let skill = "---\nname: orqa-stage-review\ndescription: x\n---\n\nReview the branch.\n";
     let got = stage_prompt(
         skill,
         &[("Ticket", "hx-1"), ("Result file", "/r/review-1.md")],
     );
     assert!(
-        !got.contains("name: stage-review"),
+        !got.contains("name: orqa-stage-review"),
         "frontmatter leaked into the prompt:\n{got}"
     );
     for want in [

@@ -11,7 +11,7 @@ use super::Screen;
 use crate::orchestrator::stage::Ask;
 use crate::orchestrator::world::{new_world, succeed, BdTicket};
 use crate::orchestrator::write_file;
-use crate::skills::manifest::{add, Manifest, NONE};
+use crate::skills::manifest::{add, personal, set_personal, Manifest, NONE};
 use crate::tempdir::TempDir;
 use crate::tools::fake::Fake;
 use crate::tools::{RunError, Tools};
@@ -419,7 +419,7 @@ fn the_pipeline_list_a_stage_page_and_a_pick_list_render() {
             "  side B effort         default",
             "",
             "DELEGATE SKILLS",
-            "  over-engineering audit  ponytail-review  not installed",
+            "  over-engineering audit  orqa-ponytail-review  not install",
             "",
             "CHECKS",
             "  ✓ The sides come from two families: Anthropic and OpenAI.",
@@ -428,7 +428,7 @@ fn the_pipeline_list_a_stage_page_and_a_pick_list_render() {
     );
     assert!(
         row(&buf, 42).contains(
-            "stage-moderate's pane: runs the Debate and settles each Finding. Default passes no flag."
+            "The Moderator's pane: runs the Debate and settles each Finding. Default passes no flag."
         ),
         "{:#?}",
         rows(&buf)
@@ -837,10 +837,10 @@ fn the_toggle_splits_on_a_plan_model_and_joins_again() {
             "  effort                high",
             "",
             "DELEGATE SKILLS",
-            "  test-first              tdd  not installed",
-            "  self review             code-review  not installed",
-            "  working mode            ponytail  not installed",
-            "  prose                   caveman  not installed",
+            "  test-first              orqa-tdd  not installed",
+            "  self review             orqa-code-review  not installed",
+            "  working mode            orqa-ponytail  not installed",
+            "  prose                   orqa-caveman  not installed",
         ]
     );
 
@@ -1200,27 +1200,27 @@ fn removing_a_skill_a_job_uses_asks_then_sets_the_job_to_none() {
     let tools = clones();
     add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
     let mut s = skills_page(tools, repo.path());
-    s.key(key(KeyCode::Down)); // the location, then tdd
+    keys(&mut s, &[KeyCode::Down, KeyCode::Down]); // the location, yours, then orqa-tdd
     s.key(key(KeyCode::Char('d')));
     let buf = render(&s, 160, 45);
     assert!(
         find(
             &buf,
-            "tdd is the Delegate skill for Plan + Implement test-first"
+            "orqa-tdd is the Delegate skill for Plan + Implement test-first"
         )
         .is_some(),
         "{:#?}",
         rows(&buf)
     );
     s.key(key(KeyCode::Char('n')));
-    assert!(manifest(repo.path()).skills.contains_key("tdd"));
+    assert!(manifest(repo.path()).skills.contains_key("orqa-tdd"));
     s.key(key(KeyCode::Char('d')));
     s.key(key(KeyCode::Char('y')));
     let m = manifest(repo.path());
-    assert!(!m.skills.contains_key("tdd"));
+    assert!(!m.skills.contains_key("orqa-tdd"));
     assert_eq!(m.pick("test-first"), NONE);
-    assert!(!repo.path().join(".agents/skills/tdd").exists());
-    assert_eq!(note(&s), "removed tdd; Plan + Implement test-first is none; saved uncommitted: Tickets take the change once it is merged");
+    assert!(!repo.path().join(".agents/skills/orqa-tdd").exists());
+    assert_eq!(note(&s), "removed orqa-tdd; Plan + Implement test-first is none; saved uncommitted: Tickets take the change once it is merged");
 }
 
 /// A source with two skills, one installed from it already: the checklist
@@ -1261,13 +1261,13 @@ fn adding_a_pack_shows_the_checklist_and_installs_the_ticked_skill() {
     let m = manifest(repo.path());
     assert_eq!(
         m.skills.keys().collect::<Vec<_>>(),
-        ["code-review", "tdd"],
+        ["orqa-code-review", "orqa-tdd"],
         "{m:?}"
     );
-    assert_eq!(m.skills["code-review"].commit, "abc1234def");
+    assert_eq!(m.skills["orqa-code-review"].commit, "abc1234def");
     assert_eq!(
         note(&s),
-        "installed code-review from mattpocock/skills @ abc1234; saved uncommitted: Tickets take the change once it is merged"
+        "installed orqa-code-review from mattpocock/skills @ abc1234; saved uncommitted: Tickets take the change once it is merged"
     );
     assert!(s.settings.as_ref().unwrap().listing.is_none());
 }
@@ -1288,7 +1288,8 @@ fn picking_a_suggestion_not_installed_clones_it_and_picks_it() {
     keys(&mut s, &[KeyCode::Down, KeyCode::Down, KeyCode::Enter]);
     let buf = render(&s, 160, 45);
     assert!(
-        find(&buf, "  tdd ").is_some_and(|(_, y)| cols(&buf, y, 99, 158).contains("not installed")),
+        find(&buf, "  orqa-tdd ")
+            .is_some_and(|(_, y)| cols(&buf, y, 99, 158).contains("not installed")),
         "{:#?}",
         rows(&buf)
     );
@@ -1308,12 +1309,15 @@ fn picking_a_suggestion_not_installed_clones_it_and_picks_it() {
         tools.calls()
     );
     let m = manifest(repo.path());
-    assert!(m.skills.contains_key("tdd"), "{m:?}");
-    assert_eq!(m.pick("test-first"), "tdd");
-    assert!(repo.path().join(".agents/skills/tdd/SKILL.md").is_file());
+    assert!(m.skills.contains_key("orqa-tdd"), "{m:?}");
+    assert_eq!(m.pick("test-first"), "orqa-tdd");
+    assert!(repo
+        .path()
+        .join(".agents/skills/orqa-tdd/SKILL.md")
+        .is_file());
     assert_eq!(
         note(&s),
-        "installed tdd from mattpocock/skills @ abc1234; Plan + Implement test-first uses it; saved uncommitted: Tickets take the change once it is merged"
+        "installed orqa-tdd from mattpocock/skills @ abc1234; Plan + Implement test-first uses it; saved uncommitted: Tickets take the change once it is merged"
     );
 }
 
@@ -1331,6 +1335,7 @@ fn the_review_job_on_codex_hides_a_claude_only_skill() {
         &home.path().join(".agents/skills/archify/SKILL.md"),
         "---\nname: archify\n---\n",
     );
+    set_personal(repo.path(), true).unwrap();
     let mut s = screen_at(apps(""), repo.path());
     s.cfg.home = home.path().to_path_buf();
     type_line(&mut s, "/config");
@@ -1347,7 +1352,7 @@ fn the_review_job_on_codex_hides_a_claude_only_skill() {
             "Review review · codex   filter › ▏",
             "  SUGGESTED",
             "  review-agent            built into codex built in",
-            "  requesting-code-review  obra/superpowers not installed",
+            "  orqa-requesting-code-r… obra/superpowers not installed",
             "▸ none                    the Stage skill… ✓ current",
             "  YOUR OTHER SKILLS CODEX CAN SEE",
             "  archify                 ~/.agents/skills yours",
@@ -1378,7 +1383,7 @@ fn the_skills_page_renders_the_location_and_each_skill() {
     add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
     let mut m = manifest(repo.path());
     m.skills.insert(
-        "create-pr".to_string(),
+        "orqa-create-pr".to_string(),
         crate::skills::manifest::Installed {
             shipped: true,
             ..Default::default()
@@ -1390,7 +1395,7 @@ fn the_skills_page_renders_the_location_and_each_skill() {
         |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
     let buf = render(&s, 160, 45);
     assert_eq!(text(&buf, 13, 69, 97), "▸ Skills    1 installed");
-    let right: Vec<String> = (1..11).map(|y| text(&buf, y, 99, 158)).collect();
+    let right: Vec<String> = (1..14).map(|y| text(&buf, y, 99, 158)).collect();
     assert_eq!(
         right,
         [
@@ -1400,9 +1405,12 @@ fn the_skills_page_renders_the_location_and_each_skill() {
             "",
             "▸ location    .orqadence/skills, committed",
             "    linked from .agents/skills and .claude/skills",
+            "  yours       off: Orqadence's and the repo's only",
+            "    ~/.claude/skills, ~/.agents/skills and Claude Code",
+            "      plugins",
             "",
-            "  create-pr               shipped with Orqadence",
-            "  tdd                     mattpocock/skills @ abc1234",
+            "  orqa-create-pr          shipped with Orqadence",
+            "  orqa-tdd                mattpocock/skills @ abc1234",
             "    ← Plan + Implement test-first",
         ]
     );
@@ -1415,12 +1423,56 @@ fn the_skills_page_renders_the_location_and_each_skill() {
         "{:#?}",
         rows(&buf)
     );
-    keys(&mut s, &[KeyCode::Down, KeyCode::Char('d')]);
+    keys(&mut s, &[KeyCode::Down, KeyCode::Down, KeyCode::Char('d')]);
     assert_eq!(
         note(&s),
-        "create-pr is a Shipped skill: it cannot be removed."
+        "orqa-create-pr is a Shipped skill: it cannot be removed."
     );
     assert!(s.settings.as_ref().unwrap().confirm.is_none());
+}
+
+/// Your personal skills' switch, off by default, turns on and off from the
+/// Skills page, in the per-person config.json, and the pick lists follow.
+#[test]
+fn the_skills_page_turns_your_personal_skills_on_and_off() {
+    let (repo, home) = (TempDir::new(), TempDir::new());
+    write_file(
+        &home.path().join(".claude/skills/grilling/SKILL.md"),
+        "---\nname: grilling\n---\n",
+    );
+    let tools = clones();
+    let mut s = screen_at(tools.clone(), repo.path());
+    s.cfg.home = home.path().to_path_buf();
+    type_line(&mut s, "/config");
+    keys(&mut s, &[KeyCode::Down; 6]);
+    s.key(key(KeyCode::Enter));
+    let seen = |s: &Screen| {
+        s.settings
+            .as_ref()
+            .unwrap()
+            .found
+            .iter()
+            .any(|(n, _)| n == "grilling")
+    };
+    assert!(!seen(&s), "a personal skill listed while off");
+
+    keys(&mut s, &[KeyCode::Down, KeyCode::Enter]);
+    assert!(personal(repo.path()));
+    assert!(seen(&s), "a personal skill not listed once on");
+    assert_eq!(
+        note(&s),
+        "your personal skills on: the jobs can pick them, saved in .orqadence-local/config.json"
+    );
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "▸ yours       on, for you alone").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+
+    s.key(key(KeyCode::Char(' ')));
+    assert!(!personal(repo.path()));
+    assert!(!seen(&s));
 }
 
 /// /config open on the TypeSafe page.
@@ -1699,13 +1751,16 @@ fn updating_says_the_new_commit_or_up_to_date() {
     let tools = clones();
     add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
     let mut m = manifest(repo.path());
-    m.skills.get_mut("tdd").unwrap().commit = "0000000old".to_string();
+    m.skills.get_mut("orqa-tdd").unwrap().commit = "0000000old".to_string();
     m.save(repo.path()).unwrap();
     let mut s = skills_page(tools, repo.path());
-    keys(&mut s, &[KeyCode::Down, KeyCode::Char('u')]);
+    keys(&mut s, &[KeyCode::Down, KeyCode::Down, KeyCode::Char('u')]);
     await_busy(&mut s);
-    assert_eq!(note(&s), "updated tdd 0000000 → abc1234; saved uncommitted: Tickets take the change once it is merged");
-    assert_eq!(manifest(repo.path()).skills["tdd"].commit, "abc1234def");
+    assert_eq!(note(&s), "updated orqa-tdd 0000000 → abc1234; saved uncommitted: Tickets take the change once it is merged");
+    assert_eq!(
+        manifest(repo.path()).skills["orqa-tdd"].commit,
+        "abc1234def"
+    );
     s.key(key(KeyCode::Char('U')));
     await_busy(&mut s);
     assert_eq!(note(&s), "every skill is up to date");
@@ -1728,7 +1783,7 @@ fn a_suggestion_installed_from_a_fork_is_picked_as_it_is() {
     keys(&mut s, &[KeyCode::Enter, KeyCode::Down, KeyCode::Down]);
     keys(&mut s, &[KeyCode::Down, KeyCode::Down, KeyCode::Enter]);
     let buf = render(&s, 160, 45);
-    let (_, y) = find(&buf, "  tdd ").unwrap();
+    let (_, y) = find(&buf, "  orqa-tdd ").unwrap();
     assert!(
         cols(&buf, y, 99, 158).contains("someone/fork     installed"),
         "{:#?}",
@@ -1739,10 +1794,10 @@ fn a_suggestion_installed_from_a_fork_is_picked_as_it_is() {
         &[KeyCode::Up, KeyCode::Up, KeyCode::Up, KeyCode::Enter],
     );
     assert!(s.settings.as_ref().unwrap().busy.is_none());
-    assert_eq!(manifest(repo.path()).pick("test-first"), "tdd");
+    assert_eq!(manifest(repo.path()).pick("test-first"), "orqa-tdd");
     assert_eq!(
         note(&s),
-        "Plan + Implement test-first picks tdd, saved uncommitted in .orqadence/skills.json"
+        "Plan + Implement test-first picks orqa-tdd, saved uncommitted in .orqadence/skills.json"
     );
     let cloned = tools.calls()[calls..].iter().any(|c| c.contains("clone"));
     assert!(!cloned, "{:#?}", tools.calls());

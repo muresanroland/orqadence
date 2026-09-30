@@ -226,10 +226,10 @@ fn open_pr_prunes_build_scratch_and_keeps_evidence() {
 #[test]
 fn implement_runs_the_stage_skill_of_its_worktree() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    // the base's stage-implement, once the worktree checks it out
+    // the base's orqa-stage-implement, once the worktree checks it out
     w.hook(|dir, argv| {
         if argv.starts_with(&["git", "pull"]) {
-            let skill = dir.join(".orqadence/skills/stage-implement/SKILL.md");
+            let skill = dir.join(".orqadence/skills/orqa-stage-implement/SKILL.md");
             write_file(&skill, "The base's Implement: do the Ticket.\n");
         }
         None
@@ -249,12 +249,12 @@ fn implement_runs_the_stage_skill_of_its_worktree() {
 #[test]
 fn a_worktree_loses_the_links_to_the_checkouts_skills() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    let checkout = w.repo.join(".orqadence/skills/stage-implement");
+    let checkout = w.repo.join(".orqadence/skills/orqa-stage-implement");
     w.hook(move |dir, argv| {
         if argv.starts_with(&["git", "pull"]) {
             std::fs::create_dir_all(dir.join(".claude/skills")).unwrap();
             std::fs::create_dir_all(dir.join(".agents/skills")).unwrap();
-            let old = dir.join(".claude/skills/stage-implement");
+            let old = dir.join(".claude/skills/orqa-stage-implement");
             let _ = std::fs::remove_file(&old);
             std::os::unix::fs::symlink(&checkout, old).unwrap();
             let own = dir.join(".agents/skills/own");
@@ -266,7 +266,7 @@ fn a_worktree_loses_the_links_to_the_checkouts_skills() {
 
     w.await_line("hx-1 PR #hx-1 opened");
     let tree = o.worktree("hx-1");
-    let old = tree.join(".claude/skills/stage-implement");
+    let old = tree.join(".claude/skills/orqa-stage-implement");
     assert!(
         std::fs::read_link(&old).map_or(true, |to| !to.is_absolute()),
         "{old:?} still links the checkout"
@@ -285,12 +285,12 @@ fn an_old_link_not_removed_parks_the_ticket() {
     // The links folder not writable, then not readable.
     for locked in [0o555, 0o333] {
         let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-        let checkout = w.repo.join(".orqadence/skills/stage-implement");
+        let checkout = w.repo.join(".orqadence/skills/orqa-stage-implement");
         w.hook(move |dir, argv| {
             if argv.starts_with(&["git", "pull"]) {
                 let links = dir.join(".claude/skills");
                 std::fs::create_dir_all(&links).unwrap();
-                std::os::unix::fs::symlink(&checkout, links.join("stage-implement")).unwrap();
+                std::os::unix::fs::symlink(&checkout, links.join("orqa-stage-implement")).unwrap();
                 mode(&links, locked);
             }
             None
@@ -532,6 +532,22 @@ fn a_personal_copy_of_a_pick_is_asked_once_a_run() {
     assert_eq!(asked(&w), 1, "asked again in the same run");
 }
 
+/// A personal copy the same as the committed pick, the same upstream skill
+/// installed both places, runs the same: nothing to ask.
+#[test]
+fn a_personal_copy_the_same_as_the_committed_one_is_not_asked() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.picked("test-first", "tdd");
+    write_file(
+        &w.home.join(".claude/skills/tdd/SKILL.md"),
+        "---\nname: tdd\n---\n",
+    );
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 0, "a Question was put");
+}
+
 /// Tickets starting together share the Question: one asks, and its answer
 /// is the others' too.
 #[test]
@@ -573,7 +589,7 @@ fn a_pick_no_stage_skill_holds_is_not_shadowed() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
     w.picked("test-first", "tdd");
     write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "yours");
-    let implement = w.repo.join(FILES).join("stage-implement/SKILL.md");
+    let implement = w.repo.join(FILES).join("orqa-stage-implement/SKILL.md");
     let body = std::fs::read_to_string(&implement).unwrap();
     assert!(body.contains("{{test-first}}"));
     write_file(&implement, &body.replace("{{test-first}}", "a test"));
@@ -595,7 +611,7 @@ fn a_pick_in_another_stages_skill_is_checked_on_that_stages_row() {
         &w.repo.join(".orqadence/config.json"),
         r#"{"implement": {"app": "codex"}}"#,
     );
-    let fix = w.repo.join(FILES).join("stage-fix/SKILL.md");
+    let fix = w.repo.join(FILES).join("orqa-stage-fix/SKILL.md");
     let body = std::fs::read_to_string(&fix).unwrap();
     write_file(
         &fix,
@@ -691,23 +707,14 @@ fn a_pick_not_merged_is_not_shadowed_by_an_older_copy_on_the_base() {
     assert_eq!(asked(&w), 1, "asked about a line left out");
 }
 
-/// A personal create-pr shadows the committed one the Fix loads by name:
-/// asked at the Ticket's start, before any Stage, the Fix among them.
+/// A personal create-pr shadows nothing: the Fix loads orqa-create-pr.
 #[test]
-fn a_personal_create_pr_is_asked_before_the_fix_loads_it() {
+fn a_personal_create_pr_is_not_asked_about() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
     write_file(&w.home.join(".claude/skills/create-pr/SKILL.md"), "yours");
-    let o = Arc::new(o);
-    let mut run = spawn_ticket(o.clone(), "hx-1");
-
-    assert_eq!(
-        w.await_event(SHADOWS).text,
-        "your ~/.claude/skills/create-pr shadows the committed create-pr: claude runs yours"
-    );
-    assert!(w.called("herdr agent start").is_empty(), "a Stage started");
-    answer(&w, &o, "hx-1", SHADOWS, 1, 0);
-    run.wait();
+    o.run_ticket("hx-1");
     w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(asked(&w), 0, "a Question was put");
 }
 
 /// Park parks the Ticket, and the answer is not kept: /continue asks again.

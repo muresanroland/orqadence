@@ -60,10 +60,16 @@ pub(crate) fn load(repo: &Path, env: &dyn Fn(&str) -> String) -> OnCall {
     }
 }
 
-/// Keeps the settings in the per-person config.json, its other keys as they
-/// were, readable only by the user since it holds the token. A file that is
-/// not a JSON object refuses, so a save never writes over it.
+/// Keeps the settings in the per-person config.json (keep).
 pub(crate) fn save(repo: &Path, on_call: &OnCall) -> io::Result<()> {
+    let value = json!({"token": on_call.token, "minutes": on_call.minutes});
+    keep(repo, "on_call", value)
+}
+
+/// Keeps one per-person setting under key in config.json, its other keys as
+/// they were, readable only by the user since it holds On call's token. A
+/// file that is not a JSON object refuses, so a save never writes over it.
+pub(crate) fn keep(repo: &Path, key: &str, value: Value) -> io::Result<()> {
     local_dir(repo)?;
     let path = repo.join(CONFIG);
     let mut doc = match fs::read(&path) {
@@ -74,7 +80,7 @@ pub(crate) fn save(repo: &Path, on_call: &OnCall) -> io::Result<()> {
         Err(err) if err.kind() == io::ErrorKind::NotFound => json!({}),
         Err(err) => return Err(err),
     };
-    doc["on_call"] = json!({"token": on_call.token, "minutes": on_call.minutes});
+    doc[key] = value;
     // Whole through a temp file, as app::write, so a load never reads half.
     let tmp = path.with_extension("json.tmp");
     let mut file = File::options()

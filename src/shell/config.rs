@@ -74,7 +74,7 @@ pub(crate) const ROWS: [ConfigRow; 8] = [
         name: "Moderator",
         lead: "Moderator",
         section: 2,
-        note: "stage-moderate's pane: runs the Debate and settles each Finding.",
+        note: "The Moderator's pane: runs the Debate and settles each Finding.",
     },
     ConfigRow {
         key: "side_a",
@@ -138,6 +138,9 @@ pub(crate) const SKILLS_PAGE: usize = APPS_PAGE + 1;
 pub(crate) const TYPESAFE_PAGE: usize = APPS_PAGE + 2;
 pub(crate) const RUN_PAGE: usize = APPS_PAGE + 3;
 pub(crate) const ON_CALL_PAGE: usize = APPS_PAGE + 4;
+/// The Skills page's rows before its skills: the location and your
+/// personal skills' switch.
+pub(crate) const SKILL_ROWS: usize = 2;
 
 /// The floors the TypeSafe page shows under the key, in its order.
 pub(crate) const FLOORS: [&Floor; 2] = [&WAKE_FLOOR, &PLAN_FLOOR];
@@ -223,7 +226,7 @@ pub(crate) fn short_commit(commit: &str) -> &str {
 /// Every skill you have, each with its folder as the pages show it: from the
 /// repo's root, or ~ for home.
 fn found(repo: &Path, home: &Path, tools: &dyn Tools) -> Vec<(String, PathBuf)> {
-    manifest::list(repo, home, tools)
+    manifest::list(repo, home, tools, manifest::personal(repo))
         .into_iter()
         .map(|(name, path)| {
             let dir = path.parent().unwrap_or(&path);
@@ -344,7 +347,9 @@ pub(crate) struct Settings {
     /// The Skill manifest, read again after each change to it.
     pub(crate) manifest: Manifest,
     /// Every skill you have, as found() gives them.
-    found: Vec<(String, PathBuf)>,
+    pub(crate) found: Vec<(String, PathBuf)>,
+    /// Whether your personal skills are on (manifest::personal).
+    pub(crate) personal: bool,
     /// The section on the left (APPS_PAGE past them), and whether the
     /// cursor is on its page.
     pub(crate) section: usize,
@@ -741,19 +746,11 @@ impl Settings {
         let mut listed = vec![NONE.to_string()];
         if let Some(app) = app {
             entry("SUGGESTED", String::new(), None, None);
-            let seen = self.seen(app);
             for &(name, source) in suggestions.iter() {
                 if name == NONE || (source.is_empty() && !app.built_in.contains(&name)) {
                     continue;
                 }
-                // Yours through a plugin is picked as plugin:name.
-                let named = seen
-                    .iter()
-                    .map(|(n, _)| *n)
-                    .find(|n| n.rsplit(':').next() == Some(name))
-                    .unwrap_or(name)
-                    .to_string();
-                // One you have is used as it is, from whatever source.
+                let named = name.to_string();
                 match self.have(app, &named) {
                     Some((mark, color, detail)) => {
                         entry(&named, detail, Some((mark, color)), value(&named))
@@ -827,7 +824,7 @@ impl Settings {
     pub(crate) fn note_of(&self, row: usize, field: Field) -> String {
         let tail = match field {
             Field::Job(j) => return format!(
-                "The skill the Stage uses for {}: one you have is used as it is, one not installed is installed first; none leaves the Stage skill's own instructions.",
+                "The skill the Stage uses for {}: one not installed is installed first, as orqa-<name>; none leaves the Stage skill's own instructions. Your personal skills are listed once turned on, on the Skills page.",
                 job_name(j)
             ),
             Field::App => "Changing the App leads into its model list; the pair saves together.",
@@ -854,13 +851,16 @@ impl Settings {
         self.manifest.skills.keys().cloned().collect()
     }
 
-    /// The foot's note on the Skills page's row i: where the skills live, or
-    /// a skill.
+    /// The foot's note on the Skills page's row i: where the skills live,
+    /// your personal skills' switch, or a skill.
     pub(crate) fn skills_note(&self, i: usize) -> String {
         let names = self.skill_names();
-        let Some(name) = i.checked_sub(1).map(|i| &names[i]) else {
-            return "Committed: a skill change here takes effect for Tickets once it is merged."
-                .to_string();
+        let Some(name) = i.checked_sub(SKILL_ROWS).map(|i| &names[i]) else {
+            return match i {
+                0 => "Committed: a skill change here takes effect for Tickets once it is merged.",
+                _ => "Enter or Space turns on or off, for you alone, the jobs picking and the Stages loading your own skills: ~/.claude/skills, ~/.agents/skills and Claude Code plugins'. Off, only Orqadence's, the repo's own and the Apps' built-in ones.",
+            }
+            .to_string();
         };
         match self.manifest.skills[name].shipped {
             true => format!("{name} is a Shipped skill: orqa init installs and updates it, and it cannot be removed."),
@@ -1055,6 +1055,7 @@ impl Screen {
             installed,
             manifest,
             found: found(repo, &self.cfg.home, tools),
+            personal: manifest::personal(repo),
             section: 0,
             open: false,
             setting: 0,
@@ -1193,11 +1194,15 @@ impl Screen {
         }
         if st.section == SKILLS_PAGE {
             let names = st.skill_names();
-            let skill = st.setting.checked_sub(1).map(|i| names[i].clone());
+            let skill = st.setting.checked_sub(SKILL_ROWS).map(|i| names[i].clone());
             match code {
                 KeyCode::Up => st.setting = st.setting.saturating_sub(1),
-                KeyCode::Down => st.setting = (st.setting + 1).min(names.len()),
+                KeyCode::Down => st.setting = (st.setting + 1).min(names.len() + SKILL_ROWS - 1),
                 KeyCode::Left | KeyCode::Esc => st.open = false,
+                KeyCode::Enter | KeyCode::Char(' ') if st.setting == 1 => {
+                    let on = !st.personal;
+                    self.personal_to(on)
+                }
                 KeyCode::Char('a') => st.typing = Some((Typing::Source, String::new())),
                 KeyCode::Char('U') => self.update_skills(None),
                 KeyCode::Char('u') if skill.is_some() => self.update_skills(skill),
@@ -1435,6 +1440,22 @@ impl Screen {
     fn refused(&mut self, err: &str) {
         let st = self.settings.as_mut().unwrap();
         st.note = Some((format!("{err}. Nothing changed."), RED));
+    }
+
+    /// Your personal skills on or off, in the per-person config.json; the
+    /// skills you have listed again.
+    fn personal_to(&mut self, on: bool) {
+        if let Err(err) = manifest::set_personal(&self.cfg.repo, on) {
+            return self.refused(&format!("{}: {err}", on_call::CONFIG));
+        }
+        let found = found(&self.cfg.repo, &self.cfg.home, &*self.cfg.tools);
+        self.reload_skills(found);
+        self.settings.as_mut().unwrap().personal = on;
+        let text = match on {
+            true => "your personal skills on: the jobs can pick them",
+            false => "your personal skills off: only Orqadence's, the repo's and built-in ones",
+        };
+        self.done(text.to_string(), &format!(", saved in {}", on_call::CONFIG));
     }
 
     /// TypeSafe on or off in config.json, which /config reads again.
@@ -1776,7 +1797,7 @@ impl Screen {
         }
         st.found = found;
         if st.section == SKILLS_PAGE {
-            st.setting = st.setting.min(st.manifest.skills.len());
+            st.setting = st.setting.min(st.manifest.skills.len() + SKILL_ROWS - 1);
         }
     }
 
@@ -1825,7 +1846,7 @@ impl Screen {
                         let here = st
                             .manifest
                             .skills
-                            .get(&name)
+                            .get(&format!("{}{name}", manifest::PREFIX))
                             .is_some_and(|s| s.repo == repo);
                         (name, here, here)
                     })
@@ -1852,7 +1873,8 @@ impl Screen {
                 let mut failed = false;
                 for (name, added) in added {
                     match added {
-                        Ok(_) => said.push(self.installed(&name)),
+                        Ok(Added::Installed(name)) => said.push(self.installed(&name)),
+                        Ok(Added::Choose(_)) => {}
                         Err(err) => {
                             failed = true;
                             said.push(format!("{name} not installed: {err}"));

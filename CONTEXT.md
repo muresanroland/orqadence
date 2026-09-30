@@ -20,11 +20,11 @@ A skill owned and shipped by Orqadence that holds the instructions for one kind 
 _Avoid_: Wayfinder, brainstorming skill
 
 **Delegate skill**:
-A third-party skill a Stage skill or Brainstorm skill runs for one job (test-first implementing, self review, the over-engineering audit, merge conflicts, how it writes...), chosen per job by the user. A Stage can have several. The skill that runs it still owns its result; with no Delegate skill for a job it follows its own instructions. The Brainstorm's own jobs, grilling, domain modeling, research and prototyping, never take one.
+A third-party skill a Stage skill or Brainstorm skill runs for one job (test-first implementing, self review, the over-engineering audit, merge conflicts, how it writes...), chosen per job by the user: one Orqadence installed, the repo's own, one built into an App, or, once the user turns their personal skills on, one of their own at home or from a Claude Code plugin. A Stage can have several. The skill that runs it still owns its result; with no Delegate skill for a job it follows its own instructions. The Brainstorm's own jobs, grilling, domain modeling, research and prototyping, never take one.
 _Avoid_: Override, replacement, work skill
 
 **Shipped skill**:
-Any skill Orqadence installs for a Target repo, committed with the repo's Orqadence settings: the Stage skills, the Brainstorm skills, plus create-pr, which the Fix Stage runs. A repo that already has a create-pr of its own is asked whether to keep it, replace it, or take the shipped one beside it as orqadence-create-pr.
+Any skill Orqadence ships and installs for a Target repo, committed with the repo's Orqadence settings: the Stage skills, the Brainstorm skills, plus orqa-create-pr, which the Fix Stage runs. Like every skill Orqadence installs, fetched Delegate skills too, its name starts with orqa-, so none shares a name with a skill of the repo's or the user's own.
 
 **Skill manifest**:
 The Target repo's record of the skills Orqadence installs for it: the Shipped skills, plus third-party skills named by their pinned source, and which of them is each Stage's Delegate skill. It belongs to the repo and is committed beside the skill files themselves, so every checkout runs the same text, and a new version of any skill reaches the repo only as a change someone reviews.

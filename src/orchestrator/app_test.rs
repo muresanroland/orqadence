@@ -4,7 +4,7 @@
 use super::app::{app, canonical, checks, floor_in, Floor, IF_LIMITED};
 use super::world::{new_world, spawn_ticket, succeed, BdTicket, World};
 use super::write_file;
-use crate::skills::manifest::{Manifest, NONE};
+use crate::skills::manifest::{set_personal, Manifest, NONE};
 use crate::skills::SKILLS;
 use crate::tempdir::TempDir;
 use serde_json::{json, Value};
@@ -106,11 +106,14 @@ fn a_worktree_path_is_escaped_in_the_review_settings_on_claude() {
 fn the_moderators_inputs_carry_each_sides_command() {
     let skill = SKILLS
         .iter()
-        .find(|(name, _)| *name == "stage-moderate")
+        .find(|(name, _)| *name == "orqa-stage-moderate")
         .unwrap()
         .1;
     for own in ["claude -p", "codex exec"] {
-        assert!(!skill.contains(own), "stage-moderate still runs {own:?}");
+        assert!(
+            !skill.contains(own),
+            "orqa-stage-moderate still runs {own:?}"
+        );
     }
     // Started in the worktree, a claude side is granted the Run directory,
     // its sibling, which holds the diff; the model and effort go before -p.
@@ -353,6 +356,7 @@ fn pick(w: &World, picks: &[(&str, &str)]) {
 #[test]
 fn a_jobs_line_names_its_pick_in_the_apps_mention_form_or_is_dropped() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    set_personal(&w.repo, true).unwrap();
     write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "tdd");
     let plugin = TempDir::new();
     write_file(&plugin.path().join("skills/ponytail/SKILL.md"), "lazy");
@@ -380,7 +384,7 @@ fn a_jobs_line_names_its_pick_in_the_apps_mention_form_or_is_dropped() {
         "   Use the ponytail:ponytail skill for all your work",
         "test-first: a failing test, then the code.",
         "read the diff against the acceptance criteria and fix what is missing or wrong.",
-        "- Not installed: code-review (self-review): their lines are left out; say so in the result file\n",
+        "- Not installed: orqa-code-review (self-review): their lines are left out; say so in the result file\n",
     ] {
         assert!(implement.contains(want), "{want:?} not in:\n{implement}");
     }
@@ -399,6 +403,20 @@ fn a_jobs_line_names_its_pick_in_the_apps_mention_form_or_is_dropped() {
     assert!(!review.contains("Not installed"), "{review}");
 }
 
+/// A personal skill, at home or a plugin's, is not installed until the
+/// user turns their personal skills on: its line is left out.
+#[test]
+fn a_personal_pick_is_not_installed_until_personal_skills_are_on() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    write_file(&w.home.join(".claude/skills/tdd/SKILL.md"), "tdd");
+    pick(&w, &[("test-first", "tdd")]);
+    o.run_ticket("hx-1");
+
+    let implement = w.prompt("implement.md");
+    assert!(!implement.contains("Use the tdd skill"), "{implement}");
+    assert!(implement.contains(" tdd (test-first),"), "{implement}");
+}
+
 /// A pick counts as installed only where the App running its line loads
 /// it: codex, the Review's default, reads .agents/skills, never Claude's
 /// .claude/skills or its plugins.
@@ -410,6 +428,7 @@ fn a_pick_only_another_app_loads_is_not_installed() {
         ("plugin/skills", "sp:requesting-code-review", false),
     ] {
         let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+        set_personal(&w.repo, true).unwrap();
         write_file(
             &w.home.join(dir).join("requesting-code-review/SKILL.md"),
             "review",
@@ -451,12 +470,9 @@ fn a_built_in_pick_is_not_installed_on_another_app() {
 #[test]
 fn the_audit_at_none_is_skipped_and_noted() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    write_file(
-        &w.home.join(".claude/skills/ponytail-review/SKILL.md"),
-        "cut",
-    );
+    w.picked("audit", "orqa-ponytail-review");
     o.run_ticket("hx-1");
-    let audit = "Use the ponytail-review skill on the diff";
+    let audit = "Use the orqa-ponytail-review skill on the diff";
     assert!(w.prompt("verdict-1.md").contains(audit));
 
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);

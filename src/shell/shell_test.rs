@@ -1153,7 +1153,6 @@ fn the_idle_tree_renders_from_a_fake_bd_with_the_saved_epic_resumable() {
         [
             "gh auth status",
             "git remote",
-            "claude plugin list --json",
             "which claude",
             "which codex",
             "which claude",
