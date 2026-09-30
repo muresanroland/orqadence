@@ -753,10 +753,13 @@ pub(crate) fn prefix(repo: &Path, manifest: &mut Manifest) -> io::Result<(Rename
         let stale = manifest.skills.contains_key(&new);
         let had = fs::symlink_metadata(&from).is_ok();
         let there = fs::symlink_metadata(&to).is_ok();
+        let named = skill_in(&to);
         // A folder at the new name the manifest does not name is not this
         // skill's to take. With none at the old name, an earlier init
-        // renamed it before it failed.
-        if had && (there && !stale || stale && !own(repo, FILES)) {
+        // renamed it before it failed, unless its SKILL.md names another
+        // skill.
+        let other = named.as_ref().is_some_and(|n| *n != name && *n != new);
+        if there && !stale && (had || other) || had && stale && !own(repo, FILES) {
             left.push((name, new));
             continue;
         }
@@ -767,7 +770,7 @@ pub(crate) fn prefix(repo: &Path, manifest: &mut Manifest) -> io::Result<(Rename
                 fs::rename(&from, &to)?;
                 rename(&to, &new)?;
             }
-        } else if own(repo, FILES) && !stale {
+        } else if own(repo, FILES) && !stale && named.as_ref() == Some(&name) {
             // Moved by an earlier init that failed before naming it.
             rename(&to, &new)?;
         }
