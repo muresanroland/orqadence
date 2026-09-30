@@ -261,6 +261,8 @@ fn stage_fix_takes_screenshots_for_a_screenshots_section() {
         "`<Run directory>/pr/`",
         "`--attach`",
         "never committed",
+        "skip `gh pr edit --attach`",
+        "not retried if it fails",
     ] {
         assert!(fix.contains(text), "stage-fix lacks {text:?}");
     }
