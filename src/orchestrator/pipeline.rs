@@ -384,7 +384,7 @@ impl Orchestrator {
             return Ok(());
         };
         let worktree = self.worktree(ticket);
-        // (skill, the Question, what run without leaves out)
+        // (skill, the Question, ": " and what run without leaves out, or "")
         let mut missing: Vec<(String, String, String)> = Vec::new();
         for (job, _) in JOBS {
             let pick = manifest.pick(job);
@@ -395,7 +395,7 @@ impl Orchestrator {
                         "{pick}, picked for {job}, is not on this Ticket's base branch: \
                          added in /config and not yet merged"
                     ),
-                    format!("the {job} line is left out"),
+                    format!(": the {job} line is left out"),
                 ));
             }
         }
@@ -434,10 +434,6 @@ impl Orchestrator {
             if !manifest.unmerged(&worktree, &skill) {
                 continue;
             }
-            let left_out = match left_out.is_empty() {
-                true => left_out,
-                false => format!(": {left_out}"),
-            };
             let options = vec![
                 format!("park: commit and merge {skill}, then /continue @{ticket}"),
                 format!("run without it{left_out}"),
@@ -454,7 +450,8 @@ impl Orchestrator {
 
     /// A personal skill with the name of a committed one a Stage loads by
     /// name (each job's pick, orqa-create-pr for the Fix, the review pick on
-    /// review_if_limited's row too while it is set), in a home folder of
+    /// review_if_limited's row too while it is set, the Ticket's label skills
+    /// on the code-editing Stages' rows), in a home folder of
     /// the App on the row that loads it (home_skills), shadows it: claude
     /// runs the personal one, codex may. A Question each, before any Stage
     /// on each entry, but for Implement's jobs once it is done: gone on
@@ -474,6 +471,7 @@ impl Orchestrator {
         let worktree = self.worktree(ticket);
         // labels that cannot be read Wake the Stage that reads them
         let labels = self.labels(ticket).unwrap_or_default();
+        let entries = app::ticket_labels(repo, &labels).unwrap_or_default();
         let implement = self.run_dir(ticket).join(result_name(&IMPLEMENT, 0));
         let implemented = read_stage_result(&implement, ResultRequirements::default())
             .1
@@ -502,6 +500,16 @@ impl Orchestrator {
             loaded.extend(held.map(|(job, _)| (manifest.pick(job), key)));
         }
         loaded.push((CREATE_PR, FIX.name));
+        // the label skills, on the code-editing Stages' rows
+        for (_, label) in &entries {
+            for skill in &label.skills {
+                for st in [&IMPLEMENT, &FIX, &ADDRESS] {
+                    if !(implemented && st.name == IMPLEMENT.name) {
+                        loaded.push((skill, st.name));
+                    }
+                }
+            }
+        }
         for (name, key) in loaded {
             // a row that cannot be read is its Stage's to refuse
             let row = match key {

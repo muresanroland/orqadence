@@ -100,6 +100,34 @@ fn a_label_skill_not_installed_is_under_not_installed() {
     );
 }
 
+/// A personal ~/.claude/skills copy of a committed label skill shadows it:
+/// a Question before any Stage, as a pick's is. Parked, no Stage starts.
+#[test]
+fn a_personal_copy_of_a_label_skill_is_a_question_at_ticket_start() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:db"])]);
+    config(&w, &["orqa-db-skill"], "");
+    w.installed("orqa-db-skill");
+    write_file(
+        &w.home.join(".claude/skills/orqa-db-skill/SKILL.md"),
+        "yours",
+    );
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+
+    let asked = w.await_event("shadows the committed");
+    assert_eq!(
+        asked.text,
+        "your ~/.claude/skills/orqa-db-skill shadows the committed orqa-db-skill: claude runs yours"
+    );
+    assert!(w.called("herdr agent start").is_empty(), "a Stage started");
+    let Some(Ask::TicketStart { options }) = asked.ask else {
+        panic!("no Ticket-start Question: {:?}", asked.ask);
+    };
+    o.answer("hx-1", "", Answer::Prompt(options[1].clone()));
+    run.wait();
+    assert!(w.called("herdr agent start").is_empty(), "a Stage started");
+}
+
 /// The Ticket file is written as each code-editing Stage starts, the parent
 /// Epic's description under ## Epic context, and Fix gets it as an Input
 /// too. A Ticket without a parent has no such heading.
