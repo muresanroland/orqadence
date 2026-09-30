@@ -662,9 +662,7 @@ pub(crate) static ROWS: [&str; 8] = [
 pub(crate) struct Label {
     /// "area" or "modifier".
     pub(crate) kind: String,
-    #[allow(dead_code)] // read by the label skills Ticket
     pub(crate) skills: Vec<String>,
-    #[allow(dead_code)] // read by the label guidance Ticket
     pub(crate) guidance: String,
     /// Row overrides, shaped as config.json's rows: a non-empty field wins
     /// over the repo's row.
@@ -672,7 +670,6 @@ pub(crate) struct Label {
     /// A file name; empty is the default template.
     #[allow(dead_code)] // read by the PR template Ticket
     pub(crate) pr_template: String,
-    #[allow(dead_code)] // read by the Extra review Ticket
     pub(crate) extra_review: ExtraReview,
 }
 
