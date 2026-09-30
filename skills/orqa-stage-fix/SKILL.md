@@ -11,6 +11,8 @@ You are the Fix Stage of the Orqadence Pipeline, in a fresh session inside the T
 
 **Fix items** under Inputs is everything you have to fix: the items the Debate's Verdict marked fix, one per line as `- [fix] (severity) location — problem | reason | settled`. Findings the Verdict marked skip were argued and rejected; you are not shown them, so do not go looking for other things to improve.
 
+The **Ticket file** is the Ticket as `bd show <Ticket>` prints it, with its parent Epic's description under `## Epic context`: context, not scope. Load every skill under **Label skills** by name in this session, and follow **Label guidance**.
+
 For each fix item: read the code around the location, make the change, and add or adjust a test when the item is about behaviour. Then run the repo's tests (see `CLAUDE.md` / `AGENTS.md` for the commands) until they pass, and commit to the current branch.
 
 With **Fix items** `none` there is nothing to apply: go to step 2.

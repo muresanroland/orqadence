@@ -183,6 +183,8 @@ pub(crate) struct Inner {
     pub(crate) tickets: Vec<BdTicket>,
     /// Ids the Epic waits on: its bd blocks dependencies.
     pub(crate) epic_deps: Vec<String>,
+    /// The Epic's description, as 'bd show hx --json' prints it.
+    pub(crate) epic_description: String,
     /// PR url -> gh JSON.
     pub(crate) prs: BTreeMap<String, String>,
     /// Command prefix -> the error its next call fails with.
@@ -548,6 +550,11 @@ impl World {
             return Ok(json!(all).to_string());
         }
         if cmd.starts_with("bd show") && cmd.ends_with(" --json") {
+            if argv[2] == EPIC {
+                let epic = json!([{"id": EPIC, "issue_type": "epic",
+                    "description": w.epic_description}]);
+                return Ok(epic.to_string());
+            }
             let shown = w.tickets.iter().filter(|t| t.id == argv[2]);
             return Ok(json!(shown.map(BdTicket::json).collect::<Vec<_>>()).to_string());
         }
@@ -685,19 +692,33 @@ impl World {
         Ok(())
     }
 
-    /// A skill Orqadence fetched, `job`'s pick: in the checkout's
-    /// .orqadence/skills and its Skill manifest, merged on the base.
-    pub(crate) fn picked(&self, job: &str, name: &str) {
+    /// A skill Orqadence fetched: in the checkout's .orqadence/skills and
+    /// its Skill manifest, merged on the base.
+    pub(crate) fn installed(&self, name: &str) {
         let mut manifest = Manifest::load(&self.repo).unwrap();
         let skill = Installed {
             repo: format!("https://github.com/o/{name}"),
             ..Default::default()
         };
         manifest.skills.insert(name.to_string(), skill);
-        manifest.picks.insert(job.to_string(), name.to_string());
         manifest.save(&self.repo).unwrap();
         let skill = self.repo.join(FILES).join(name).join("SKILL.md");
         write_file(&skill, &format!("---\nname: {name}\n---\n"));
+    }
+
+    /// A skill Orqadence fetched, `job`'s pick.
+    pub(crate) fn picked(&self, job: &str, name: &str) {
+        self.installed(name);
+        let mut manifest = Manifest::load(&self.repo).unwrap();
+        manifest.picks.insert(job.to_string(), name.to_string());
+        manifest.save(&self.repo).unwrap();
+    }
+
+    /// A skill added in /config and not yet merged: in the checkout, as
+    /// installed, and missing from a Ticket's worktree until merged.
+    pub(crate) fn unmerged_skill(&self, name: &str) {
+        self.installed(name);
+        self.lock().unmerged.push(name.to_string());
     }
 
     /// `job`'s pick added in /config and not yet merged: in the checkout, as
