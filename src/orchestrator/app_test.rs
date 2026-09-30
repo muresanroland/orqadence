@@ -841,6 +841,24 @@ fn a_label_pinning_side_b_to_side_as_family_is_refused() {
     assert!(debate(&[]).is_ok());
 }
 
+/// A label's rows keep the Review's rule: a label putting review_if_limited
+/// on Implement's model is refused by /config's checks.
+#[test]
+fn a_label_putting_the_reviews_fallback_on_implements_model_is_refused() {
+    let doc = json!({"implement": {"app": "claude", "model": "opus"},
+        "labels": {"be": {"kind": "area",
+            "rows": {"review_if_limited": {"app": "claude", "model": "opus"}}}}});
+    let broken: Vec<_> = checks(&doc).into_iter().filter(|c| !c.holds).collect();
+    assert_eq!(broken.len(), 1);
+    assert!(
+        broken[0].text.starts_with(
+            "be review_if_limited: The Review if limited would run on Implement's model"
+        ),
+        "{}",
+        broken[0].text
+    );
+}
+
 /// A label's rows keep runs_on: a label row naming codex for fix is
 /// refused, by /config's checks, on the Fix's page, and as the Fix starts.
 #[test]

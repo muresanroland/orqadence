@@ -1015,6 +1015,13 @@ fn debate(a: Option<&str>, b: Option<&str>) -> Check {
 /// Implement's model; the Debate's sides come from two families. A row that
 /// cannot be read is left out, as reading it refuses on its own.
 pub(crate) fn checks(doc: &Value) -> Vec<Check> {
+    let mut out = rules(doc);
+    out.extend(label_checks(doc));
+    out
+}
+
+/// checks' rules over doc alone, its labels left out.
+fn rules(doc: &Value) -> Vec<Check> {
     let row = |key: &str| {
         Some((
             app(&field(doc, key, "app").ok()?)?,
@@ -1057,13 +1064,12 @@ pub(crate) fn checks(doc: &Value) -> Vec<Check> {
     if let (Some(a), Some(b)) = (row("side_a"), row("side_b")) {
         out.push(debate(family_of(a.0, &a.1), family_of(b.0, &b.1)));
     }
-    out.extend(label_checks(doc));
     out
 }
 
 /// Each Ticket label's rows over config.json's, as a Ticket with it alone
 /// runs them: a row it sets that cannot be read, config.json's own being
-/// readable, and a Debate side it sets on the other's family, named
+/// readable, and checks' rules broken on a row it sets, named
 /// '<label> <row> ...'. Only broken ones; a label that cannot be read is its
 /// Tickets' to refuse.
 fn label_checks(doc: &Value) -> Vec<Check> {
@@ -1076,10 +1082,11 @@ fn label_checks(doc: &Value) -> Vec<Check> {
         put_rows(&mut with, &label);
         // ponytail: no file to name, so row_in's error starts ": ", trimmed
         // below; give row_in a prefix of its own if its wording changes
-        let row = |key: &str| row_in(&with, key, Path::new(""));
-        let own = |key: &str| row_in(doc, key, Path::new("")).is_ok();
         for key in ROWS.iter().filter(|key| label.rows.contains_key(**key)) {
-            if let (Err(err), true) = (row(key), own(key)) {
+            if let (Err(err), Ok(_)) = (
+                row_in(&with, key, Path::new("")),
+                row_in(doc, key, Path::new("")),
+            ) {
                 out.push(Check {
                     rows: std::slice::from_ref(key),
                     holds: false,
@@ -1087,15 +1094,16 @@ fn label_checks(doc: &Value) -> Vec<Check> {
                 });
             }
         }
-        let sides: Vec<&str> = ["side_a", "side_b"]
-            .into_iter()
-            .filter(|key| label.rows.contains_key(*key))
-            .collect();
-        if let (false, Ok(a), Ok(b)) = (sides.is_empty(), row("side_a"), row("side_b")) {
-            let check = debate(family_of(a.app, &a.model), family_of(b.app, &b.model));
-            if !check.holds {
+        for check in rules(&with).into_iter().filter(|c| !c.holds) {
+            let set: Vec<&str> = check
+                .rows
+                .iter()
+                .copied()
+                .filter(|key| label.rows.contains_key(*key))
+                .collect();
+            if !set.is_empty() {
                 out.push(Check {
-                    text: format!("{name} {}: {}", sides.join(" and "), check.text),
+                    text: format!("{name} {}: {}", set.join(" and "), check.text),
                     ..check
                 });
             }

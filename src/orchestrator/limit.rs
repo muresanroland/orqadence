@@ -232,9 +232,10 @@ impl Orchestrator {
         let answer = loop {
             if !asked && self.asked.lock().unwrap().insert(app.to_string()) {
                 asked = true;
-                // the answer stands for every Ticket: config.json's
-                // fallback, whichever Ticket asks; each then runs its own
-                let fallback = fallback_row(&self.cfg.repo, &[]).ok().flatten();
+                // the fallback the asking Ticket would run; the answer
+                // stands for every Ticket, each running its own
+                let labels = self.labels(ticket).unwrap_or_default();
+                let fallback = fallback_row(&self.cfg.repo, &labels).ok().flatten();
                 let ask = Ask::Limited {
                     app: app.to_string(),
                     fallback: fallback.filter(|f| f.app.name != app).map(|f| f.said()),
@@ -382,11 +383,10 @@ impl Orchestrator {
         // A Review on its own App goes as the user answered: on wait it holds
         // as any Stage; otherwise its session is left, and it starts again.
         // On its fallback's it holds as any Stage: the answer stands.
-        // labels that cannot be read: config.json's row, as the next
-        // attempt Wakes on them
-        let labels = self.labels(ticket).unwrap_or_default();
+        // Unreadable labels read as none.
         if st.name == REVIEW.name
-            && stage_row(&self.cfg.repo, st, &labels).is_ok_and(|row| row.app.name == app)
+            && stage_row(&self.cfg.repo, st, &self.labels(ticket).unwrap_or_default())
+                .is_ok_and(|row| row.app.name == app)
         {
             match self.review_answer(ticket, label, app) {
                 Err(held) => return held,
