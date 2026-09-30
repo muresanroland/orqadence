@@ -662,7 +662,9 @@ pub(crate) static ROWS: [&str; 8] = [
 pub(crate) struct Label {
     /// "area" or "modifier".
     pub(crate) kind: String,
+    /// The skills the code-editing Stages load, by name.
     pub(crate) skills: Vec<String>,
+    /// One line the code-editing Stages follow.
     pub(crate) guidance: String,
     /// Row overrides, shaped as config.json's rows: a non-empty field wins
     /// over the repo's row.
@@ -734,18 +736,33 @@ fn put_rows(doc: &mut Value, label: &Label) {
     }
 }
 
-/// doc with the rows of the Ticket's labels, by name, put over its own, a
-/// Modifier's field over the Area's. Two Area labels, two Modifiers setting
-/// one field, or a label with no entry is refused, not guessed at.
-fn labelled(doc: &Value, names: &[String]) -> Result<Value, String> {
+/// The Ticket's labels' entries in doc, by name, the Area's first: a label
+/// with no entry is refused.
+fn entries(doc: &Value, names: &[String]) -> Result<Vec<(String, Label)>, String> {
     let mut picked = Vec::new();
     for name in names {
         let label = match &doc["labels"][name.as_str()] {
             Value::Null => Err(format!("orqa:{name} has no entry in config.json's labels")),
             value => entry(name, value),
         }?;
-        picked.push((name, label));
+        picked.push((name.clone(), label));
     }
+    // The Area's first, so a Modifier's field wins.
+    picked.sort_by_key(|(_, label)| label.kind == "modifier");
+    Ok(picked)
+}
+
+/// The Ticket's labels' entries, read from config.json as a Stage starts,
+/// the Area's first.
+pub(crate) fn ticket_labels(repo: &Path, names: &[String]) -> Result<Vec<(String, Label)>, String> {
+    entries(&read(repo)?.1, names)
+}
+
+/// doc with the rows of the Ticket's labels, by name, put over its own, a
+/// Modifier's field over the Area's. Two Area labels, two Modifiers setting
+/// one field, or a label with no entry is refused, not guessed at.
+fn labelled(doc: &Value, names: &[String]) -> Result<Value, String> {
+    let picked = entries(doc, names)?;
     let areas: Vec<String> = picked
         .iter()
         .filter(|(_, label)| label.kind == "area")
@@ -767,8 +784,6 @@ fn labelled(doc: &Value, names: &[String]) -> Result<Value, String> {
             }
         }
     }
-    // The Area's first, so a Modifier's field wins.
-    picked.sort_by_key(|(_, label)| label.kind == "modifier");
     let mut doc = doc.clone();
     for (_, label) in &picked {
         put_rows(&mut doc, label);

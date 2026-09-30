@@ -25,6 +25,7 @@ pub(crate) struct BdIssue {
     pub(crate) status: String,
     pub(crate) issue_type: String,
     pub(crate) parent: String,
+    pub(crate) description: String,
     pub(crate) dependencies: Vec<BdDependency>,
     /// 'PR merged: <url>' on a Ticket poll_merges closed.
     pub(crate) close_reason: String,
@@ -58,7 +59,8 @@ struct GhPr {
 }
 
 impl Orchestrator {
-    fn bd_issues(&self, args: &[&str]) -> Result<Vec<BdIssue>, String> {
+    /// Every issue bd's reply to args holds, Epics included.
+    fn bd_all(&self, args: &[&str]) -> Result<Vec<BdIssue>, String> {
         let mut argv = vec!["bd"];
         argv.extend_from_slice(args);
         let out = self
@@ -68,11 +70,35 @@ impl Orchestrator {
             .map_err(|err| err.to_string())?;
         let issues: Option<Vec<BdIssue>> = serde_json::from_str(&out)
             .map_err(|err| format!("bd {}: unreadable reply: {err}", args[0]))?;
-        Ok(issues
-            .unwrap_or_default()
+        Ok(issues.unwrap_or_default())
+    }
+
+    /// The Tickets bd's reply to args holds: never an Epic.
+    fn bd_issues(&self, args: &[&str]) -> Result<Vec<BdIssue>, String> {
+        Ok(self
+            .bd_all(args)?
             .into_iter()
             .filter(|issue| issue.issue_type != "epic")
             .collect())
+    }
+
+    /// The description of the Ticket's parent Epic, as bd shows it now;
+    /// "" for a Ticket without a parent.
+    pub(super) fn epic_description(&self, ticket: &str) -> Result<String, String> {
+        let shown = self.bd_issues(&["show", ticket, "--json"])?;
+        let Some(parent) = shown
+            .first()
+            .map(|issue| &issue.parent)
+            .filter(|p| !p.is_empty())
+        else {
+            return Ok(String::new());
+        };
+        let epic = self.bd_all(&["show", parent, "--json"])?;
+        Ok(epic
+            .into_iter()
+            .next()
+            .map(|e| e.description)
+            .unwrap_or_default())
     }
 
     /// The Ticket's Ticket labels, by name: its own orqa: labels as bd

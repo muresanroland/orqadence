@@ -9,7 +9,7 @@ You are in a fresh session inside the kept worktree of a Ticket whose pull reque
 
 ## Do
 
-1. Read the feedback. **Review comments (gh JSON)** holds the PR's reviews and conversation comments. Inline review comments are not in it; fetch them with `gh api repos/{owner}/{repo}/pulls/<number>/comments --paginate` (`{owner}` and `{repo}` are filled in by gh). `bd show <Ticket>` reminds you what the change is for.
+1. Read the feedback. **Review comments (gh JSON)** holds the PR's reviews and conversation comments. Inline review comments are not in it; fetch them with `gh api repos/{owner}/{repo}/pulls/<number>/comments --paginate` (`{owner}` and `{repo}` are filled in by gh). The **Ticket file** reminds you what the change is for; its `## Epic context` is the parent Epic's description: context, not scope. Load every skill under **Label skills** by name in this session, and follow **Label guidance**.
 2. If **Conflicts with main** is yes: `git fetch origin`, then rebase the branch onto the remote's default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`, fall back to `origin/main`), keeping both sides' intent: never resolve a conflict by dropping the other change.
    Use the {{merge-conflicts}} skill for the rebase.
    When a conflict cannot keep both intents, stop mid-rebase and ask (see the end): the hunk, what each side meant, and the options ours, theirs, or a merge you describe. The answer resumes the rebase. Never abort it.

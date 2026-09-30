@@ -24,7 +24,11 @@ A third-party skill a Stage skill or Brainstorm skill runs for one job (test-fir
 _Avoid_: Override, replacement, work skill
 
 **Shipped skill**:
-Any skill Orqadence ships and installs for a Target repo, committed with the repo's Orqadence settings: the Stage skills, the Brainstorm skills, plus orqa-create-pr, which the Fix Stage runs. Like every skill Orqadence installs, fetched Delegate skills too, its name starts with orqa-, so none shares a name with a skill of the repo's or the user's own.
+Any skill Orqadence ships and installs for a Target repo, committed with the repo's Orqadence settings: the Stage skills, the Brainstorm skills, plus orqa-create-pr, which the Fix Stage runs, and orqa-infra-review, orqa:infra's Extra review skill. Like every skill Orqadence installs, fetched Delegate skills too, its name starts with orqa-, so none shares a name with a skill of the repo's or the user's own.
+
+**Personal override**:
+One setting of the Target repo's Orqadence settings that one person keeps for themselves, read over the repo's committed value on their machine only. It never leaves the machine and is never reviewed, so it covers the settings that change how a run is scheduled and which App, model or effort a Stage uses, never a skill or a Delegate pick.
+_Avoid_: Local config, user config, override file
 
 **Skill manifest**:
 The Target repo's record of the skills Orqadence installs for it: the Shipped skills, plus third-party skills named by their pinned source, and which of them is each Stage's Delegate skill. It belongs to the repo and is committed beside the skill files themselves, so every checkout runs the same text, and a new version of any skill reaches the repo only as a change someone reviews.
@@ -40,6 +44,10 @@ _Avoid_: Task, issue, story
 **Ticket run**:
 A run over Tickets the user names instead of an Epic: its scope is a queue they add to and take from while it runs, and it ends once every Ticket in it is merged (or none is left), after its Release when it carries the Release label. Like an Epic run it takes at most max_tickets at once, polls for merges and resumes; only one run, of either kind, is live in a Target repo.
 _Avoid_: Batch, single-Ticket run
+
+**Saved run**:
+A run, an Epic run or a Ticket run, that was stopped before it ended, kept so it can go on later where it left off: each Ticket at its Stage. A Target repo keeps every Saved run until it ends; still, only one run is live at a time, so a Saved run resumes only while none is.
+_Avoid_: Stopped run, history entry, paused epic
 
 **Ticket label**:
 A bd label `orqa:<name>` that the Target repo has configured, changing how its Ticket runs: the skills and guidance the Stages that write its code get, the App, model or effort of any Stage, the template its pull request is written from, and possibly an Extra review. A Ticket carries at most one Area label and any number of Modifier labels; labels that clash are put to the user before the Ticket goes on.
@@ -165,7 +173,7 @@ The Orchestrator's answer to a Wake or a Plan, taken from a typed model over the
 _Avoid_: LLM call, Main session
 
 **Plan**:
-What an Implement session writes before it may edit: the changes and tests it intends for its Ticket, the decisions it made with the answer taken, and an open question only when it has one. A Judgment approves it when it covers every acceptance criterion, stays in scope and asks nothing; otherwise the user reads it and answers, and the session revises it. An open question always goes to the user.
+What an Implement session writes before it may edit: the changes and tests it intends for its Ticket, the decisions it made with the answer taken, and an open question only when it has one. A Judgment approves it when it covers every acceptance criterion, stays in scope and asks nothing; otherwise the user reads it and answers, and the session revises it. An open question always goes to the user; while they are Away it parks its Ticket until they continue it.
 
 **Question**:
 What the Shell puts to the user when the Orchestrator cannot act alone: a Wake the Judgment was unsure about, a blocked session, a plan to approve, a Stage's own question, a pick not yet merged on a Ticket's base or a personal skill shadowing a committed one when the Ticket starts, Manual work its session waits on, the Review's App at its usage limit, or a confirmation. It holds only its Ticket (the Review's limit, every Ticket reaching the Review on that App until it is answered), is answered from a fixed set of options or a line of the user's own text, and is never saved: on resume it is derived again from the live session or the Stage result.
@@ -180,7 +188,7 @@ Something a code-editing Stage or a Brainstorm session needs done that it cannot
 _Avoid_: Manual step, human task, hand-off
 
 **Away**:
-What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question, or one at a Ticket's start, then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket. Nothing is pushed to the phone, and the Shell never goes On call. Nothing else changes: Judgments still answer what they can.
+What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question, a Plan's open question, or one at a Ticket's start, then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket. Nothing is pushed to the phone, and the Shell never goes On call. Nothing else changes: Judgments still answer what they can.
 _Avoid_: AFK, offline, unattended mode
 
 **On call**:

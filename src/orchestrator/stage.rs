@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::app::{check, debate_inputs, fallback_row, stage_row, App, Row};
+use super::app::{check, debate_inputs, fallback_row, stage_row, ticket_labels, App, Row};
 use super::herdr::{agent_name, split_target};
 use super::judgment::{offered, Action, Judged, PlanJudged, TypeSafe, WAKE_FLOOR};
 use super::limit::{until, Limit, LAST_LINES};
@@ -842,7 +842,35 @@ impl Orchestrator {
             .filter(|(name, _)| !manifest.unmerged(&worktree, name))
             .map(|(name, _)| name)
             .collect();
-        let (skill, lacking) = manifest.fill_jobs(&skill, &have, runs.built_in, runs.mention);
+        let (skill, mut lacking) = manifest.fill_jobs(&skill, &have, runs.built_in, runs.mention);
+        // The code-editing Stages get the Ticket's labels, their skills the
+        // App loads (the rest join Not installed) and their guidance.
+        let edits = [IMPLEMENT.name, FIX.name, ADDRESS.name].contains(&st.name);
+        let entries = match edits {
+            true => match ticket_labels(&self.cfg.repo, &labels) {
+                Ok(entries) => entries,
+                Err(err) => return Held::Woke(err),
+            },
+            false => Vec::new(),
+        };
+        let mut named = Vec::new();
+        let mut loaded: Vec<&str> = Vec::new();
+        let mut guidance = Vec::new();
+        for (name, label) in &entries {
+            named.push(format!("orqa:{name}"));
+            for skill in &label.skills {
+                let said = format!("{skill} (orqa:{name})");
+                if manifest::lacks(skill, &have, runs.built_in) {
+                    lacking.push(said);
+                } else if !loaded.contains(&skill.as_str()) {
+                    loaded.push(skill);
+                }
+            }
+            if !label.guidance.is_empty() {
+                guidance.push(label.guidance.as_str());
+            }
+        }
+        let (named, loaded, guidance) = (named.join(", "), loaded.join(", "), guidance.join(" "));
         let lacking = (!lacking.is_empty()).then(|| {
             format!(
                 "{}: their lines are left out; say so in the result file",
@@ -852,25 +880,43 @@ impl Orchestrator {
         let mut inputs = inputs.to_vec();
         inputs.extend(sides.iter().map(|(name, value)| (*name, value.as_str())));
         inputs.extend(lacking.as_deref().map(|value| ("Not installed", value)));
+        for (name, value) in [
+            ("Label", &named),
+            ("Label skills", &loaded),
+            ("Label guidance", &guidance),
+        ] {
+            if !value.is_empty() {
+                inputs.push((name, value));
+            }
+        }
         if let Err(err) = fs::create_dir_all(file.parent().unwrap()) {
             return Held::Woke(err.to_string());
         }
-        // Implement's scope is its Ticket, shown here: codex's sandbox
-        // cannot take bd's lock in the main checkout's .beads.
-        if st.name == IMPLEMENT.name {
+        // The code-editing Stages' scope is the Ticket, shown here (codex's
+        // sandbox cannot take bd's lock in the main checkout's .beads), with
+        // its parent Epic's description after it: context, not scope.
+        if edits {
             let shown = self.cfg.tools.run(&self.cfg.repo, &["bd", "show", ticket]);
-            let saved = shown
-                .map_err(|err| err.to_string())
-                .and_then(|text| fs::write(&ticket_file, text).map_err(|err| err.to_string()));
-            if let Err(err) = saved {
-                return Held::Woke(format!("Ticket not shown: {err}"));
+            let mut text = match shown {
+                Ok(text) => text,
+                Err(err) => return Held::Woke(format!("Ticket not shown: {err}")),
+            };
+            match self.epic_description(ticket) {
+                Ok(epic) if epic.is_empty() => {}
+                Ok(epic) => text += &format!("\n## Epic context\n\n{}\n", epic.trim_end()),
+                Err(err) => return Held::Woke(format!("Epic not shown: {err}")),
             }
+            if let Err(err) = fs::write(&ticket_file, text) {
+                return Held::Woke(format!("Ticket file not written: {err}"));
+            }
+            inputs.push(("Ticket file", &ticket_file_s));
+        }
+        if st.name == IMPLEMENT.name {
             let how = match written {
                 true => "write plan.md and STATUS: plan",
                 false => "native plan mode",
             };
             inputs.push(("Plan", how));
-            inputs.push(("Ticket file", &ticket_file_s));
         }
         let session = Session {
             app: row.app.name.to_string(),
@@ -1297,7 +1343,13 @@ impl Orchestrator {
 
     /// A bd comment on the Ticket for a Question that came while the user
     /// was Away: `lead`, then the question and its options.
-    fn comment_away(&self, ticket: &str, lead: &str, question: &str, options: &[String]) {
+    pub(super) fn comment_away(
+        &self,
+        ticket: &str,
+        lead: &str,
+        question: &str,
+        options: &[String],
+    ) {
         let options: String = options.iter().map(|o| format!("- {o}\n")).collect();
         let comment = format!("{lead}\n\n{question}\n{options}");
         let argv = ["bd", "comments", "add", ticket, comment.trim_end()];

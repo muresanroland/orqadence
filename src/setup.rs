@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
+use std::iter;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -17,7 +18,7 @@ use crate::orchestrator::app::{self, APPS};
 use crate::orchestrator::state::{self, local_dir};
 use crate::shell::brand::{self, BORDER, FRAME, GREEN, MUTED, PURPLE, TEXT, YELLOW};
 use crate::skills::manifest::{self, Installed, Manifest, FILES, JOBS, LINKS};
-use crate::skills::{stage_skill, CREATE_PR, SKILLS};
+use crate::skills::{stage_skill, CREATE_PR, EXTRA_FILES, SKILLS};
 use crate::tools::Tools;
 
 /// The record of every skill file init wrote, path to the text it wrote:
@@ -202,9 +203,9 @@ pub(crate) fn install_skills(
     unhide_links(repo)?;
     let (renamed, left) = manifest::prefix(repo, &mut manifest)?;
     for (old, new) in &renamed {
-        if let Some(wrote) = record.remove(&record_key(old)) {
+        if let Some(wrote) = record.remove(&record_key(old, "SKILL.md")) {
             record
-                .entry(record_key(new))
+                .entry(record_key(new, "SKILL.md"))
                 .or_insert_with(|| manifest::renamed(&wrote, new));
         }
         write!(out, "init: renamed {old} to {new}\r\n")?;
@@ -241,29 +242,45 @@ pub(crate) fn install_skills(
         Mode::Fresh
     };
     for &(name, body) in SKILLS {
-        let rel = record_key(name);
         manifest::move_in(repo, name)?;
-        let dest = manifest::skill_dir(repo, name).join("SKILL.md");
-        let existing = fs::symlink_metadata(&dest).ok();
+        let dir = manifest::skill_dir(repo, name);
+        let is_link = |path: &Path| {
+            fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+        };
         // A link is the repo's own arrangement: never written through.
-        if existing
-            .as_ref()
-            .is_some_and(|meta| meta.file_type().is_symlink())
-        {
+        if is_link(&dir.join("SKILL.md")) {
             continue;
         }
-        let write = match mode {
-            Mode::Overwrite => true,
-            Mode::Refresh => record
-                .get(&rel)
-                .is_some_and(|wrote| fs::read_to_string(&dest).is_ok_and(|now| now == *wrote)),
-            Mode::Fresh => existing.is_none(),
-        };
-        if write {
-            fs::create_dir_all(dest.parent().unwrap())?;
-            fs::write(&dest, body)?;
-            record.insert(rel, body.to_string());
-            manifest.skills.insert(name.to_string(), shipped());
+        let extra = EXTRA_FILES
+            .iter()
+            .filter(|(skill, ..)| *skill == name)
+            .map(|&(_, file, body)| (file, body));
+        for (file, body) in iter::once(("SKILL.md", body)).chain(extra) {
+            let (rel, dest) = (record_key(name, file), dir.join(file));
+            if is_link(&dest) {
+                continue;
+            }
+            let write = match mode {
+                Mode::Overwrite => true,
+                // A file not there yet, as a skill newer than the install, is
+                // installed; one there is rewritten only when unedited.
+                Mode::Refresh => {
+                    !dest.exists()
+                        || record.get(&rel).is_some_and(|wrote| {
+                            fs::read_to_string(&dest).is_ok_and(|now| now == *wrote)
+                        })
+                }
+                Mode::Fresh => !dest.exists(),
+            };
+            if write {
+                fs::create_dir_all(&dir)?;
+                fs::write(&dest, body)?;
+                if file != "SKILL.md" {
+                    fs::set_permissions(&dest, fs::Permissions::from_mode(0o755))?;
+                }
+                record.insert(rel, body.to_string());
+                manifest.skills.insert(name.to_string(), shipped());
+            }
         }
         manifest::link(repo, name)?;
     }
@@ -293,10 +310,10 @@ fn shipped() -> Installed {
     }
 }
 
-/// The record's key for a skill init wrote: its path in the repo's
+/// The record's key for a skill's file init wrote: its path in the repo's
 /// .agents/skills, as the record has always named it, wherever it is now.
-fn record_key(name: &str) -> String {
-    format!(".agents/skills/{name}/SKILL.md")
+fn record_key(name: &str, file: &str) -> String {
+    format!(".agents/skills/{name}/{file}")
 }
 
 /// Whether a shipped skill is already installed in dir.
@@ -1069,15 +1086,63 @@ pub(crate) fn preflight(
             missing.push(format!("{key} runs on {name}, which is not on PATH"));
         }
     }
+    if has_label(repo, "infra") {
+        for tool in INFRA_TOOLS {
+            if tools.run(repo, &["which", tool]).is_err() {
+                missing.push(format!(
+                    "orqa:infra's Extra review needs {tool}, which is not on PATH"
+                ));
+            } else if tool == "terraform" {
+                let version = tools
+                    .run(repo, &["terraform", "version", "-json"])
+                    .ok()
+                    .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                    .and_then(|doc| major_minor(doc["terraform_version"].as_str()?));
+                if !version.is_some_and(|found| found >= (1, 7)) {
+                    missing.push(
+                        "orqa:infra's Extra review needs terraform 1.7 or newer (for mock_provider)"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    }
     if env("HERDR_ENV") != "1" {
         missing.push("HERDR_ENV is not 1: run Orqadence from a pane inside herdr".to_string());
     }
     missing
 }
 
-/// What the preflight warns of without failing: the superpowers plugin, and
-/// an installed Stage skill that lost a job's placeholder, which the shipped
-/// one holds. A personal skill shadowing a committed one is a Question when
+/// The tools orqa:infra's Extra review runs (infra-review's checks), every
+/// one wanted whether or not the repo uses it.
+const INFRA_TOOLS: [&str; 8] = [
+    "terraform",
+    "tflint",
+    "trivy",
+    "hadolint",
+    "helm",
+    "kubeconform",
+    "actionlint",
+    "shellcheck",
+];
+
+/// Whether config.json's labels has an entry under name, readable or not:
+/// a broken one is app::checks' to report.
+fn has_label(repo: &Path, name: &str) -> bool {
+    app::read(repo).is_ok_and(|(_, doc)| !doc["labels"][name].is_null())
+}
+
+/// 1.2.3 as (1, 2), the patch dropped; anything else is None.
+fn major_minor(version: &str) -> Option<(u32, u32)> {
+    let mut parts = version.splitn(3, '.');
+    let mut next = || parts.next()?.parse().ok();
+    Some((next()?, next()?))
+}
+
+/// What the preflight warns of without failing: the superpowers plugin, an
+/// installed Stage skill that lost a job's placeholder, which the shipped
+/// one holds, and, with orqa:fe configured, a gh too old to attach its
+/// screenshots. A personal skill shadowing a committed one is a Question when
 /// a Ticket starts (ask_shadowed).
 pub(crate) fn warnings(repo: &Path, tools: &dyn Tools) -> Vec<String> {
     let mut warn = Vec::new();
@@ -1103,6 +1168,17 @@ pub(crate) fn warnings(repo: &Path, tools: &dyn Tools) -> Vec<String> {
             "the superpowers Claude Code plugin is enabled: its SessionStart hook can stall Stages"
                 .to_string(),
         );
+    }
+    // An unreadable gh version says nothing: preflight's gh auth status blocks.
+    if has_label(repo, "fe") {
+        if let Ok(text) = tools.run(repo, &["gh", "--version"]) {
+            let version = text.split_whitespace().nth(2).unwrap_or_default();
+            if major_minor(version).is_some_and(|found| found < (2, 99)) {
+                warn.push(format!(
+                    "orqa:fe is configured, and gh {version} cannot attach screenshots to the pull request: gh --attach needs 2.99 (github.com or Enterprise Cloud); upgrade gh"
+                ));
+            }
+        }
     }
     warn
 }
