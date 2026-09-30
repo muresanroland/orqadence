@@ -2,7 +2,7 @@ use super::run;
 use crate::orchestrator::app::{self, Label};
 use crate::orchestrator::write_file;
 use crate::setup::setup_test::snapshot;
-use crate::setup::{LABELS, TYPESAFE_SKILL};
+use crate::setup::{DEFAULT_TEMPLATE, LABELS, TEMPLATE_DIR, TYPESAFE_SKILL};
 use crate::skills::manifest::{Installed, Manifest, JOBS};
 use crate::skills::SKILLS;
 use crate::tempdir::TempDir;
@@ -1247,10 +1247,6 @@ fn the_labels_checklist_turns_auto_wrap_off_and_back_on() {
     assert!(off < row && row < on, "{list:?}");
     assert!(list.contains("✓ fe, be, db"), "{list:?}");
 }
-
-/// The default template and the label templates init writes.
-const DEFAULT_TEMPLATE: &str = ".github/pull_request_template.md";
-const TEMPLATE_DIR: &str = ".github/PULL_REQUEST_TEMPLATE";
 
 /// The six Area labels and each one's section heading.
 const AREA_SECTIONS: [(&str, &str); 6] = [

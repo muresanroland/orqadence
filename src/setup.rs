@@ -657,11 +657,16 @@ pub(crate) struct ShippedLabel {
     /// Row overrides: (row, field, value).
     pub(crate) rows: &'static [(&'static str, &'static str, &'static str)],
     /// The section its PR template adds to the default: a heading and a
-    /// comment saying what goes there. Empty for a Modifier.
+    /// comment saying what goes there. Empty for a Modifier label.
     pub(crate) pr_section: &'static str,
 }
 
 impl ShippedLabel {
+    /// Its PR template's file name in TEMPLATE_DIR.
+    fn template_file(&self) -> String {
+        format!("{}.md", self.name)
+    }
+
     /// Every skill the label needs from a source, its Extra review's too:
     /// (installed name, manifest source).
     pub(crate) fn sources(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
@@ -784,9 +789,10 @@ pub(crate) const PR_TEMPLATE: &str = "## What
 <!-- the issue this closes -->
 ";
 
-/// Where the label templates go, and the default's path.
+/// Where the label templates go.
 pub(crate) const TEMPLATE_DIR: &str = ".github/PULL_REQUEST_TEMPLATE";
-const DEFAULT_TEMPLATE: &str = ".github/pull_request_template.md";
+/// Where init writes the default template.
+pub(crate) const DEFAULT_TEMPLATE: &str = ".github/pull_request_template.md";
 
 /// A label's template: the default's frame plus the label's section.
 pub(crate) fn label_template(frame: &str, section: &str) -> String {
@@ -799,7 +805,8 @@ pub(crate) fn label_template(frame: &str, section: &str) -> String {
 fn default_template(repo: &Path) -> Option<PathBuf> {
     [".github", "", "docs"].into_iter().find_map(|dir| {
         fs::read_dir(repo.join(dir))
-            .ok()?
+            .into_iter()
+            .flatten()
             .flatten()
             .map(|entry| entry.path())
             .find(|path| {
@@ -831,7 +838,7 @@ fn write_pr_templates(
     let missing: Vec<&ShippedLabel> = labels
         .iter()
         .copied()
-        .filter(|label| !dir.join(format!("{}.md", label.name)).exists())
+        .filter(|label| !dir.join(label.template_file()).exists())
         .collect();
     let default = default_template(repo);
     if default.is_some() && missing.is_empty() {
@@ -854,12 +861,10 @@ fn write_pr_templates(
                 .flatten()
                 .flatten()
                 .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                // A label's own file is a label template, not a default.
+                // A shipped label's own file is a label template, not a default.
                 .filter(|name| {
                     name.ends_with(".md")
-                        && !labels
-                            .iter()
-                            .any(|label| *name == format!("{}.md", label.name))
+                        && !LABELS.iter().any(|label| *name == label.template_file())
                 })
                 .collect();
             files.sort();
@@ -887,7 +892,7 @@ fn write_pr_templates(
         }
     };
     for label in missing {
-        let name = format!("{}.md", label.name);
+        let name = label.template_file();
         fs::create_dir_all(&dir)?;
         fs::write(dir.join(&name), label_template(&frame, label.pr_section))?;
         write!(out, "init: wrote {TEMPLATE_DIR}/{name}\r\n")?;
@@ -944,9 +949,9 @@ fn ask_labels(
         .collect();
     write_pr_templates(repo, &areas, out, input, tty)?;
     // The mapping follows the file, written now or kept: an entry's own
-    // non-empty pr_template stays, and a broken entry is app::checks' to say.
+    // non-empty pr_template stays, and a broken entry is not init's to fix.
     for label in areas {
-        let file = format!("{}.md", label.name);
+        let file = label.template_file();
         let entry = &mut doc["labels"][label.name];
         let unset = entry["pr_template"].as_str().unwrap_or_default().is_empty();
         if entry.is_object() && unset && repo.join(TEMPLATE_DIR).join(&file).exists() {
