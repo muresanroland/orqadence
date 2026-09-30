@@ -28,6 +28,8 @@ use crate::orchestrator::state::{STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN, S
 
 mod config;
 mod modal;
+#[cfg(test)]
+mod modal_test;
 mod pager;
 
 pub(crate) use pager::plain;

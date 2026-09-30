@@ -182,7 +182,6 @@ pub(crate) struct Question {
 }
 
 /// A Notice modal's kind: red and titled ERROR, or green and titled NOTICE.
-#[allow(dead_code)] // nothing raises an Error yet: /config's App errors will
 pub(crate) enum NoticeKind {
     Error,
     Info,

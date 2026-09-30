@@ -4,10 +4,10 @@
 use super::brand::{PURPLE, RED};
 use super::config::{put, Field};
 use super::shell_test::{
-    asking, await_line, cols, find, key, logged, render, row, rows, screen_at, shell, type_in,
-    type_line,
+    asking, await_line, cols, find, key, logged, notice_modal, render, row, rows, screen_at, shell,
+    type_in, type_line,
 };
-use super::Screen;
+use super::{NoticeKind, Screen};
 use crate::orchestrator::stage::Ask;
 use crate::orchestrator::world::{new_world, succeed, BdTicket};
 use crate::orchestrator::write_file;
@@ -164,7 +164,8 @@ fn review_to_codex_a_listed_model_and_an_effort_save_all_three() {
 }
 
 /// A typed id is probed on the row's App before it saves; one the App
-/// refuses keeps the old value, and the App's error shows in the foot.
+/// refuses keeps the old value, and the App's error shows in a red Notice
+/// modal, not the foot. Enter closes it and /config is where it was.
 #[test]
 fn a_typed_id_whose_probe_fails_keeps_the_old_value_and_shows_the_error() {
     let repo = TempDir::new();
@@ -211,9 +212,26 @@ fn a_typed_id_whose_probe_fails_keeps_the_old_value_and_shows_the_error() {
     );
     assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
     let error = "claude refused claude-nope: model claude-nope not found. Nothing changed.";
-    assert_eq!(note(&s), error);
+    assert_eq!(notice_modal(&s), error);
+    assert_eq!(note(&s), "");
     let buf = render(&s, 160, 45);
-    assert!(find(&buf, error).is_some(), "{:#?}", rows(&buf));
+    let at = find(&buf, "╭ ERROR ─").expect("no ERROR box");
+    assert_eq!(buf[at].fg, RED);
+    assert!(
+        find(&buf, "claude refused claude-nope:").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    let place = |s: &Screen| {
+        let st = s.settings.as_ref().unwrap();
+        (st.section, st.open, st.setting, st.pick.is_some())
+    };
+    let was = place(&s);
+    s.key(key(KeyCode::Enter));
+    assert_eq!(notice_modal(&s), "");
+    assert_eq!(place(&s), was);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+    let buf = render(&s, 160, 45);
     assert!(find(&buf, "opus").is_some(), "the old model is not shown");
 }
 
@@ -475,7 +493,8 @@ impl Tools for Refusing {
 }
 
 /// The App's own error, as each App prints it: claude -p on stdout under a
-/// warning on stderr, codex exec a JSON line ending its stderr.
+/// warning on stderr, codex exec a JSON line ending its stderr; it shows in
+/// a Notice modal, not the foot.
 #[test]
 fn a_refused_probe_shows_what_the_app_said() {
     let claude = RunError {
@@ -520,9 +539,67 @@ fn a_refused_probe_shows_what_the_app_said() {
         type_in(&mut s, if section == 0 { "opus" } else { "6-sol" });
         s.key(key(KeyCode::Enter));
         await_probe(&mut s);
-        assert_eq!(note(&s), want);
+        assert_eq!(notice_modal(&s), want);
+        assert_eq!(note(&s), "");
         assert!(!repo.path().join(".orqadence/config.json").exists());
     }
+}
+
+/// An App whose model listing failed raises a red Notice modal with its
+/// error as its Model pick list opens, never as /config opens nor for
+/// another App's list; the list behind it has no error row, still offers
+/// default and 'type an id…', and stays open once Enter closes the notice.
+#[test]
+fn a_failed_model_listing_raises_a_notice_as_its_model_list_opens() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps("--list-models"), repo.path()); // pi's listing
+    type_line(&mut s, "/config");
+    assert_eq!(notice_modal(&s), "", "opening /config raised a notice");
+    // The Review's App list, from codex: pi leads into its model list.
+    keys(&mut s, &[KeyCode::Down, KeyCode::Enter, KeyCode::Enter]);
+    keys(&mut s, &[KeyCode::Down, KeyCode::Enter]);
+    assert_eq!(
+        notice_modal(&s),
+        "pi could not list its models: pi --list-models: exit status 1: \
+         model --list-models not found"
+    );
+    assert!(matches!(s.notices[0].kind, NoticeKind::Error));
+    let st = s.settings.as_ref().unwrap();
+    let names: Vec<String> = st
+        .entries(st.pick.as_ref().expect("no pick list behind the notice"))
+        .into_iter()
+        .map(|e| e.name)
+        .collect();
+    assert_eq!(names, ["default", "type an id…"]);
+
+    let buf = render(&s, 160, 45);
+    let at = find(&buf, "╭ ERROR ─").expect("no ERROR box");
+    assert_eq!(buf[at].fg, RED);
+    let (_, y) = find(&buf, "pi could not list its models:").expect("no error text");
+    assert_eq!(y, at.1 + 1, "{:#?}", rows(&buf));
+    assert!(
+        find(&buf, "Review model · pi (new App)").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+
+    s.key(key(KeyCode::Enter));
+    assert_eq!(notice_modal(&s), "");
+    assert!(
+        s.settings.as_ref().unwrap().pick.is_some(),
+        "the list closed"
+    );
+    // Implement's model list, on claude.
+    keys(
+        &mut s,
+        &[KeyCode::Esc, KeyCode::Left, KeyCode::Up, KeyCode::Enter],
+    );
+    keys(&mut s, &[KeyCode::Down, KeyCode::Down, KeyCode::Enter]);
+    assert!(
+        s.settings.as_ref().unwrap().pick.is_some(),
+        "no list opened"
+    );
+    assert_eq!(notice_modal(&s), "", "another App's list raised a notice");
 }
 
 /// A model that does not list the row's effort takes it back to default;

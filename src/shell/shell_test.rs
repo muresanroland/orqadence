@@ -6007,7 +6007,7 @@ fn on_call_rings_a_failure_after_the_summary() {
 }
 
 /// The front Notice modal's text, "" when none shows.
-fn notice_modal(s: &Screen) -> &str {
+pub(super) fn notice_modal(s: &Screen) -> &str {
     s.notices.first().map_or("", |n| n.text.as_str())
 }
 
@@ -6181,6 +6181,21 @@ fn an_info_notice_counts_down_green_over_config() {
         let (x, y) = find(&buf, "closes in 30s").expect("no countdown");
         assert_eq!(buf[(x - 2, y)].symbol(), "╰", "{:#?}", rows(&buf));
         assert!(find(&buf, "/config").is_some(), "/config is gone");
+    }
+}
+
+/// A message of wide characters wraps by terminal columns: each row fits
+/// inside the box, so every character shows and the right border stands.
+#[test]
+fn a_notice_of_wide_characters_wraps_by_columns() {
+    let mut s = screen();
+    s.notify(NoticeKind::Error, &"界".repeat(40), None);
+    let buf = render(&s, 80, 24);
+    let at = find(&buf, "╭ ERROR ─").expect("no ERROR");
+    let shown: usize = rows(&buf).iter().map(|r| r.matches('界').count()).sum();
+    assert_eq!(shown, 40, "{:#?}", rows(&buf));
+    for y in [at.1 + 1, at.1 + 2] {
+        assert_eq!(buf[(at.0 + 59, y)].symbol(), "│", "{:#?}", rows(&buf));
     }
 }
 

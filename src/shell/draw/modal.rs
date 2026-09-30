@@ -705,7 +705,8 @@ fn inline(text: &str, base: Style) -> Vec<(String, Style)> {
 
 /// Word-wraps styled pieces to `width`, `first` leading the first row and
 /// `hang` the rest, both in `lead`; a word longer than the row is cut at
-/// the row's end and goes on under it, as fenced code does.
+/// the row's end and goes on under it, as fenced code does. Widths are
+/// terminal columns, so a wide character takes two.
 pub(super) fn wrap_spans(
     pieces: Vec<(String, Style)>,
     width: usize,
@@ -713,16 +714,17 @@ pub(super) fn wrap_spans(
     hang: &str,
     lead: Style,
 ) -> Vec<Line<'static>> {
+    let cols = |s: &str| Span::raw(s).width();
     let mut lines = Vec::new();
     let mut row = vec![Span::styled(first.to_string(), lead)];
-    let (mut used, mut fresh) = (first.chars().count(), true);
+    let (mut used, mut fresh) = (cols(first), true);
     for (text, style) in pieces {
         for mut word in text.split_inclusive(' ') {
             loop {
-                if !fresh && used + word.trim_end().chars().count() > width {
+                if !fresh && used + cols(word.trim_end()) > width {
                     let next = vec![Span::styled(hang.to_string(), lead)];
                     lines.push(Line::from(std::mem::replace(&mut row, next)));
-                    used = hang.chars().count();
+                    used = cols(hang);
                     fresh = true;
                 }
                 if fresh {
@@ -732,12 +734,31 @@ pub(super) fn wrap_spans(
                     break;
                 }
                 let room = width.saturating_sub(used).max(1);
-                let at = match word.trim_end().chars().count() > room {
-                    true => word.char_indices().nth(room).map_or(word.len(), |(i, _)| i),
+                let at = match cols(word.trim_end()) > room {
+                    true => {
+                        // Cut before the character that overflows the row,
+                        // measuring the whole prefix as the renderer does (❤
+                        // takes one column, ❤️ two), and back over zero-width
+                        // marks so ❤ keeps its U+FE0F. Take at least one
+                        // character so a narrow row still moves on.
+                        let one = word.chars().next().map_or(0, char::len_utf8);
+                        let mut at = word
+                            .char_indices()
+                            .find(|&(i, c)| cols(&word[..i + c.len_utf8()]) > room)
+                            .map_or(word.len(), |(i, _)| i);
+                        while word[at..]
+                            .chars()
+                            .next()
+                            .is_some_and(|c| at > 0 && cols(c.encode_utf8(&mut [0; 4])) == 0)
+                        {
+                            at = word[..at].char_indices().last().map_or(0, |(i, _)| i);
+                        }
+                        at.max(one)
+                    }
                     false => word.len(),
                 };
                 let (piece, rest) = word.split_at(at);
-                used += piece.chars().count();
+                used += cols(piece);
                 row.push(Span::styled(piece.to_string(), style));
                 fresh = false;
                 word = rest;

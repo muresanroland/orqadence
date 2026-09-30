@@ -18,7 +18,7 @@ use ratatui::style::Color;
 use serde_json::{json, Value};
 
 use super::brand::{CYAN, GREEN, MUTED, ORANGE, RED};
-use super::{Screen, NOTICE_WINDOW};
+use super::{NoticeKind, Screen, NOTICE_WINDOW};
 use crate::on_call::{self, OnCall, DEFAULT_MINUTES};
 use crate::orchestrator::app::{
     self, app, App, Check, Floor, Model, Row, APPS, DEFAULT_MAX_TICKETS, IF_LIMITED, MAX_TICKETS,
@@ -691,9 +691,6 @@ impl Settings {
                     let detail = format!("{}'s own · {}", app.name, family_label(app, "default"));
                     entry("default", detail, value("default"));
                 }
-                if let Err(err) = self.catalog(app) {
-                    entry(err, String::new(), None);
-                }
                 for (id, _) in self.listed(app) {
                     entry(id, family_label(app, id).into(), value(id));
                 }
@@ -911,24 +908,6 @@ impl Settings {
         app::floor_in(&self.doc, floor)
             .map(|value| (value, set.is_null() || set == ""))
             .map_err(|_| set.to_string())
-    }
-
-    /// Opens the pick list for a row's setting, the cursor on its value.
-    fn open_pick(&mut self, row: usize, field: Field, app: Option<&'static App>) {
-        let mut pick = Pick {
-            row,
-            field,
-            app,
-            cursor: 0,
-            filter: String::new(),
-        };
-        pick.cursor = self
-            .entries(&pick)
-            .iter()
-            .filter(|e| e.picks.is_some())
-            .position(|e| e.current)
-            .unwrap_or(0);
-        self.pick = Some(pick);
     }
 }
 
@@ -1271,7 +1250,7 @@ impl Screen {
                         let text = format!("{} has no effort flag.", app.name);
                         st.note = Some((text, MUTED));
                     }
-                    _ => st.open_pick(row, field, None),
+                    _ => self.open_pick(row, field, None),
                 }
             }
             _ => {}
@@ -1295,9 +1274,41 @@ impl Screen {
                 "Pick Implement's model first: the split needs a named model for each half."
                     .to_string()
             }
-            _ => return st.open_pick(0, Field::Plan, None),
+            _ => return self.open_pick(0, Field::Plan, None),
         };
         st.note = Some((refused, RED));
+    }
+
+    /// Opens the pick list for a row's setting, the cursor on its value. A
+    /// model list whose App could not list its models raises a red Notice
+    /// modal with the App's error over it.
+    fn open_pick(&mut self, row: usize, field: Field, app: Option<&'static App>) {
+        let st = self.settings.as_mut().unwrap();
+        let mut pick = Pick {
+            row,
+            field,
+            app,
+            cursor: 0,
+            filter: String::new(),
+        };
+        pick.cursor = st
+            .entries(&pick)
+            .iter()
+            .filter(|e| e.picks.is_some())
+            .position(|e| e.current)
+            .unwrap_or(0);
+        let error = match (field, st.pick_app(&pick)) {
+            (Field::Model | Field::Plan, Some(app)) => st
+                .catalog(app)
+                .as_ref()
+                .err()
+                .map(|err| format!("{} could not list its models: {err}", app.name)),
+            _ => None,
+        };
+        st.pick = Some(pick);
+        if let Some(text) = error {
+            self.notify(NoticeKind::Error, &text, None);
+        }
     }
 
     /// A pick list's choice: a new App leads into its model list, one not
@@ -1309,7 +1320,7 @@ impl Screen {
             Picked::App(a) if !st.is_installed(a) => st.note = Some((not_on_path(a), MUTED)),
             Picked::App(a) if st.app(pick.row).is_some_and(|now| now.name == a.name) => {}
             Picked::App(a) => match app::runs_on(ROWS[pick.row].key, a) {
-                Ok(()) => st.open_pick(pick.row, Field::Model, Some(a)),
+                Ok(()) => self.open_pick(pick.row, Field::Model, Some(a)),
                 Err(err) => st.note = Some((format!("Refused: {err}. Nothing changed."), RED)),
             },
             Picked::Typed => st.typing = Some((Typing::Model(pick), String::new())),
@@ -1400,7 +1411,7 @@ impl Screen {
     }
 
     /// The probe's answer, taken in poll(): the change saves, or the App's
-    /// error shows and the old value stays.
+    /// error shows in a red Notice modal and the old value stays.
     pub(super) fn probed(&mut self) {
         let Some(st) = &mut self.settings else {
             return;
@@ -1420,7 +1431,7 @@ impl Screen {
                     "{} refused {}: {why}. Nothing changed.",
                     probe.app, probe.model
                 );
-                st.note = Some((text, RED));
+                self.notify(NoticeKind::Error, &text, None);
             }
         }
     }
