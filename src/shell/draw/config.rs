@@ -15,9 +15,10 @@ use crate::orchestrator::app::{Check, APPS};
 use crate::setup;
 use crate::shell::brand::{BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT};
 use crate::shell::config::{
-    distinct, family_label, floor_name, job_name, job_said, label_line, short, short_commit, Field,
-    Listing, Pick, Settings, Typing, APPS_PAGE, FLOORS, LABELS_PAGE, LABEL_FIELDS, ON_CALL_PAGE,
-    ROWS, RUN_PAGE, SECTIONS, SKILLS_PAGE, SKILL_ROWS, TYPESAFE_PAGE,
+    distinct, family_label, floor_name, job_name, job_said, label_line, position_name, short,
+    short_commit, Field, LabelItem, Listing, Pick, Scope, Settings, Typing, APPS_PAGE, FLOORS,
+    LABELS_PAGE, ON_CALL_PAGE, REVIEW_ROW, ROWS, RUN_PAGE, SECTIONS, SKILLS_PAGE, SKILL_ROWS,
+    TYPESAFE_PAGE,
 };
 use crate::shell::Screen;
 use crate::skills::manifest::NONE;
@@ -267,43 +268,129 @@ fn labels_page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
     (lines, at)
 }
 
-/// A label's own page: area or modifier, its skills and guidance; one
-/// that cannot be read shows why instead.
+/// A label's own page: area or modifier, its skills, guidance and PR
+/// template; an Area label's Extra review; the Stage rows it overrides, and
+/// the rules those keep, above them. One that cannot be read shows why
+/// instead.
 fn label_page(st: &Settings, name: &str, width: usize) -> (Vec<Line<'static>>, usize) {
-    let mut lines = vec![
-        Line::from(Span::styled(format!("orqa:{name}"), bold(CYAN))),
-        Line::default(),
-    ];
+    let mut lines = vec![Line::from(Span::styled(format!("orqa:{name}"), bold(CYAN)))];
     let label = match st.label_of(name) {
         Ok(label) => label,
         Err(err) => {
             let err = vec![(format!("{err}: mend it in config.json"), fg(RED))];
+            lines.push(Line::default());
             lines.extend(wrap_spans(err, width, "  ", "  ", fg(RED)));
             return (lines, 0);
         }
     };
+    // above the rows, where a long page shows them
+    check_lines(&mut lines, st.label_checks(), width);
+    lines.push(Line::default());
     let room = width.saturating_sub(15);
     let or_none = |text: String| match text.is_empty() {
         true => vec![Span::styled("none", fg(MUTED))],
         false => vec![Span::styled(cut(&text, room), fg(TEXT))],
     };
-    let values = [
-        vec![Span::styled(label.kind, bold(TEXT))],
-        or_none(label.skills.join(", ")),
-        or_none(label.guidance),
-    ];
+    let heading = |lines: &mut Vec<Line<'static>>, text: String, blank: bool| {
+        if blank {
+            lines.push(Line::default());
+        }
+        lines.push(Line::from(Span::styled(text, bold(MUTED))));
+    };
     let mut at = 0;
-    for (i, (field, value)) in LABEL_FIELDS.iter().zip(values).enumerate() {
+    for (i, it) in st.label_items().into_iter().enumerate() {
+        match it {
+            LabelItem::ExtraSkill => heading(&mut lines, "EXTRA REVIEW".into(), true),
+            LabelItem::Row(0, Field::App) => heading(&mut lines, "ROW OVERRIDES".into(), true),
+            _ => {}
+        }
+        if let LabelItem::Row(row, Field::App) = it {
+            heading(&mut lines, format!("  {}", ROWS[row].name), false);
+        }
+        let (field, value) = match it {
+            LabelItem::Kind => (
+                "kind".to_string(),
+                vec![Span::styled(label.kind.clone(), bold(TEXT))],
+            ),
+            LabelItem::Skills => ("skills".to_string(), or_none(label.skills.join(", "))),
+            LabelItem::Guidance => ("guidance".to_string(), or_none(label.guidance.clone())),
+            LabelItem::Template => (
+                "PR template".to_string(),
+                match label.pr_template.as_str() {
+                    "" => vec![
+                        Span::styled("default", fg(MUTED)),
+                        Span::styled("  the repo's default template", fg(MUTED)),
+                    ],
+                    file if st.templates.iter().any(|f| f == file) => {
+                        vec![Span::styled(file.to_string(), bold(TEXT))]
+                    }
+                    file => vec![
+                        Span::styled(file.to_string(), bold(TEXT)),
+                        Span::styled("  not found: the default is used", fg(RED)),
+                    ],
+                },
+            ),
+            LabelItem::ExtraSkill => (
+                "skill".to_string(),
+                or_none(label.extra_review.skill.clone()),
+            ),
+            LabelItem::Position => (
+                "position".to_string(),
+                vec![Span::styled(
+                    position_name(&label.extra_review.position),
+                    fg(TEXT),
+                )],
+            ),
+            LabelItem::Debate => {
+                let on = st.extra_debate();
+                let detail = match on {
+                    true => "  joins the Debate",
+                    false => "  straight to the Fix",
+                };
+                (
+                    "debate".to_string(),
+                    vec![
+                        Span::styled(on_off(on), fg(TEXT)),
+                        Span::styled(detail, fg(MUTED)),
+                    ],
+                )
+            }
+            LabelItem::Extra(field) => (
+                field.name().to_string(),
+                own_value(st, Scope::Extra, REVIEW_ROW, field),
+            ),
+            LabelItem::Row(row, field) => (
+                format!("  {}", field.name()),
+                own_value(st, Scope::Label, row, field),
+            ),
+        };
         item(
             &mut lines,
             &mut at,
             i == st.setting,
-            pad(field, 12),
+            pad(&field, 12),
             value,
             width,
         );
     }
     (lines, at)
+}
+
+/// What a label sets on a row field or its Extra review's, else what the
+/// empty field falls through to.
+fn own_value(st: &Settings, scope: Scope, row: usize, field: Field) -> Vec<Span<'static>> {
+    match st.own(scope, row, field) {
+        own if own.is_empty() => {
+            let whose = if scope == Scope::Extra {
+                "the Review's"
+            } else {
+                "repo's"
+            };
+            let fell = st.fallback(scope, row, field);
+            vec![Span::styled(format!("{whose} {fell}"), fg(MUTED))]
+        }
+        own => vec![Span::styled(own, bold(TEXT))],
+    }
 }
 
 /// The Run page: the Tickets a run takes at once, a bad value in red with
@@ -525,7 +612,7 @@ fn hint(st: &Settings) -> &'static str {
             "↑↓ skill · Enter toggles yours · a add · u update · U update all · d remove · ← back"
         }
         _ if st.open && st.section == LABELS_PAGE && st.label.is_some() => {
-            "↑↓ field · Enter changes · Space toggles area/modifier · ← or Esc back"
+            "↑↓ field · Enter changes · Space toggles · ← or Esc back"
         }
         _ if st.open && st.section == LABELS_PAGE => {
             "↑↓ label · a add · e edit · r rename · d delete · ← or Esc back"
@@ -654,7 +741,7 @@ fn value(st: &Settings, row: usize, field: Field) -> Vec<Span<'static>> {
             _ => vec![shown],
         },
         Field::App => vec![shown],
-        Field::Same | Field::Skills => vec![],
+        Field::Same | Field::Skills | Field::Template | Field::ExtraSkill => vec![],
         Field::Job(_) if v == NONE => {
             vec![shown, muted("  the Stage skill's own instructions".into())]
         }
@@ -718,14 +805,25 @@ fn check_lines(lines: &mut Vec<Line<'static>>, checks: Vec<Check>, width: usize)
 fn pick_lines(st: &Settings, pick: &Pick, width: usize) -> (Vec<Line<'static>>, usize) {
     let row = &ROWS[pick.row];
     let on = match (pick.field, st.pick_app(pick)) {
-        (Field::App | Field::Skills, _) | (_, None) => String::new(),
+        (Field::App | Field::Skills | Field::Template | Field::ExtraSkill, _) | (_, None) => {
+            String::new()
+        }
         (_, Some(app)) if pick.app.is_some() => format!(" · {} (new App)", app.name),
         (_, Some(app)) => format!(" · {}", app.name),
     };
-    let title = match pick.field {
-        Field::Job(j) => format!("{}{on}", job_said(j)),
-        Field::Skills => format!("orqa:{} skills", st.label.as_deref().unwrap_or_default()),
-        field => format!("{} {}{on}", row.name, field.name()),
+    let label = st.label.as_deref().unwrap_or_default();
+    let title = match (pick.field, pick.scope) {
+        (Field::Job(j), _) => format!("{}{on}", job_said(j)),
+        (Field::Skills, _) => format!("orqa:{label} skills"),
+        (Field::Template, _) => format!("orqa:{label} PR template"),
+        (Field::ExtraSkill, _) => format!("orqa:{label} extra review skill"),
+        (field, Scope::Label) => format!(
+            "orqa:{label} {} {}{on}",
+            row.key.replace('_', " "),
+            field.name()
+        ),
+        (field, Scope::Extra) => format!("orqa:{label} extra review {}{on}", field.name()),
+        (field, Scope::Repo) => format!("{} {}{on}", row.name, field.name()),
     };
     let mut lines = vec![Line::from(vec![
         Span::styled(title, bold(CYAN)),
@@ -737,7 +835,7 @@ fn pick_lines(st: &Settings, pick: &Pick, width: usize) -> (Vec<Line<'static>>, 
     // a job's current pick is marked ' ✓' after its mark
     let (name_w, tick) = match pick.field {
         Field::App => (12, 1),
-        Field::Job(_) | Field::Skills => (24, 3),
+        Field::Job(_) | Field::Skills | Field::Template | Field::ExtraSkill => (24, 3),
         _ => (18, 1),
     };
     let marks = entries.iter().filter_map(|e| e.mark);
@@ -869,6 +967,11 @@ fn foot_lines(s: &Screen, st: &Settings, width: usize) -> Vec<Line<'static>> {
                 format!("rename orqa:{old} › "),
                 text.clone(),
                 "The new name after orqa:. The entry moves with its PR template mapping; the template file keeps its name.".to_string(),
+            ),
+            Typing::Heading => (
+                "section heading › ".to_string(),
+                text.clone(),
+                "The heading of this label's section, added after the default template in a new file; saved at once, uncommitted.".to_string(),
             ),
             Typing::Guidance => (
                 "guidance › ".to_string(),

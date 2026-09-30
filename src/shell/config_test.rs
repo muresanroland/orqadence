@@ -2,7 +2,7 @@
 //! lists, the probe, and a change saved during a run.
 
 use super::brand::{PURPLE, RED};
-use super::config::{put, Field};
+use super::config::{put, Field, LabelItem};
 use super::shell_test::{
     asking, await_line, cols, find, key, logged, notice_modal, render, row, rows, screen_at, shell,
     type_in, type_line,
@@ -2393,4 +2393,389 @@ fn a_malformed_skills_list_refuses_a_pick() {
         config_json(repo.path())["labels"]["fe"]["skills"],
         json!(["orqa-a11y", 7])
     );
+}
+
+/// /config on a label's own page: the first label of the list opened.
+fn open_label(tools: Arc<Fake>, repo: &Path) -> Screen {
+    let mut s = labels_page(tools, repo);
+    s.key(key(KeyCode::Enter));
+    s
+}
+
+/// The open label's cursor on an item of its page.
+fn goto(s: &mut Screen, item: LabelItem) {
+    let st = s.settings.as_mut().unwrap();
+    st.setting = st.label_items().iter().position(|i| *i == item).unwrap();
+}
+
+/// Enter opens the pick list on the item, the text filters it, Enter picks
+/// the first match.
+fn pick(s: &mut Screen, item: LabelItem, filter: &str) {
+    goto(s, item);
+    s.key(key(KeyCode::Enter));
+    type_in(s, filter);
+    s.key(key(KeyCode::Enter));
+}
+
+/// Setting orqa:be's implement model writes rows.implement.model, probed
+/// first as on the Stage pages; a row's "repo's row" empties the field, which
+/// removes it, and its row and rows with it.
+#[test]
+fn a_labels_row_override_writes_its_field_and_emptying_it_removes_it() {
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"labels": {"be": {"kind": "area"}}}"#,
+    );
+    let mut s = open_label(apps(""), repo.path());
+    let model = LabelItem::Row(0, Field::Model);
+    pick(&mut s, model, "opus");
+    await_probe(&mut s);
+    assert_eq!(
+        config_json(repo.path())["labels"]["be"],
+        json!({"kind": "area", "rows": {"implement": {"model": "opus"}}})
+    );
+    assert_eq!(
+        note(&s),
+        "orqa:be implement model opus, saved uncommitted in .orqadence/config.json"
+    );
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "▸   model     opus").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    pick(&mut s, model, "repo");
+    assert_eq!(
+        config_json(repo.path())["labels"]["be"],
+        json!({"kind": "area"})
+    );
+    assert_eq!(
+        note(&s),
+        "orqa:be implement model is the repo's, saved uncommitted in .orqadence/config.json"
+    );
+}
+
+/// security with its Extra review, and codex-review, a Modifier.
+const EXTRA: &str = r#"{"labels": {
+  "codex-review": {"kind": "modifier"},
+  "security": {"kind": "area", "extra_review": {"skill": "orqa-security-review", "position": "every", "debate": true}}
+}}"#;
+
+/// The right pane's lines, trimmed, from the top.
+fn pane(s: &Screen, n: u16) -> Vec<String> {
+    let buf = render(s, 160, 45);
+    (1..=n)
+        .map(|y| cols(&buf, y, 99, 158).trim_end().to_string())
+        .collect()
+}
+
+/// Enter on position cycles it to the first Round, Space on Debate turns it
+/// off; each saves at once, the rest of the entry as it was.
+#[test]
+fn an_extra_review_saves_its_position_and_debate() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), EXTRA);
+    let mut s = labels_page(clones(), repo.path());
+    keys(&mut s, &[KeyCode::Down, KeyCode::Enter]);
+    goto(&mut s, LabelItem::Position);
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        note(&s),
+        "orqa:security Extra review runs first Round only, saved uncommitted in .orqadence/config.json"
+    );
+    goto(&mut s, LabelItem::Debate);
+    s.key(key(KeyCode::Char(' ')));
+    assert_eq!(
+        config_json(repo.path())["labels"]["security"]["extra_review"],
+        json!({"skill": "orqa-security-review", "position": "first", "debate": false})
+    );
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "▸ debate      off  straight to the Fix").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    // the third press goes round: before the PR, then every Round again
+    goto(&mut s, LabelItem::Position);
+    keys(&mut s, &[KeyCode::Enter, KeyCode::Enter]);
+    assert_eq!(
+        config_json(repo.path())["labels"]["security"]["extra_review"]["position"],
+        json!("every")
+    );
+}
+
+/// A label without an Extra review gets the new-label defaults on its first
+/// write; none clears the skill. The Extra review's model is probed and
+/// saves as extra_review.model, "the Review's row" empties it.
+#[test]
+fn an_extra_review_takes_a_skill_and_its_own_row() {
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"labels": {"infra": {"kind": "area"}}}"#,
+    );
+    add(repo.path(), &*clones(), "mattpocock/skills", Some("tdd")).unwrap();
+    let mut s = open_label(apps(""), repo.path());
+    // Stage skills are not reviews: only the installed orqa-tdd is listed
+    goto(&mut s, LabelItem::ExtraSkill);
+    s.key(key(KeyCode::Enter));
+    let buf = render(&s, 160, 45);
+    assert!(find(&buf, "orqa-tdd").is_some(), "{:#?}", rows(&buf));
+    assert!(find(&buf, "orqa-stage").is_none(), "{:#?}", rows(&buf));
+    keys(&mut s, &[KeyCode::Esc]);
+    pick(&mut s, LabelItem::ExtraSkill, "tdd");
+    assert_eq!(
+        config_json(repo.path())["labels"]["infra"]["extra_review"],
+        json!({"skill": "orqa-tdd", "position": "every", "debate": true})
+    );
+    // the Review runs on codex until the label says otherwise
+    pick(&mut s, LabelItem::Extra(Field::Model), "gpt-6");
+    await_probe(&mut s);
+    assert_eq!(
+        config_json(repo.path())["labels"]["infra"]["extra_review"]["model"],
+        json!("gpt-6-sol")
+    );
+    assert_eq!(
+        note(&s),
+        "orqa:infra extra review model gpt-6-sol, saved uncommitted in .orqadence/config.json"
+    );
+    pick(&mut s, LabelItem::Extra(Field::Model), "review");
+    assert_eq!(
+        config_json(repo.path())["labels"]["infra"]["extra_review"],
+        json!({"skill": "orqa-tdd", "position": "every", "debate": true})
+    );
+    pick(&mut s, LabelItem::ExtraSkill, "none");
+    assert_eq!(
+        config_json(repo.path())["labels"]["infra"]["extra_review"],
+        json!({"position": "every", "debate": true})
+    );
+}
+
+/// A Modifier only changes rows: its page offers no Extra review.
+#[test]
+fn a_modifier_offers_no_extra_review() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), EXTRA);
+    let s = open_label(clones(), repo.path());
+    let items = s.settings.as_ref().unwrap().label_items();
+    assert!(
+        items.iter().all(|i| !matches!(
+            i,
+            LabelItem::ExtraSkill | LabelItem::Position | LabelItem::Debate | LabelItem::Extra(_)
+        )),
+        "{items:?}"
+    );
+    let buf = render(&s, 160, 45);
+    assert!(find(&buf, "EXTRA REVIEW").is_none(), "{:#?}", rows(&buf));
+    assert!(find(&buf, "ROW OVERRIDES").is_some(), "{:#?}", rows(&buf));
+}
+
+/// A label pinning side_b to side A's family: the model list marks it, the
+/// pick is refused with the check's text and nothing is written; an entry
+/// written by hand shows the check on its page, in red.
+#[test]
+fn a_label_pinning_side_b_to_side_as_family_shows_the_check() {
+    let repo = TempDir::new();
+    let file = repo.path().join(".orqadence/config.json");
+    write_file(&file, r#"{"labels": {"be": {"kind": "area"}}}"#);
+    let mut s = open_label(apps(""), repo.path());
+    pick(&mut s, LabelItem::Row(5, Field::App), "claude");
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "orqa:be side b model · claude (new App)").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    let (x, y) = find(&buf, "✗ side A's family").unwrap();
+    assert_eq!(buf[(x, y)].fg, RED);
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        note(&s),
+        "Refused: be side_b: Both sides would be Anthropic: the Debate needs two families. Nothing changed."
+    );
+    assert_eq!(
+        config_json(repo.path()),
+        json!({"labels": {"be": {"kind": "area"}}})
+    );
+
+    let odd = r#"{"labels": {"be": {"kind": "area", "rows": {"side_b": {"app": "claude"}}}}}"#;
+    write_file(&file, odd);
+    let s = open_label(clones(), repo.path());
+    let buf = render(&s, 160, 45);
+    let (x, y) = find(&buf, "✗ be side_b: Both sides would be Anthropic").unwrap();
+    assert_eq!(buf[(x, y)].fg, RED);
+    assert!(find(&buf, "CHECKS").is_some(), "{:#?}", rows(&buf));
+}
+
+const MOBILE: &str = r#"{"labels": {"mobile": {"kind": "area"}}}"#;
+
+/// The PR template list offers default, each file of the template directory
+/// and new; a file picked is the entry's pr_template, default takes it off.
+#[test]
+fn the_pr_template_picker_lists_default_the_files_and_new() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), MOBILE);
+    let dir = repo.path().join(".github/PULL_REQUEST_TEMPLATE");
+    write_file(&dir.join("a.md"), "## A\n");
+    write_file(&dir.join("b.md"), "## B\n");
+    write_file(&dir.join("notes.txt"), "not a template");
+    let mut s = open_label(clones(), repo.path());
+    goto(&mut s, LabelItem::Template);
+    s.key(key(KeyCode::Enter));
+    let buf = render(&s, 160, 45);
+    let (x, y) = find(&buf, "orqa:mobile PR template").unwrap();
+    let listed: Vec<String> = (1..5)
+        .map(|d| {
+            cols(&buf, y + d, x as usize, x as usize + 12)
+                .trim_end()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(listed, ["▸ default", "  a.md", "  b.md", "  new…"]);
+    keys(&mut s, &[KeyCode::Down, KeyCode::Down, KeyCode::Enter]);
+    assert_eq!(
+        config_json(repo.path())["labels"]["mobile"]["pr_template"],
+        json!("b.md")
+    );
+    assert_eq!(
+        note(&s),
+        "orqa:mobile uses the PR template b.md, saved uncommitted in .orqadence/config.json"
+    );
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "PR template b.md").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    pick(&mut s, LabelItem::Template, "default");
+    assert_eq!(
+        config_json(repo.path())["labels"]["mobile"],
+        json!({"kind": "area"})
+    );
+}
+
+/// new for a shipped label writes <name>.md as the repo's default template
+/// plus the label's shipped section, and maps it, asking nothing.
+#[test]
+fn a_new_template_for_a_shipped_label_is_the_default_plus_its_section() {
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"labels": {"fe": {"kind": "area"}}}"#,
+    );
+    write_file(
+        &repo.path().join(".github/pull_request_template.md"),
+        "## Mine\n<!-- x -->\n",
+    );
+    let mut s = open_label(clones(), repo.path());
+    pick(&mut s, LabelItem::Template, "new");
+    let written =
+        std::fs::read_to_string(repo.path().join(".github/PULL_REQUEST_TEMPLATE/fe.md")).unwrap();
+    assert!(
+        written.starts_with("## Mine\n<!-- x -->\n\n## Screenshots\n<!-- every changed screen"),
+        "{written}"
+    );
+    assert!(s.settings.as_ref().unwrap().typing.is_none());
+    assert_eq!(
+        config_json(repo.path())["labels"]["fe"]["pr_template"],
+        json!("fe.md")
+    );
+    assert_eq!(
+        note(&s),
+        "wrote .github/PULL_REQUEST_TEMPLATE/fe.md; orqa:fe uses it, saved uncommitted in .orqadence/config.json"
+    );
+    // it is there now: a second new is refused, the file kept
+    pick(&mut s, LabelItem::Template, "new");
+    assert_eq!(
+        note(&s),
+        ".github/PULL_REQUEST_TEMPLATE/fe.md is there already: pick it from the list. Nothing changed."
+    );
+}
+
+/// new for a label of the user's asks for the section's heading, then
+/// writes Orqadence's default template (the repo has none) plus it.
+#[test]
+fn a_new_template_for_a_user_label_asks_the_heading() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), MOBILE);
+    let mut s = open_label(clones(), repo.path());
+    pick(&mut s, LabelItem::Template, "new");
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "section heading › ▏").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    assert!(!repo.path().join(".github").exists());
+    type_in(&mut s, "Devices tried");
+    s.key(key(KeyCode::Enter));
+    let written =
+        std::fs::read_to_string(repo.path().join(".github/PULL_REQUEST_TEMPLATE/mobile.md"))
+            .unwrap();
+    assert!(written.starts_with("## What\n"), "{written}");
+    assert!(written.ends_with("<!-- the issue this closes -->\n\n## Devices tried\n"));
+    assert_eq!(
+        config_json(repo.path())["labels"]["mobile"]["pr_template"],
+        json!("mobile.md")
+    );
+}
+
+/// A label's page: its fields, the Extra review, each Stage row with what it
+/// falls through to or overrides, and the pick list's title.
+#[test]
+fn a_labels_page_renders_its_extra_review_and_rows() {
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"review": {"app": "claude", "model": "opus"},
+            "labels": {"security": {"kind": "area", "pr_template": "security.md",
+              "extra_review": {"skill": "orqa-security-review", "position": "before_pr", "debate": true, "model": "sonnet"},
+              "rows": {"fix": {"effort": "high"}}}}}"#,
+    );
+    let mut s = open_label(clones(), repo.path());
+    let page = pane(&s, 24);
+    assert_eq!(
+        page,
+        [
+            "orqa:security",
+            "",
+            "▸ kind        area",
+            "  skills      none",
+            "  guidance    none",
+            "  PR template security.md  not found: the default is used",
+            "",
+            "EXTRA REVIEW",
+            "  skill       orqa-security-review",
+            "  position    before the PR",
+            "  debate      on  joins the Debate",
+            "  app         the Review's claude",
+            "  model       sonnet",
+            "  effort      the Review's default",
+            "",
+            "ROW OVERRIDES",
+            "  Implement",
+            "    app       repo's claude",
+            "    model     repo's default",
+            "    effort    repo's default",
+            "  Review",
+            "    app       repo's claude",
+            "    model     repo's opus",
+            "    effort    repo's default",
+        ]
+    );
+    goto(&mut s, LabelItem::Row(6, Field::Effort));
+    let page = pane(&s, 43);
+    assert!(
+        page.contains(&"▸   effort    high".to_string()),
+        "{page:#?}"
+    );
+    s.key(key(KeyCode::Enter));
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "orqa:security fix effort").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    assert!(find(&buf, "repo's row").is_some(), "{:#?}", rows(&buf));
 }
