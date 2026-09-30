@@ -119,7 +119,7 @@ Local, in `.orqadence-local/`, which ignores itself:
 
 ## Releasing
 
-Cargo.toml's `version` is the source of truth. After the merge, push the matching `vX.Y.Z` tag, or create the release on GitHub. Either one starts the release workflow, which builds both binaries on GitHub and attaches them to the release, with `THIRD-PARTY-LICENSES.txt`, the license notices of the crates they link. To rebuild an existing tag, run the workflow from the Actions tab (**release**, then **Run workflow**) with that tag, or run `gh workflow run release.yml -f tag=vX.Y.Z`. Feature tickets bump minor, fixes bump patch.
+Cargo.toml's `version` is the source of truth. After the merge, push the matching `vX.Y.Z` tag (`git tag vX.Y.Z origin/main && git push origin vX.Y.Z`). That starts the release workflow, which builds both binaries on GitHub and creates the release with them and `THIRD-PARTY-LICENSES.txt`, the license notices of the crates they link. Don't create the release on GitHub yourself: releases are immutable once published, so it would go out with no binaries and nothing can attach them later. If a tag's run fails before the release is made, retry it from the Actions tab (**release**, then **Run workflow**) with that tag, or run `gh workflow run release.yml -f tag=vX.Y.Z`. Feature tickets bump minor, fixes bump patch.
 
 ## Build
 
