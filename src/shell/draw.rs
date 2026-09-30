@@ -704,6 +704,7 @@ fn sections(s: &Screen, width: usize) -> Vec<Line<'static>> {
                 }
                 (Status::ToMerge, Some(ts)) => pr_ref(&ts.pr),
                 (Status::Merged, Some(ts)) => format!("{} merged", pr_ref(&ts.pr)),
+                (_, Some(ts)) if ts.fetching => "fetching".to_string(),
                 (_, Some(ts)) if ts.round > 0 => format!("{} {}", ts.stage, ts.round),
                 (_, Some(ts)) => ts.stage.clone(),
                 (_, None) => String::new(),

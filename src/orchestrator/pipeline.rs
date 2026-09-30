@@ -6,21 +6,37 @@ use std::path::Path;
 
 use serde_json::json;
 
-use super::app;
+use super::app::{self, ExtraReview};
 use super::result::{read_stage_result, ResultRequirements, StageResult};
 use super::stage::{
     plural, pr_ref, result_name, stage_label, Ask, Orchestrator, Stage, StageError, ADDRESS, AWAY,
     DEBATE, EXTRA_REVIEW, FINAL, FIX, IMPLEMENT, REVIEW,
 };
-use super::state::{STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
+use super::state::{local_dir, LOCAL, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 use crate::skills::manifest::{placeholder, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS};
 use crate::skills::{stage_skill, CREATE_PR};
+use crate::tools::RunError;
 
 pub(crate) const MAX_ROUNDS: usize = 3;
 
 /// What a run keeps for whoever reads it later: the Stages' result files,
 /// diffs and debate transcripts, all flat text.
 const EVIDENCE: [&str; 5] = ["md", "txt", "patch", "json", "sh"];
+
+/// A failed fetch.sh's error: the last three lines of its stderr on one
+/// line, or how it failed when it wrote none.
+fn fetch_error(err: &RunError) -> String {
+    let lines: Vec<&str> = err
+        .stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    match lines.len() {
+        0 => err.status.clone(),
+        n => lines[n.saturating_sub(3)..].join(" / "),
+    }
+}
 
 /// An Extra review's Findings as fix items that skipped the Debate.
 fn not_debated_items(found: &StageResult) -> Vec<String> {
@@ -119,13 +135,7 @@ impl Orchestrator {
                 // Debate off: its Findings are fix items, not debated.
                 let mut not_debated = Vec::new();
                 if let Some(extra) = &extra {
-                    let found = self.run_read_only(
-                        ticket,
-                        &EXTRA_REVIEW,
-                        round,
-                        &[],
-                        ResultRequirements::default(),
-                    )?;
+                    let found = self.run_extra_review(ticket, extra, round)?;
                     self.report(
                         ticket,
                         &format!(
@@ -159,7 +169,7 @@ impl Orchestrator {
                 continue;
             }
             if let Some(extra) = before_pr.filter(|_| held) {
-                fix = self.final_fix(ticket, extra.debate, &mut verdicts)?;
+                fix = self.final_fix(ticket, &extra, &mut verdicts)?;
             }
 
             let tab = self.ticket(ticket).tab;
@@ -197,16 +207,10 @@ impl Orchestrator {
     fn final_fix(
         &self,
         ticket: &str,
-        debate: bool,
+        extra: &ExtraReview,
         verdicts: &mut Vec<String>,
     ) -> Result<StageResult, StageError> {
-        let found = self.run_read_only(
-            ticket,
-            &EXTRA_REVIEW,
-            FINAL,
-            &[],
-            ResultRequirements::default(),
-        )?;
+        let found = self.run_extra_review(ticket, extra, FINAL)?;
         self.report(
             ticket,
             &format!(
@@ -214,7 +218,7 @@ impl Orchestrator {
                 plural(found.found.len(), "finding")
             ),
         );
-        let fixes = if debate {
+        let fixes = if extra.debate {
             let file = self.run_dir(ticket).join(result_name(&EXTRA_REVIEW, FINAL));
             let file = file.display().to_string();
             let inputs = [("Review file", file.as_str())];
@@ -223,6 +227,105 @@ impl Orchestrator {
             not_debated_items(&found)
         };
         self.fix(ticket, FINAL, &fixes, true, "", verdicts)
+    }
+
+    /// The Extra review in `round`. When its skill's folder in the worktree
+    /// has a fetch.sh, that runs first and the review gets its cache as the
+    /// Cache Input; not for a review already done, nor again for one a
+    /// stopped run started, whose session may be reading the cache.
+    fn run_extra_review(
+        &self,
+        ticket: &str,
+        extra: &ExtraReview,
+        round: usize,
+    ) -> Result<StageResult, StageError> {
+        let want = ResultRequirements::default();
+        let file = self.run_dir(ticket).join(result_name(&EXTRA_REVIEW, round));
+        let script = self.worktree(ticket).join(FILES).join(&extra.skill);
+        let script = script.join("fetch.sh");
+        let cache = self.cfg.repo.join(LOCAL).join("cache").join(&extra.label);
+        let cache_input = cache.display().to_string();
+        let ts = self.ticket(ticket);
+        let resumed = ts.stage == EXTRA_REVIEW.name && ts.round == round;
+        let mut inputs = Vec::new();
+        let not_run;
+        if script.exists() && !read_stage_result(&file, want).1.is_empty() {
+            inputs.push(("Cache", cache_input.as_str()));
+            let failed = match resumed {
+                true => None,
+                false => self.run_fetch_sh(ticket, round, &script, &cache)?,
+            };
+            if let Some(error) = failed {
+                not_run = format!("not run: {error}");
+                inputs.push(("Fetch", not_run.as_str()));
+            }
+        }
+        self.run_read_only(ticket, &EXTRA_REVIEW, round, &inputs, want)
+    }
+
+    /// Runs an Extra review skill's fetch.sh `script` with network, before
+    /// the review's pane starts: bash in the worktree, ORQA_CACHE the
+    /// label's `cache` in the checkout (made first, shared by every
+    /// worktree), ORQA_BASE the base branch. The Ticket reads "fetching"
+    /// while it runs. A failure is a Question with its error: retry runs it
+    /// again, run without gives the error back for the Fetch Input, park
+    /// parks; Away, the Ticket parks, and /continue asks again.
+    fn run_fetch_sh(
+        &self,
+        ticket: &str,
+        round: usize,
+        script: &Path,
+        cache: &Path,
+    ) -> Result<Option<String>, StageError> {
+        let (tools, worktree) = (&self.cfg.tools, self.worktree(ticket));
+        let origin = ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"];
+        let base = tools.run(&worktree, &origin).unwrap_or_default();
+        let base = match base.trim() {
+            "" => "main",
+            base => base,
+        };
+        let argv = [
+            "env",
+            &format!("ORQA_CACHE={}", cache.display()),
+            &format!("ORQA_BASE={base}"),
+            "bash",
+            &script.display().to_string(),
+        ];
+        let label = stage_label(&EXTRA_REVIEW, round);
+        loop {
+            self.update(ticket, |ts| ts.fetching = true);
+            // ponytail: the call blocks, so /stop-work waits for fetch.sh to
+            // exit; kill it on stop if fetches run long.
+            let ran = local_dir(&self.cfg.repo)
+                .and_then(|_| fs::create_dir_all(cache))
+                .map_err(|err| err.to_string())
+                .and_then(|()| tools.run(&worktree, &argv).map_err(|err| fetch_error(&err)));
+            self.update(ticket, |ts| ts.fetching = false);
+            let Err(error) = ran else {
+                return Ok(None);
+            };
+            let text = format!("fetch.sh for {label} failed: {error}");
+            let options = ["retry", "run without it", "park"]
+                .map(String::from)
+                .to_vec();
+            match self.ask_at_start(ticket, &text, options, |options| Ask::TicketStart {
+                options,
+            }) {
+                Ok(0) => {}
+                Ok(1) => {
+                    self.report(ticket, &format!("running {label} without its fetch"));
+                    return Ok(Some(error));
+                }
+                // /park
+                Err(StageError::Parked(reason)) if reason != AWAY => {
+                    return Err(StageError::Parked(text))
+                }
+                // Away, or /stop-work
+                Err(err) => return Err(err),
+                // park
+                Ok(_) => return Err(StageError::Parked(text)),
+            }
+        }
     }
 
     /// A Fix given only the fix items ("none" without any); one that opens

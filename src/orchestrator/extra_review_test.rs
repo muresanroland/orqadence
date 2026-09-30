@@ -5,13 +5,15 @@
 
 use super::limit_test::{hits, CODEX};
 use super::pipeline_test::stages_run;
-use super::stage::Ask;
-use super::state::Review;
+use super::stage::{Answer, Ask, Orchestrator, AWAY};
+use super::state::{Review, STATUS_PARKED};
 use super::world::{new_world, set_clock, spawn_ticket, succeed, wait_until, BdTicket, World};
 use super::write_file;
 use chrono::TimeZone;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 
 /// hx-1 with the bd labels given.
 fn labelled_ticket(labels: &[&str]) -> BdTicket {
@@ -108,6 +110,9 @@ fn an_area_labels_extra_review_runs_after_the_review_each_round_on_its_row() {
     let splits = w.called("herdr pane split");
     let run_dir = format!("--cwd {}", o.run_dir("hx-1").display());
     assert!(splits[1].contains(&run_dir), "{}", splits[1]);
+    // no fetch.sh, no fetch
+    assert!(w.called("env ").is_empty(), "{:?}", w.called("env "));
+    assert!(!prompt.contains("- Cache:"), "{prompt}");
 
     // an empty row falls back to the Review's: codex, from config.json
     let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
@@ -115,6 +120,219 @@ fn an_area_labels_extra_review_runs_after_the_review_each_round_on_its_row() {
     o.run_ticket("hx-1");
     w.await_line("hx-1 extra review 1 started: codex (pane 1-3)");
     w.await_line("hx-1 PR #hx-1 opened");
+}
+
+/// orqa-sec-review ships a fetch.sh, which a Ticket's worktree gets from
+/// the checkout; the base is origin/main, and every fetch call is kept
+/// with the directory it ran in.
+fn fetch_sh(w: &Arc<World>) -> Arc<Mutex<Vec<(PathBuf, String)>>> {
+    let script = w.repo.join(".orqadence/skills/orqa-sec-review/fetch.sh");
+    write_file(&script, "#!/usr/bin/env bash\n");
+    let fetches = Arc::new(Mutex::new(Vec::new()));
+    let kept = fetches.clone();
+    w.hook(move |dir, argv| match argv {
+        ["git", "symbolic-ref", ..] => Some(Ok("origin/main\n".to_string())),
+        ["env", ..] => {
+            kept.lock()
+                .unwrap()
+                .push((dir.to_path_buf(), argv.join(" ")));
+            None
+        }
+        _ => None,
+    });
+    fetches
+}
+
+/// The fetch call for hx-1's worktree, as the Orchestrator makes it.
+fn fetch_call(o: &Orchestrator) -> String {
+    format!(
+        "env ORQA_CACHE={} ORQA_BASE=origin/main bash {}",
+        o.cfg.repo.join(".orqadence-local/cache/security").display(),
+        o.worktree("hx-1")
+            .join(".orqadence/skills/orqa-sec-review/fetch.sh")
+            .display()
+    )
+}
+
+/// Where each call starting with `prefix` is in the call order.
+fn call_positions(w: &World, prefix: &str) -> Vec<usize> {
+    let calls = w.calls();
+    (0..calls.len())
+        .filter(|&i| calls[i].starts_with(prefix))
+        .collect()
+}
+
+/// A label whose Extra review skill has a fetch.sh runs it, in the worktree
+/// with its cache and the base, before the Extra review's pane starts,
+/// every Round and before the PR; the Extra review gets the cache as an
+/// Input.
+#[test]
+fn a_labels_fetch_sh_runs_before_each_extra_review_with_the_cache_and_base() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    config(&w, json!({}));
+    let fetches = fetch_sh(&w);
+    w.session(|p| match (p.stage.as_str(), p.round) {
+        ("verdict", 1) => (FIX.to_string(), "idle".to_string()),
+        _ => succeed(p),
+    });
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened after 2 rounds");
+    let call = fetch_call(&o);
+    assert_eq!(
+        *fetches.lock().unwrap(),
+        [
+            (o.worktree("hx-1"), call.clone()),
+            (o.worktree("hx-1"), call)
+        ]
+    );
+    let (fetched, started) = (
+        call_positions(&w, "env "),
+        call_positions(&w, "herdr agent start h-hx-1-extra-review"),
+    );
+    assert!(
+        fetched.len() == 2
+            && fetched[0] < started[0]
+            && started[0] < fetched[1]
+            && fetched[1] < started[1],
+        "fetch calls at {fetched:?}, extra reviews started at {started:?}"
+    );
+    let cache = o.cfg.repo.join(".orqadence-local/cache/security");
+    assert!(cache.is_dir());
+    let prompt = w.prompt("extra-review-1.md");
+    assert!(
+        prompt.contains(&format!("- Cache: {}\n", cache.display())),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("- Fetch:"), "{prompt}");
+
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    config(&w, json!({"position": "before_pr"}));
+    let fetches = fetch_sh(&w);
+    o.run_ticket("hx-1");
+    w.await_line("hx-1 PR #hx-1 opened after 1 round");
+    assert_eq!(fetches.lock().unwrap().len(), 1);
+    assert!(
+        call_positions(&w, "env ")[0]
+            < call_positions(&w, "herdr agent start h-hx-1-extra-review")[0]
+    );
+    assert!(w.prompt("extra-review-final.md").contains("- Cache: "));
+}
+
+/// A fetch.sh that fails with this stderr, and the error it makes: its
+/// last three lines that are not blank.
+const FAILED: &str = "Initializing provider plugins...\n\nError: Failed to query available provider packages\nregistry.terraform.io: dial tcp: lookup failed\n  exit 1\n";
+const ERROR: &str = "Error: Failed to query available provider packages / registry.terraform.io: dial tcp: lookup failed / exit 1";
+
+/// fetch_sh's world with every fetch failing with FAILED.
+fn failing_fetch(w: &Arc<World>) {
+    fetch_sh(w);
+    w.hook(|_, argv| match argv {
+        ["env", ..] => Some(Err(FAILED.to_string())),
+        _ => None,
+    });
+}
+
+/// A failing fetch is a Question with its stderr's last lines: retry runs
+/// it again; run without starts the Extra review with the Fetch Input, the
+/// Cache still given.
+#[test]
+fn a_failed_fetch_is_a_question_retry_runs_it_again_and_run_without_passes_the_error() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    config(&w, json!({}));
+    failing_fetch(&w);
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+
+    let asked = w.await_event("fetch.sh for extra review 1 failed");
+    assert_eq!(
+        asked.text,
+        format!("fetch.sh for extra review 1 failed: {ERROR}")
+    );
+    let Some(Ask::TicketStart { options }) = asked.ask else {
+        panic!("no Question: {:?}", asked.ask);
+    };
+    assert_eq!(options, ["retry", "run without it", "park"]);
+    assert!(w.called("herdr agent start h-hx-1-extra-review").is_empty());
+    o.answer("hx-1", "", Answer::Prompt("retry".to_string()));
+    w.await_nth("fetch.sh for extra review 1 failed", 2);
+    assert_eq!(w.called("env ").len(), 2);
+    assert!(!o.ticket("hx-1").fetching);
+
+    o.answer("hx-1", "", Answer::Prompt("run without it".to_string()));
+    w.await_line("hx-1 running extra review 1 without its fetch");
+    w.await_line("hx-1 PR #hx-1 opened");
+    run.wait();
+    let prompt = w.prompt("extra-review-1.md");
+    let cache = o.cfg.repo.join(".orqadence-local/cache/security");
+    assert!(
+        prompt.contains(&format!("- Cache: {}\n", cache.display()))
+            && prompt.contains(&format!("- Fetch: not run: {ERROR}\n")),
+        "{prompt}"
+    );
+}
+
+/// Park, picked on a failing fetch's Question, parks the Ticket with its
+/// error; no Extra review starts.
+#[test]
+fn park_on_a_failed_fetch_parks_the_ticket_with_its_error() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    config(&w, json!({}));
+    failing_fetch(&w);
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+
+    w.await_event("fetch.sh for extra review 1 failed");
+    o.answer("hx-1", "", Answer::Prompt("park".to_string()));
+    run.wait();
+    let reason = format!("fetch.sh for extra review 1 failed: {ERROR}");
+    assert_eq!(o.ticket("hx-1").reason, reason);
+    assert!(w.called("herdr agent start h-hx-1-extra-review").is_empty());
+}
+
+/// An Extra review a stopped run had started is resumed, not fetched for
+/// again: its session may be reading the cache. It still gets the Cache.
+#[test]
+fn a_resumed_extra_review_is_not_fetched_for_again() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    config(&w, json!({}));
+    let fetches = fetch_sh(&w);
+    for file in ["implement.md", "review-1.md"] {
+        write_file(&o.run_dir("hx-1").join(file), "STATUS: done\n");
+    }
+    o.update("hx-1", |ts| {
+        ts.stage = "extra-review".to_string();
+        ts.round = 1;
+    });
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened after 1 round");
+    assert!(fetches.lock().unwrap().is_empty());
+    assert!(w.prompt("extra-review-1.md").contains("- Cache: "));
+}
+
+/// Away, a failing fetch parks the Ticket with a bd comment, like every
+/// Question: no Extra review starts.
+#[test]
+fn away_a_failed_fetch_parks_the_ticket() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    config(&w, json!({}));
+    failing_fetch(&w);
+    o.cfg.away.store(true, Ordering::SeqCst);
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 parked: asked you while away");
+    let ts = o.ticket("hx-1");
+    assert_eq!(
+        (ts.status.as_str(), ts.reason.as_str()),
+        (STATUS_PARKED, AWAY)
+    );
+    let comments = w.called("bd comments add hx-1 ");
+    assert!(
+        comments.len() == 1 && comments[0].contains(ERROR),
+        "{comments:?}"
+    );
+    assert!(w.called("herdr agent start h-hx-1-extra-review").is_empty());
 }
 
 /// A label's review skill not installed goes under Not installed, named

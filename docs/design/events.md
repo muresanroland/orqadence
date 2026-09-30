@@ -29,6 +29,9 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 | Implement done | implemented |
 | Review done | review N found K findings |
 | Extra review done | *an Area label's, after the Review, every Round or in Round 1 only:* extra review N found K findings *(started, holds and stuck lines name it extra review N too)* |
+| Extra review's fetch.sh failed | asking you: fetch.sh for extra review N failed: `the last 3 lines of its stderr, joined by " / "` *(options: retry · run without it · park; the TICKETS line reads fetching while it runs)* |
+| run without the fetch | running extra review N without its fetch *(the Extra review's Inputs say Fetch: not run: `error`)* |
+| park the fetch | parked: fetch.sh for extra review N failed: `error` *(/continue @ticket runs it again)* |
 | Debate done | debate N settled: K to fix, J skipped |
 | Fix done | fix N done |
 | PR opened | PR #12 opened after N rounds *(log line adds the url)* |

@@ -56,7 +56,7 @@ Modifier labels never carry one. A Ticket has at most one Area label, so it has 
 - **A new label:** its Extra review defaults to every Round, Debate on.
 - **Rounds:** Findings that skip the Debate count as fix items, so they keep the Rounds going. Any still open at Round 3's cap go on the PR with the other leftovers.
 - **Config:** on the /config Ticket labels page, each label has an Extra review skill, a position, the Debate switch, and an App, model and effort.
-- **fetch.sh:** before an Extra review, if its skill's folder has a fetch.sh, the Orchestrator runs it in the worktree with network, in the background, and passes it a cache directory. If the script fails, a Question offers Retry or Run without.
+- **fetch.sh:** before an Extra review, if its skill's folder in the worktree has a fetch.sh, the Orchestrator runs it with network: `bash <skill folder>/fetch.sh` in the worktree, with `ORQA_CACHE` the label's cache, `.orqadence-local/cache/<label>` in the checkout, and `ORQA_BASE` the base branch. The Ticket reads `fetching` on the Shell meanwhile, and the Extra review gets the Input `Cache: <ORQA_CACHE>`. If the script fails, a Question with its stderr's last lines offers Retry, Run without (the Input `Fetch: not run: <error>`) or Park.
 
 ## orqa:infra's offline checks
 

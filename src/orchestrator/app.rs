@@ -693,6 +693,10 @@ pub(crate) struct ExtraReview {
     pub(crate) app: String,
     pub(crate) model: String,
     pub(crate) effort: String,
+    /// Its Area label's name, which names its fetch.sh's cache; set by
+    /// extra_review, not read from the entry.
+    #[serde(skip)]
+    pub(crate) label: String,
 }
 
 fn debate_on() -> bool {
@@ -705,7 +709,10 @@ pub(crate) fn extra_review(repo: &Path, names: &[String]) -> Result<Option<Extra
     Ok(ticket_labels(repo, names)?
         .into_iter()
         .filter(|(_, label)| label.kind == "area")
-        .map(|(_, label)| label.extra_review)
+        .map(|(name, label)| ExtraReview {
+            label: name,
+            ..label.extra_review
+        })
         .find(|extra| !extra.skill.is_empty()))
 }
 

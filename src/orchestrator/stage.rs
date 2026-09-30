@@ -151,9 +151,10 @@ pub(crate) enum Ask {
         question: String,
         options: Vec<String>,
     },
-    /// A Question at the Ticket's start, before any Stage (ask_at_start):
-    /// its text is the line's, and the option picked is answered word for
-    /// word, for no pane ("").
+    /// A Question at the Ticket's start, before any Stage, or on a failed
+    /// fetch.sh before an Extra review (ask_at_start): its text is the
+    /// line's, and the option picked is answered word for word, for no
+    /// pane ("").
     TicketStart { options: Vec<String> },
     /// The Ticket's labels clash (ask_labels): its options are the labels
     /// to keep one of, or the one to remove, then park; the one picked is
@@ -1424,11 +1425,11 @@ impl Orchestrator {
         }
     }
 
-    /// A Question with no pane and no session, at the Ticket's start or
-    /// over its labels, so its answer is for pane "". Away, the Ticket
-    /// parks with a bd comment, as for a Stage's own question, and
-    /// /continue @ticket asks again; turning Away on while it waits does
-    /// the same. `ask` makes the Ask from `options`. The place in `options`
+    /// A Question with no pane and no session, at the Ticket's start, over
+    /// its labels or on a failed fetch.sh, so its answer is for pane "".
+    /// Away, the Ticket parks with a bd comment, as for a Stage's own
+    /// question, and /continue @ticket asks again; turning Away on while it
+    /// waits does the same. `ask` makes the Ask from `options`. The place in `options`
     /// of the one picked; /park parks.
     pub(super) fn ask_at_start(
         &self,

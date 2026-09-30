@@ -56,6 +56,10 @@ pub(crate) struct TicketState {
     /// The App whose usage limit holds the Ticket, while it holds.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) limited: String,
+    /// Its Extra review's fetch.sh is running: TICKETS shows it in place of
+    /// the Stage. Live only, never saved.
+    #[serde(skip)]
+    pub(crate) fetching: bool,
 }
 
 /// A Stage's session: the App it runs on, and the id herdr's integration
