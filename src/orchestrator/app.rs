@@ -701,7 +701,7 @@ pub(crate) fn labels(doc: &Value) -> BTreeMap<String, Result<Label, String>> {
 
 /// The label entry under name: a kind that is neither area nor modifier,
 /// a row config.json has not, or a field of the wrong type refuses.
-fn entry(name: &str, value: &Value) -> Result<Label, String> {
+pub(crate) fn entry(name: &str, value: &Value) -> Result<Label, String> {
     let label: Label =
         serde_json::from_value(value.clone()).map_err(|err| format!("labels {name}: {err}"))?;
     if !matches!(label.kind.as_str(), "area" | "modifier") {

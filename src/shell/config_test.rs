@@ -2372,8 +2372,8 @@ fn a_label_added_meanwhile_is_not_overwritten() {
     );
 }
 
-/// A label whose skills is not a list of strings refuses a pick: its
-/// entries are not dropped for the one picked.
+/// A label a Stage could not read (skills not a list of strings) refuses a
+/// pick: config.json is read afresh and its entry left as it was.
 #[test]
 fn a_malformed_skills_list_refuses_a_pick() {
     let repo = TempDir::new();
@@ -2385,7 +2385,7 @@ fn a_malformed_skills_list_refuses_a_pick() {
     keys(&mut s, &[KeyCode::Enter, KeyCode::Down, KeyCode::Enter]);
     s.key(key(KeyCode::Enter));
     assert!(
-        note(&s).contains("labels fe skills in config.json is not a list of strings"),
+        note(&s).contains("labels fe: invalid type: integer `7`, expected a string"),
         "{}",
         note(&s)
     );

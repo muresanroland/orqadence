@@ -1050,32 +1050,32 @@ pub(crate) fn label_line(label: &Label) -> String {
     parts.join(" · ")
 }
 
-/// The entry under name in labels, to change; a missing one, or one that
-/// is not an object, refuses.
+/// The entry under name in labels, to change; a missing one, one that is
+/// not an object, or one a Stage could not read, refuses.
 fn label_entry<'a>(
     labels: &'a mut serde_json::Map<String, Value>,
     name: &str,
 ) -> Result<&'a mut Value, String> {
     match labels.get_mut(name) {
-        Some(entry) if entry.is_object() => Ok(entry),
+        Some(entry) if entry.is_object() => {
+            app::entry(name, entry)?;
+            Ok(entry)
+        }
         Some(_) => Err(format!("labels {name} in config.json is not an object")),
         None => Err(format!("config.json has no label orqa:{name}")),
     }
 }
 
 /// A label's skills changed in place; a missing or null skills starts
-/// empty, one that is not a list of strings refuses.
+/// empty (label_entry refused one that is not a list of strings).
 fn put_skills(
     labels: &mut serde_json::Map<String, Value>,
     name: &str,
     change: impl FnOnce(&mut Vec<String>),
 ) -> Result<(), String> {
     let entry = label_entry(labels, name)?;
-    let mut skills: Vec<String> = match &entry["skills"] {
-        Value::Null => Vec::new(),
-        value => serde_json::from_value(value.clone())
-            .map_err(|_| format!("labels {name} skills in config.json is not a list of strings"))?,
-    };
+    let mut skills: Vec<String> =
+        serde_json::from_value(entry["skills"].take()).unwrap_or_default();
     change(&mut skills);
     entry["skills"] = json!(skills);
     Ok(())
