@@ -8,11 +8,21 @@ use super::modal::wrap_spans;
 #[test]
 fn a_word_of_emoji_sequences_wraps_within_the_row() {
     let hearts = "❤\u{FE0F}".repeat(40);
-    let lines = wrap_spans(vec![(hearts, Style::default())], 56, "", "", Style::default());
+    let lines = wrap_spans(
+        vec![(hearts, Style::default())],
+        56,
+        "",
+        "",
+        Style::default(),
+    );
     for line in &lines {
         assert!(line.width() <= 56, "{} columns: {line:?}", line.width());
     }
-    let text: String = lines.iter().flat_map(|l| &l.spans).map(|s| &*s.content).collect();
+    let text: String = lines
+        .iter()
+        .flat_map(|l| &l.spans)
+        .map(|s| &*s.content)
+        .collect();
     assert_eq!(text, "❤\u{FE0F}".repeat(40));
     for span in lines.iter().flat_map(|l| &l.spans) {
         assert!(!span.content.starts_with('\u{FE0F}'), "{lines:#?}");

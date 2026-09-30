@@ -742,9 +742,11 @@ pub(super) fn wrap_spans(
                             .char_indices()
                             .find(|&(i, c)| cols(&word[..i + c.len_utf8()]) > room)
                             .map_or(word.len(), |(i, _)| i);
-                        while word[at..].chars().next().is_some_and(|c| {
-                            at > 0 && cols(c.encode_utf8(&mut [0; 4])) == 0
-                        }) {
+                        while word[at..]
+                            .chars()
+                            .next()
+                            .is_some_and(|c| at > 0 && cols(c.encode_utf8(&mut [0; 4])) == 0)
+                        {
                             at = word[..at].char_indices().last().map_or(0, |(i, _)| i);
                         }
                         at.max(one)
