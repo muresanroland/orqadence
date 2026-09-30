@@ -670,13 +670,12 @@ pub(crate) struct Label {
     /// over the repo's row.
     pub(crate) rows: BTreeMap<String, BTreeMap<String, String>>,
     /// A file name; empty is the default template.
-    #[allow(dead_code)] // read by the PR template Ticket
     pub(crate) pr_template: String,
     pub(crate) extra_review: ExtraReview,
 }
 
 /// The Extra review a label adds: none while its skill is empty.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(default)]
 pub(crate) struct ExtraReview {
     /// Its review skill, in place of the review pick's.
@@ -687,7 +686,6 @@ pub(crate) struct ExtraReview {
     pub(crate) position: String,
     /// Its Findings join the Debate (the default), or go straight to the
     /// Fix as fix items not debated.
-    #[serde(default = "debate_on")]
     pub(crate) debate: bool,
     /// Its row; each empty field is the Review's.
     pub(crate) app: String,
@@ -695,8 +693,17 @@ pub(crate) struct ExtraReview {
     pub(crate) effort: String,
 }
 
-fn debate_on() -> bool {
-    true
+impl Default for ExtraReview {
+    fn default() -> Self {
+        ExtraReview {
+            skill: String::new(),
+            position: String::new(),
+            debate: true,
+            app: String::new(),
+            model: String::new(),
+            effort: String::new(),
+        }
+    }
 }
 
 /// The Extra review of the Ticket's Area label, read from config.json as
@@ -772,6 +779,41 @@ fn put_rows(doc: &mut Value, label: &Label) {
         }
         doc[key][name] = json!(value);
     }
+}
+
+/// doc with the rows the label under name sets put over its own, as a
+/// Ticket with it alone runs them; doc as it is for a label that cannot be
+/// read.
+pub(crate) fn with_label(doc: &Value, name: &str) -> Value {
+    let mut doc = doc.clone();
+    if let Some(Ok(label)) = labels(&doc).remove(name) {
+        put_rows(&mut doc, &label);
+    }
+    doc
+}
+
+/// with_label, then each field the label's Extra review sets over the
+/// review row: the row the Extra review runs on.
+pub(crate) fn with_extra(doc: &Value, name: &str) -> Value {
+    let Some(Ok(label)) = labels(doc).remove(name) else {
+        return doc.clone();
+    };
+    let mut doc = doc.clone();
+    put_rows(&mut doc, &label);
+    if !doc["review"].is_object() {
+        doc["review"] = json!({});
+    }
+    let extra = label.extra_review;
+    for (name, value) in [
+        ("app", extra.app),
+        ("model", extra.model),
+        ("effort", extra.effort),
+    ] {
+        if !value.is_empty() {
+            doc["review"][name] = json!(value);
+        }
+    }
+    doc
 }
 
 /// Ticket labels that clash: what a Ticket cannot run with until the user
@@ -1096,6 +1138,8 @@ fn model_id(app: &App, model: &str) -> Option<String> {
 /// and what it says. /config flags a bad floor as one, its key for the row.
 pub(crate) struct Check {
     pub(crate) rows: &'static [&'static str],
+    /// The Ticket label whose rows it reads; None for config.json's own.
+    pub(crate) label: Option<String>,
     pub(crate) holds: bool,
     pub(crate) text: String,
 }
@@ -1119,6 +1163,7 @@ fn debate(a: Option<&str>, b: Option<&str>) -> Check {
     };
     Check {
         rows: &["side_a", "side_b"],
+        label: None,
         holds,
         text,
     }
@@ -1172,7 +1217,12 @@ fn rules(doc: &Value) -> Vec<Check> {
                 )
             }
         };
-        out.push(Check { rows, holds, text });
+        out.push(Check {
+            rows,
+            label: None,
+            holds,
+            text,
+        });
     }
     if let (Some(a), Some(b)) = (row("side_a"), row("side_b")) {
         out.push(debate(family_of(a.0, &a.1), family_of(b.0, &b.1)));
@@ -1180,46 +1230,55 @@ fn rules(doc: &Value) -> Vec<Check> {
     out
 }
 
-/// Each Ticket label's rows over config.json's, as a Ticket with it alone
-/// runs them: a row it sets that cannot be read, config.json's own being
-/// readable, and checks' rules broken on a row it sets, named
-/// '<label> <row> ...'. Only broken ones; a label that cannot be read is its
-/// Tickets' to refuse.
+/// Each Ticket label's broken checks (label_checks_of).
 fn label_checks(doc: &Value) -> Vec<Check> {
+    labels(doc)
+        .into_keys()
+        .flat_map(|name| label_checks_of(doc, &name))
+        .filter(|c| !c.holds)
+        .collect()
+}
+
+/// A Ticket label's rows over config.json's, as a Ticket with it alone
+/// runs them: a row it sets that cannot be read, config.json's own being
+/// readable, and checks' rules on a row it sets, each held or broken, named
+/// '<label> <row> ...'. Nothing for a label that cannot be read: that is
+/// its Tickets' to refuse.
+pub(crate) fn label_checks_of(doc: &Value, name: &str) -> Vec<Check> {
     let mut out = Vec::new();
-    for (name, label) in labels(doc) {
-        let Ok(label) = label else {
-            continue;
-        };
-        let mut with = doc.clone();
-        put_rows(&mut with, &label);
-        // ponytail: no file to name, so row_in's error starts ": ", trimmed
-        // below; give row_in a prefix of its own if its wording changes
-        for key in ROWS.iter().filter(|key| label.rows.contains_key(**key)) {
-            if let (Err(err), Ok(_)) = (
-                row_in(&with, key, Path::new("")),
-                row_in(doc, key, Path::new("")),
-            ) {
-                out.push(Check {
-                    rows: std::slice::from_ref(key),
-                    holds: false,
-                    text: format!("{name} {}", err.trim_start_matches(": ")),
-                });
-            }
+    let Some(Ok(label)) = labels(doc).remove(name) else {
+        return out;
+    };
+    let mut with = doc.clone();
+    put_rows(&mut with, &label);
+    // ponytail: no file to name, so row_in's error starts ": ", trimmed
+    // below; give row_in a prefix of its own if its wording changes
+    for key in ROWS.iter().filter(|key| label.rows.contains_key(**key)) {
+        if let (Err(err), Ok(_)) = (
+            row_in(&with, key, Path::new("")),
+            row_in(doc, key, Path::new("")),
+        ) {
+            out.push(Check {
+                rows: std::slice::from_ref(key),
+                label: Some(name.to_string()),
+                holds: false,
+                text: format!("{name} {}", err.trim_start_matches(": ")),
+            });
         }
-        for check in rules(&with).into_iter().filter(|c| !c.holds) {
-            let set: Vec<&str> = check
-                .rows
-                .iter()
-                .copied()
-                .filter(|key| label.rows.contains_key(*key))
-                .collect();
-            if !set.is_empty() {
-                out.push(Check {
-                    text: format!("{name} {}: {}", set.join(" and "), check.text),
-                    ..check
-                });
-            }
+    }
+    for check in rules(&with) {
+        let set: Vec<&str> = check
+            .rows
+            .iter()
+            .copied()
+            .filter(|key| label.rows.contains_key(*key))
+            .collect();
+        if !set.is_empty() {
+            out.push(Check {
+                label: Some(name.to_string()),
+                text: format!("{name} {}: {}", set.join(" and "), check.text),
+                ..check
+            });
         }
     }
     out
