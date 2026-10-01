@@ -833,9 +833,9 @@ fn recent_lines(s: &Screen, height: usize, width: u16) -> Vec<Line<'static>> {
         .min(width as usize * 34 / 100);
     let hint = match (start, back) {
         (0, 0) => String::new(),
-        (o, 0) => format!(" ↑ {o} older "),
-        (0, n) => format!(" ↓ {n} newer "),
-        (o, n) => format!(" ↑ {o} older · ↓ {n} newer "),
+        (o, 0) => format!(" ⇧↑ {o} older "),
+        (0, n) => format!(" ⇧↓ {n} newer "),
+        (o, n) => format!(" ⇧↑ {o} older · ⇧↓ {n} newer "),
     };
     let label = format!("── RECENT {hint}");
     let fill = (width as usize).saturating_sub(label.chars().count() + 2);
