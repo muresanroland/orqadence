@@ -16,6 +16,8 @@ pub(crate) struct StageResult {
     /// The Review did not run: its App was Limited and the answer was to
     /// open the PR unreviewed. Why, for the Fix's Input.
     pub(crate) unreviewed: String,
+    /// The Release's new version, as its VERSION: line wrote it: v1.5.0.
+    pub(crate) version: String,
 }
 
 /// The Pipeline context needed to accept a result. The default requires only
@@ -74,6 +76,9 @@ pub(crate) fn read_stage_result(path: &Path, want: ResultRequirements) -> (Stage
         }
         if let Some(why) = line.strip_prefix("UNREVIEWED:") {
             result.unreviewed = why.trim().to_string();
+        }
+        if let Some(version) = line.strip_prefix("VERSION:") {
+            result.version = version.trim().to_string();
         }
         // As ^PR:\s*(\S+): the whitespace may cross blank lines.
         if let Some(rest) = line.strip_prefix("PR:").filter(|_| result.pr.is_empty()) {

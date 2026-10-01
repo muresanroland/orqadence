@@ -235,6 +235,23 @@ fn the_stage_skills_know_the_extra_review() {
     assert!(skill("orqa-stage-review").contains("`extra-review-*.md`"));
 }
 
+/// stage-release names the Inputs it reads, the VERSION: line of its
+/// result, the repo that keeps its version only in tags, and never merges.
+#[test]
+fn stage_release_names_its_inputs_the_version_line_and_the_tags_only_case() {
+    let release = skill("orqa-stage-release");
+    for text in [
+        "**Bump**",
+        "**Tickets**",
+        "**Result file**",
+        "VERSION: v",
+        "only in tags",
+        "never merges",
+    ] {
+        assert!(release.contains(text), "stage-release lacks {text:?}");
+    }
+}
+
 /// Address PR comments never rebases.
 #[test]
 fn stage_address_pr_comments_holds_no_rebase() {

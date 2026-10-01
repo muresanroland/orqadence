@@ -332,10 +332,10 @@ impl Orchestrator {
                 );
                 fs::write(file, format!("STATUS: done\nUNREVIEWED: {why}\n"))
                     .map_err(|err| Held::Woke(format!("unreviewed result not saved: {err}")))?;
-                Err(Held::Done(StageResult {
+                Err(Held::Done(Box::new(StageResult {
                     unreviewed: why,
                     ..Default::default()
-                }))
+                })))
             }
             // A fallback unset since waits for the reset.
             Some(Review::Fallback) => fallback_row(&self.cfg.repo, labels)
