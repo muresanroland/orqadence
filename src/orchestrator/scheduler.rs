@@ -641,7 +641,17 @@ impl Orchestrator {
                 }
             }
         };
-        let inputs = [("PR", pr.as_str()), (name, value.as_str())];
+        let template = if rebase {
+            None
+        } else {
+            self.pr_template(ticket)
+        };
+        let mut inputs = vec![("PR", pr.as_str()), (name, value.as_str())];
+        // Address PR comments keeps the body's sections to the template the
+        // last Fix had
+        if let Some(template) = &template {
+            inputs.push(("PR template", template));
+        }
         // the poll may have merged or closed it while the input was fetched:
         // checked under the lock, before the stage it reads is cleared
         let mut live = false;

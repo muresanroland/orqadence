@@ -1,6 +1,6 @@
 ---
 name: orqa-stage-address-pr-comments
-description: Orqadence Address PR comments Stage. Acts on a Ticket's pull request comments and failing checks, then pushes to the same PR. Run by the Orqadence Orchestrator on the user's command, not by hand.
+description: Orqadence Address PR comments Stage. Acts on a Ticket's pull request comments and failing checks, pushes to the same PR, and keeps the PR body's screenshots and label sections current. Run by the Orqadence Orchestrator on the user's command, not by hand.
 ---
 
 # Address PR comments Stage
@@ -16,6 +16,13 @@ You are in a fresh session inside the kept worktree of a Ticket whose pull reque
 4. Run the repo's tests until they pass. Commit.
 5. Push to the same PR with `git push`. Never open a second PR, never merge, never close the Ticket.
 6. Check `gh pr view <PR> --json mergeable` reports `MERGEABLE` (GitHub may need a few seconds after the push).
+7. **Screenshots**: when **Label** names `orqa:fe` and this run's changes touched a screen, capture the changed screens again as the last Fix did, after the change only. Empty `<Run directory>/pr/`, start the app in the worktree the way the repo's docs say, capture every screen this run changed into `<Run directory>/pr/` (the repo's Playwright: `npx playwright screenshot <url> <file>`; else headless Chrome under a timeout), then stop the app. Light and dark only if the change touched theming. If `gh --version` is older than 2.99 or the remote is a GitHub Enterprise Server (`gh repo view --json url` shows a host other than github.com or `*.ghe.com`), `--attach` cannot upload there: skip it. Otherwise add every file with one `gh pr edit --attach` call on the PR, not retried if it fails. Images are never committed: they stay in the Run directory, outside the worktree.
+   - The app cannot start: capture and attach nothing; step 8 says why.
+8. **The PR body**: start from the PR's live body (`gh pr view <PR> --json body -q .body`), where gh appended the uploaded files' URLs, and change only these sections:
+   - `## Screenshots`, when step 7 had screens to capture: the URLs gh appended, moved here in place of the earlier captures of the same screens. When they were not attached, the section says they were not attached and why (gh older than 2.99, a GitHub Enterprise Server remote, the error gh printed, or why the app could not start). A body without the section gets it before `## Orqadence run`.
+   - Each label section this run's changes made stale: `## Contract`, `## Schema`, `## Structure`, `## Threat note`, `## Infra`. Rewrite it to match the branch now, as that section's comment in the template at **PR template** says, else as the section reads now. **PR template**, when Inputs carry it, is the Ticket's PR template, resolved as the last Fix's was, in the Target repo's checkout rather than your worktree.
+
+   The rest of the body stays as it is: the other sections and `## Orqadence run`. Write it back with one `gh pr edit <PR> --body-file <file>`. With none of these to change, leave the body alone.
 
 ## Result file
 
@@ -24,7 +31,7 @@ Write the **Result file** from Inputs last. The Orchestrator parses only the fir
 ```
 STATUS: done
 
-<per PR comment: what you changed, or your answer; per failing check: what you fixed; the PR's mergeable state>
+<per PR comment: what you changed, or your answer; per failing check: what you fixed; the PR's mergeable state; the screens captured and attached, or why not; the label sections rewritten>
 ```
 
 Write `STATUS: failed` with the reason if the tests cannot be made to pass or the push is rejected.
