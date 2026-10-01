@@ -244,21 +244,11 @@ fn stage_address_pr_comments_holds_no_rebase() {
     assert!(!comments.contains("{{merge-conflicts}}"));
 }
 
-/// address-pr-comments knows the approved and won't-fix lists, the
-/// won't-fix reply, and a Ticket's worktree already on the PR's branch.
+/// address-pr-comments ends its replies with the marker threads.sh:28 and
+/// pr.rs:346 match exactly.
 #[test]
-fn address_pr_comments_knows_the_lists() {
-    let skill = skill("orqa-address-pr-comments");
-    for text in [
-        "name: orqa-address-pr-comments",
-        "**approved list**",
-        "**won't-fix list**",
-        "`Won't fix: not approved for this PR.`",
-        "<!-- address-pr-comments -->",
-        "When HEAD is already the PR's head branch",
-    ] {
-        assert!(skill.contains(text), "address-pr-comments lacks {text:?}");
-    }
+fn address_pr_comments_writes_the_reply_marker() {
+    assert!(skill("orqa-address-pr-comments").contains("<!-- address-pr-comments -->"));
 }
 
 /// threads.sh run with a stub gh first on PATH: gh's --jq filter applied

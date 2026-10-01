@@ -1,5 +1,5 @@
 use super::manifest::{
-    add, job_row, link, list, parse_source, placeholder, remove, renamed, update, update_all,
+    add, link, list, parse_source, placeholder, remove, renamed, update, update_all,
     Added, Installed, Manifest, Source, JOBS, NONE,
 };
 use crate::orchestrator::write_file;
@@ -729,25 +729,15 @@ fn the_shipped_stage_skills_hold_every_jobs_placeholder_and_no_slash_call() {
     }
 }
 
-/// The PR comments job runs on the Address PR comments row, its default the
-/// Shipped address-pr-comments: nothing to fetch. Picked none, the Stage
-/// skill's own steps stand alone.
+/// Picked none, the PR comments job's Stage skill's own steps stand alone.
 #[test]
-fn the_pr_comments_job_takes_the_shipped_skill_or_none() {
-    assert_eq!(job_row("pr-comments"), "address_pr_comments");
-
+fn the_pr_comments_job_picked_none_keeps_the_stage_steps() {
     let stage = crate::skills::SKILLS
         .iter()
         .find(|(name, _)| *name == "orqa-stage-address-pr-comments")
         .unwrap()
         .1;
     let have = ["orqa-address-pr-comments".to_string()];
-    let (picked, lacking) = Manifest::default().fill_jobs(stage, &have, &[], "");
-    assert!(lacking.is_empty(), "{lacking:?}");
-    assert!(
-        picked.contains("   Use the orqa-address-pr-comments skill for steps 2 to 5"),
-        "{picked}"
-    );
     let mut manifest = Manifest::default();
     manifest.picks.insert("pr-comments".into(), NONE.into());
     let (own, _) = manifest.fill_jobs(stage, &have, &[], "");

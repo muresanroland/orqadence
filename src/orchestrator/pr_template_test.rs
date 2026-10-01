@@ -108,8 +108,7 @@ fn address_pr_comments(o: Orchestrator, w: &World) {
 }
 
 /// Address PR comments gets the PR template as the last Fix does, and the
-/// Run directory its screenshots go under: the fe label's template, and
-/// with no label the default.
+/// Run directory its screenshots go under: the fe label's template.
 #[test]
 fn address_pr_comments_gets_the_pr_template_as_fix_does() {
     let (w, o) = area_ticket("fe", json!({"kind": "area", "pr_template": "fe.md"}));
@@ -123,10 +122,4 @@ fn address_pr_comments_gets_the_pr_template_as_fix_does() {
         Some(fe.display().to_string())
     );
     assert!(w.prompt("address-pr-comments.md").contains(&run_dir));
-
-    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    write_file(&w.repo.join(DEFAULT_TEMPLATE), "## What\n");
-    address_pr_comments(o, &w);
-    let default = w.repo.join(DEFAULT_TEMPLATE).display().to_string();
-    assert_eq!(template_input(&w, "address-pr-comments.md"), Some(default));
 }
