@@ -26,8 +26,9 @@ use super::{NoticeKind, Screen, NOTICE_WINDOW};
 use crate::on_call::{self, OnCall, DEFAULT_MINUTES};
 use crate::orchestrator::app::{
     self, app, App, Check, Count, Floor, Label, Model, Row, Switch, ADDRESS_PR_COMMENTS_AUTO,
-    ADDRESS_PR_COMMENTS_COUNTDOWN, ADDRESS_PR_COMMENTS_RUNS, APPS, IF_LIMITED, MAX_PR_SESSIONS,
-    MAX_TICKETS, REBASE_AUTO, RELEASE, RELEASE_ON,
+    ADDRESS_PR_COMMENTS_COUNTDOWN, ADDRESS_PR_COMMENTS_RUNS, AGENT_MERGE, APPS, BOT_WAIT,
+    IF_LIMITED, MAX_PR_SESSIONS, MAX_TICKETS, REBASE_AUTO, RELEASE, RELEASE_ON, REVIEW_BOTS,
+    REVIEW_BOTS_KEY,
 };
 use crate::orchestrator::judgment::{PLAN_FLOOR, WAKE_FLOOR};
 use crate::orchestrator::stage::plural;
@@ -200,7 +201,7 @@ pub(crate) struct Number {
 
 /// The whole numbers the pages keep, in their order on a page; static, so a
 /// Check can borrow a key.
-pub(crate) static NUMBERS: [Number; 4] = [
+pub(crate) static NUMBERS: [Number; 5] = [
     Number {
         count: &MAX_TICKETS,
         page: RUN_PAGE,
@@ -224,6 +225,12 @@ pub(crate) static NUMBERS: [Number; 4] = [
         page: ADDRESS_PR_COMMENTS_PAGE,
         name: "runs per PR",
         note: "Address PR comments runs per PR; past it new items only get a line, and /address-pr-comments still works by hand.",
+    },
+    Number {
+        count: &BOT_WAIT,
+        page: ADDRESS_PR_COMMENTS_PAGE,
+        name: "bot wait minutes",
+        note: "Minutes Agent merge waits for a ticked review bot's review; past it the merge is a Question.",
     },
 ];
 
@@ -263,6 +270,8 @@ pub(crate) enum Field {
     Switch(&'static Switch),
     /// A whole number on a Stage's page.
     Number(&'static Number),
+    /// A review bot's checkbox, of REVIEW_BOTS, under Agent merge.
+    Bot(usize),
 }
 
 /// Where a pick's row lives: config.json's (the Stage pages), the open
@@ -311,6 +320,7 @@ impl Field {
             Field::Same => "same model",
             Field::Switch(switch) => switch.question.trim_end_matches('?'),
             Field::Number(n) => n.name,
+            Field::Bot(b) => REVIEW_BOTS[b],
             field => field.key(),
         }
     }
@@ -329,6 +339,7 @@ impl Field {
             Field::ExtraSkill => "skill",
             Field::Switch(switch) => switch.key,
             Field::Number(n) => n.count.key,
+            Field::Bot(_) => REVIEW_BOTS_KEY,
         }
     }
 }
@@ -597,7 +608,8 @@ fn rows_of(section: usize) -> impl Iterator<Item = usize> {
 }
 
 /// The section a check shows on: its last row's; a whole number's, its
-/// page; a floor's, the TypeSafe page.
+/// page; the review bots', Address PR comments'; a floor's, the TypeSafe
+/// page.
 pub(crate) fn section_of(check: &Check) -> usize {
     let key = check.rows[check.rows.len() - 1];
     match (
@@ -606,6 +618,7 @@ pub(crate) fn section_of(check: &Check) -> usize {
     ) {
         (Some(r), _) => r.section,
         (_, Some(n)) => n.page,
+        _ if key == REVIEW_BOTS_KEY => ADDRESS_PR_COMMENTS_PAGE,
         _ => TYPESAFE_PAGE,
     }
 }
@@ -710,9 +723,10 @@ impl Settings {
     }
 
     /// The rules on the rows as they are, each floor that is not a number
-    /// from 0 to 1, and each whole number that breaks its rule; those of a
-    /// section when given. Neither is a rule a run refuses to start on: a
-    /// floor's Judgments ask instead, and a whole number's default is taken.
+    /// from 0 to 1, each whole number that breaks its rule, and review bots
+    /// that cannot be read; those of a section when given. None is a rule a
+    /// run refuses to start on: a floor's Judgments ask instead, and a whole
+    /// number's default is taken.
     pub(crate) fn checks(&self, section: Option<usize>) -> Vec<Check> {
         let mut checks = app::checks(&self.doc);
         for floor in FLOORS {
@@ -734,6 +748,14 @@ impl Settings {
                     text: format!("{err}: its default {} is taken", n.count.default),
                 });
             }
+        }
+        if let Err(err) = app::review_bots_in(&self.doc) {
+            checks.push(Check {
+                rows: &[REVIEW_BOTS_KEY],
+                label: None,
+                holds: false,
+                text: format!("{err}: tick the repo's bots again"),
+            });
         }
         checks.retain(|c| section.is_none_or(|s| section_of(c) == s));
         checks
@@ -758,7 +780,8 @@ impl Settings {
 
     /// The open section's settings, row by row; Plan + Implement's with
     /// its toggle, and the plan model on a split; then its switch and whole
-    /// numbers, and its jobs.
+    /// numbers, Address PR comments' with Agent merge's switch, review bots
+    /// and bot_wait last, and its jobs.
     pub(crate) fn items(&self) -> Vec<(usize, Field)> {
         let mut items: Vec<(usize, Field)> = if self.section == 0 {
             let plan = self.split().map(|_| (0, Field::Plan));
@@ -773,8 +796,16 @@ impl Settings {
         if let Some(&(row, _)) = items.first() {
             let switch = SWITCHES.iter().filter(|(s, _)| *s == self.section);
             items.extend(switch.map(|&(_, switch)| (row, Field::Switch(switch))));
-            let numbers = NUMBERS.iter().filter(|n| n.page == self.section);
-            items.extend(numbers.map(|n| (row, Field::Number(n))));
+            let (bot_wait, numbers): (Vec<_>, Vec<_>) = NUMBERS
+                .iter()
+                .filter(|n| n.page == self.section)
+                .partition(|n| *n.count == BOT_WAIT);
+            items.extend(numbers.into_iter().map(|n| (row, Field::Number(n))));
+            if self.section == ADDRESS_PR_COMMENTS_PAGE {
+                items.push((row, Field::Switch(&AGENT_MERGE)));
+                items.extend((0..REVIEW_BOTS.len()).map(|b| (row, Field::Bot(b))));
+            }
+            items.extend(bot_wait.into_iter().map(|n| (row, Field::Number(n))));
         }
         let jobs = (0..JOBS.len()).map(|j| (job_row_of(j), Field::Job(j)));
         items.extend(jobs.filter(|&(r, _)| ROWS[r].section == self.section));
@@ -933,7 +964,8 @@ impl Settings {
                 | Field::Template
                 | Field::ExtraSkill
                 | Field::Switch(_)
-                | Field::Number(_),
+                | Field::Number(_)
+                | Field::Bot(_),
                 _,
             ) => {}
             (Field::Plan, Some(app)) => {
@@ -1110,6 +1142,8 @@ impl Settings {
             ),
             Field::Skills | Field::Template | Field::ExtraSkill => return self.labels_note(),
             Field::Switch(switch) if *switch == RELEASE_ON => "Enter or Space turns it on or off, saved at once, uncommitted.",
+            Field::Switch(switch) if *switch == AGENT_MERGE => "Enter or Space turns it on or off, saved at once, uncommitted; only with PR comments and failing checks opened by themselves. On, the Orchestrator merges a Ticket's PR once its checks are green, the ticked review bots are done and every PR comment is fixed or answered; security, db and infra Tickets still wait for you.",
+            Field::Bot(_) => "A review bot this repo has: Agent merge waits for its review. Enter or Space ticks it, saved at once, uncommitted.",
             Field::Switch(_) => "Enter or Space turns it on or off, saved at once, uncommitted; off, the poll only says it in a line and the command still works by hand.",
             Field::Number(n) => return number_note(n),
             Field::App => "Changing the App leads into its model list; the pair saves together.",
@@ -1939,6 +1973,7 @@ impl Screen {
                     let on = !app::switch_in(&st.doc, switch);
                     self.switch_to(switch, on)
                 }
+                (_, Field::Bot(b)) => self.tick_bot(REVIEW_BOTS[b]),
                 (_, Field::Number(n)) if code == KeyCode::Enter => {
                     st.typing = Some((Typing::Number(n), String::new()))
                 }
@@ -2316,14 +2351,48 @@ impl Screen {
         }
     }
 
-    /// A switch on or off in config.json, which /config reads again.
+    /// A switch on or off in config.json, which /config reads again. Agent
+    /// merge going off with automatic Address PR comments is said on RECENT,
+    /// run or no run: nobody turned it off by hand.
     fn switch_to(&mut self, switch: &'static Switch, on: bool) {
         let repo = &self.cfg.repo;
         match app::set_switch(repo, switch, on).and_then(|()| app::read_object(repo)) {
             Ok((_, doc)) => {
-                self.settings.as_mut().unwrap().doc = doc;
+                let st = self.settings.as_mut().unwrap();
+                let was_on = app::switch_in(&st.doc, &AGENT_MERGE);
+                let went_off = was_on && !app::switch_in(&doc, &AGENT_MERGE);
+                st.doc = doc;
                 let name = Field::Switch(switch).name();
                 self.done(format!("{name}: {}", if on { "on" } else { "off" }), CONFIG);
+                if went_off && *switch != AGENT_MERGE {
+                    let name = Field::Switch(&AGENT_MERGE).name();
+                    self.say(&format!(
+                        "config: {name}: off, as PR comments no longer open by themselves"
+                    ));
+                }
+            }
+            Err(err) => self.refused(&err),
+        }
+    }
+
+    /// A review bot ticked or unticked in config.json's review_bots, which
+    /// /config reads again; a list that cannot be read starts empty.
+    fn tick_bot(&mut self, bot: &'static str) {
+        let st = self.settings.as_ref().unwrap();
+        let kept = app::review_bots_in(&st.doc).unwrap_or_default();
+        let bots: Vec<_> = REVIEW_BOTS
+            .into_iter()
+            .filter(|b| kept.contains(b) != (*b == bot))
+            .collect();
+        let repo = &self.cfg.repo;
+        match app::set_review_bots(repo, &bots).and_then(|()| app::read_object(repo)) {
+            Ok((_, doc)) => {
+                self.settings.as_mut().unwrap().doc = doc;
+                let mut said = bots.join(", ");
+                if bots.is_empty() {
+                    said = "none".to_string();
+                }
+                self.done(format!("review bots: {said}"), CONFIG);
             }
             Err(err) => self.refused(&err),
         }

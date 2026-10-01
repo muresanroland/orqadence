@@ -11,7 +11,7 @@ use ratatui::Frame;
 use super::modal::{divider, dock, joined, wrap_spans};
 use super::{bold, cut, fg, SPINNER};
 use crate::on_call;
-use crate::orchestrator::app::{self, Check, Count, APPS, MAX_TICKETS};
+use crate::orchestrator::app::{self, Check, Count, AGENT_MERGE, APPS, MAX_TICKETS, REVIEW_BOTS};
 use crate::setup;
 use crate::shell::brand::{BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT};
 use crate::shell::config::{
@@ -654,7 +654,7 @@ fn hint(st: &Settings) -> &'static str {
             && st
                 .items()
                 .iter()
-                .any(|(_, f)| matches!(f, Field::Same | Field::Switch(_))) =>
+                .any(|(_, f)| matches!(f, Field::Same | Field::Switch(_) | Field::Bot(_))) =>
         {
             "↑↓ setting · Enter changes · Space toggles · ← or Esc back"
         }
@@ -755,6 +755,15 @@ fn label(st: &Settings, row: usize, field: Field) -> String {
             };
             format!("[{tick}] {}", field.name())
         }
+        (Field::Bot(b), _) => {
+            let bots = app::review_bots_in(&st.doc).unwrap_or_default();
+            let tick = if bots.contains(&REVIEW_BOTS[b]) {
+                'x'
+            } else {
+                ' '
+            };
+            format!("[{tick}] review bot: {}", field.name())
+        }
         (Field::Model, _) if row == 0 && split => pad("implement model", 22),
         (Field::Job(j), _) => pad(&job_name(j), 24),
         (_, "") => pad(field.name(), 22),
@@ -787,7 +796,12 @@ fn value(st: &Settings, row: usize, field: Field) -> Vec<Span<'static>> {
             _ => vec![shown],
         },
         Field::App => vec![shown],
-        Field::Same | Field::Skills | Field::Template | Field::ExtraSkill | Field::Switch(_) => {
+        Field::Same
+        | Field::Skills
+        | Field::Template
+        | Field::ExtraSkill
+        | Field::Switch(_)
+        | Field::Bot(_) => {
             vec![]
         }
         Field::Number(n) => count_value(st, n.count),
@@ -817,8 +831,11 @@ fn page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
             lines.push(Line::default());
             lines.push(Line::from(Span::styled("DELEGATE SKILLS", bold(MUTED))));
         }
+        if field == Field::Switch(&AGENT_MERGE) {
+            lines.push(Line::from(Span::styled("AGENT MERGE", bold(MUTED))));
+        }
         let selected = st.open && i == st.setting;
-        if let Field::Switch(_) = field {
+        if let Field::Switch(_) | Field::Bot(_) = field {
             switch_item(&mut lines, &mut at, selected, label(st, row, field), width);
             continue;
         }
