@@ -563,7 +563,8 @@ impl Orchestrator {
     }
 
     /// Runs Address PR comments for a Ticket with an open PR, on the user's
-    /// command only, fed gh's view of the PR's reviews, comments and checks.
+    /// command only, fed gh's view of the PR's reviews, comments and checks,
+    /// and the PR template the last Fix had, for the body's sections.
     fn address_pr_comments(&self, ticket: &str) {
         let ts = self.ticket(ticket);
         if ts.status != STATUS_PR_OPEN {
@@ -578,10 +579,14 @@ impl Orchestrator {
                 return self.report(ticket, &text);
             }
         };
-        let inputs = [
+        let template = self.pr_template(ticket);
+        let mut inputs = vec![
             ("PR", ts.pr.as_str()),
             ("PR metadata (gh JSON)", comments.trim()),
         ];
+        if let Some(template) = &template {
+            inputs.push(("PR template", template));
+        }
         self.on_pr(ticket, &ADDRESS_PR_COMMENTS, &inputs, "addressed");
     }
 
