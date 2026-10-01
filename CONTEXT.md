@@ -24,7 +24,7 @@ A skill, third-party or Shipped, a Stage skill or Brainstorm skill runs for one 
 _Avoid_: Override, replacement, work skill
 
 **Shipped skill**:
-Any skill Orqadence ships and installs for a Target repo, committed with the repo's Orqadence settings: the Stage skills, the Brainstorm skills, plus orqa-create-pr, which the Fix Stage runs, orqa-infra-review, orqa:infra's Extra review skill, and orqa-address-pr-comments, the Address PR comments Stage's default Delegate skill. Like every skill Orqadence installs, fetched Delegate skills too, its name starts with orqa-, so none shares a name with a skill of the repo's or the user's own.
+Any skill Orqadence ships and installs for a Target repo, committed with the repo's Orqadence settings: the Stage skills, the Brainstorm skills, plus orqa-create-pr, which the Fix Stage and the Release run, orqa-infra-review, orqa:infra's Extra review skill, and orqa-address-pr-comments, the Address PR comments Stage's default Delegate skill. Like every skill Orqadence installs, fetched Delegate skills too, its name starts with orqa-, so none shares a name with a skill of the repo's or the user's own.
 
 **Personal override**:
 One setting of the Target repo's Orqadence settings that one person keeps for themselves, read over the repo's committed value on their machine only. It never leaves the machine and is never reviewed, so it covers the settings that change how a run is scheduled and which App, model or effort a Stage uses, never a skill or a Delegate pick.

@@ -5,13 +5,13 @@ description: Orqadence Release Stage. Raises the Target repo's version once a ru
 
 # Release Stage
 
-You are the Release Stage of an Orqadence run, in a fresh session inside its own worktree, on a new branch off the default branch: every Ticket of the run is merged into it. Ask only what the repo's docs and the Inputs leave open; otherwise decide, and note the answer you took from them. Inputs are under **Inputs** at the end.
+You are the Release Stage of an Orqadence run, in a fresh session inside its own worktree (**Worktree**), on a new branch off the default branch: every Ticket of the run is merged into it. Ask only what the repo's docs and the Inputs leave open; otherwise decide, and note the answer you took from them. Inputs are under **Inputs** at the end.
 
 **Bump** is `minor` (an Epic's run: vX.Y.Z to vX.Y+1.0) or `patch` (a Ticket run: vX.Y.Z to vX.Y.Z+1). **Epic** is the Epic's id and title, or `none` in a Ticket run. **Tickets** lists each merged Ticket's id, title and PR url, one per line.
 
 ## 1. Find the version
 
-1. Find every place the repo keeps its own version: `Cargo.toml` with `Cargo.lock`, `package.json` with its lockfile, `pyproject.toml`, a `VERSION` file, and the like. Then `git grep` the version you found to catch the rest (a constant the build reads, a chart, the docs' install line). Only the repo's own version: a dependency's equal number is not it.
+1. Find every place the repo keeps its own version: `Cargo.toml` with `Cargo.lock`, `package.json` with its lockfile, `pyproject.toml`, a `VERSION` file, and the like. Then `git grep` the version you found to catch the rest (a constant the build reads, a chart). Only the repo's own version: a dependency's equal number is not it.
 2. `git fetch origin --tags`, and take the highest `vX.Y.Z` tag, pre-release tags such as `v1.5.0-rc.1` aside.
 3. The base is the highest of the versions found and the tag. When they disagree, remember which you took and why: the PR body says so.
 4. Raise the base as **Bump** says.

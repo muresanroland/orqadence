@@ -77,7 +77,12 @@ pub(crate) fn read_stage_result(path: &Path, want: ResultRequirements) -> (Stage
         if let Some(why) = line.strip_prefix("UNREVIEWED:") {
             result.unreviewed = why.trim().to_string();
         }
-        if let Some(version) = line.strip_prefix("VERSION:") {
+        // The first VERSION: line, as for PR: the free text after it may
+        // start a line the same way.
+        if let Some(version) = line
+            .strip_prefix("VERSION:")
+            .filter(|_| result.version.is_empty())
+        {
             result.version = version.trim().to_string();
         }
         // As ^PR:\s*(\S+): the whitespace may cross blank lines.

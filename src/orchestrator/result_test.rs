@@ -236,7 +236,7 @@ Not a finding: - [fix] inside prose is ignored only when it does not start the l
         ),
         (
             "Release in a tags-only repo",
-            "STATUS: done\nVERSION: v1.4.15\n\nversion kept only in tags, from v1.4.14\n",
+            "STATUS: done\nVERSION: v1.4.15\n\nVERSION: kept only in tags, from v1.4.14\n",
             StageResult {
                 version: "v1.4.15".to_string(),
                 ..Default::default()
