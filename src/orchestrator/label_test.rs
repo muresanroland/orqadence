@@ -249,16 +249,18 @@ fn the_code_editing_stage_skills_load_the_label_skills_and_bound_the_epic_contex
 }
 
 /// The PR's changed files, as git lists them against the base.
-const DIFF: &str = "git diff --no-renames --name-only origin/main...HEAD";
+const DIFF: &str = "git diff --no-renames --name-only -z origin/main...HEAD";
 
 /// The Ticket's branch changed these paths.
 fn changed(w: &World, paths: &'static [&'static str]) {
-    w.hook(move |_, argv| (argv.join(" ") == DIFF).then(|| Ok(paths.join("\n") + "\n")));
+    w.hook(move |_, argv| (argv.join(" ") == DIFF).then(|| Ok(paths.join("\0") + "\0")));
 }
 
 /// Markdown anywhere, and a file of any kind under each skills folder.
-const MARKDOWN_AND_SKILLS: [&str; 6] = [
+/// docs/café.md, which git quotes unless -z.
+const MARKDOWN_AND_SKILLS: [&str; 7] = [
     "README.md",
+    "docs/café.md",
     "docs/adr/0007.md",
     "skills/orqa-x/fetch.sh",
     ".orqadence/skills/orqa-x/SKILL.md",
@@ -336,7 +338,7 @@ fn a_missing_github_label_is_created_once() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
     let created = AtomicBool::new(false);
     w.hook(move |_, argv| match argv {
-        ["git", "diff", ..] => Some(Ok(MARKDOWN_AND_SKILLS.join("\n"))),
+        ["git", "diff", ..] => Some(Ok(MARKDOWN_AND_SKILLS.join("\0"))),
         ["gh", "label", "create", ..] => {
             created.store(true, Ordering::SeqCst);
             None
@@ -374,7 +376,7 @@ fn a_missing_github_label_is_created_once() {
 fn gh_failing_to_label_leaves_a_recent_line_and_the_ticket_pr_open() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
     w.hook(|_, argv| match argv {
-        ["git", "diff", ..] => Some(Ok(MARKDOWN_AND_SKILLS.join("\n"))),
+        ["git", "diff", ..] => Some(Ok(MARKDOWN_AND_SKILLS.join("\0"))),
         ["gh", "pr", "edit", ..] => Some(Err("gh: boom".to_string())),
         _ => None,
     });

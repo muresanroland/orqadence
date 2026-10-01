@@ -68,13 +68,15 @@ const SKILL_DIRS: [&str; 4] = [
     ".agents/skills/",
 ];
 
-/// Whether a PR changing these paths, one a line, is a No-review pull
-/// request: each is Markdown or a skill's file. A fixed rule no agent
-/// judges; no path at all says nothing, so it is not one.
+/// Whether a PR changing these paths, each ended by a NUL as `git diff -z`
+/// prints them, is a No-review pull request: each is Markdown or a skill's
+/// file. A fixed rule no agent judges; no path at all says nothing, so it
+/// is not one.
 fn is_no_review(paths: &str) -> bool {
-    let mut paths = paths.lines().filter(|path| !path.is_empty()).peekable();
-    paths.peek().is_some()
-        && paths.all(|path| path.ends_with(".md") || SKILL_DIRS.iter().any(|d| path.starts_with(d)))
+    !paths.is_empty()
+        && paths
+            .split_terminator('\0')
+            .all(|path| path.ends_with(".md") || SKILL_DIRS.iter().any(|d| path.starts_with(d)))
 }
 
 impl Orchestrator {
@@ -266,9 +268,9 @@ impl Orchestrator {
             HUMAN_MERGE_LABEL
         } else {
             // --no-renames: a source file renamed to Markdown is a source
-            // file deleted
+            // file deleted. -z, so a path git would quote comes as it is.
             let range = format!("{}...HEAD", self.origin_head(ticket));
-            let argv = ["git", "diff", "--no-renames", "--name-only", &range];
+            let argv = ["git", "diff", "--no-renames", "--name-only", "-z", &range];
             let paths = tools.run(&self.worktree(ticket), &argv);
             let paths = paths.unwrap_or_else(|err| {
                 let text = format!("changed files not read, so {pr_ref} is reviewed: {err}");
@@ -299,8 +301,17 @@ impl Orchestrator {
         if tools.run(repo, &add).is_ok() {
             return Ok(());
         }
-        let create = ["gh", "label", "create", name, "--color", color];
-        let create = [&create[..], &["--description", description, "--force"]].concat();
+        let create = [
+            "gh",
+            "label",
+            "create",
+            name,
+            "--color",
+            color,
+            "--description",
+            description,
+            "--force",
+        ];
         tools.run(repo, &create)?;
         tools.run(repo, &add).map(drop)
     }
