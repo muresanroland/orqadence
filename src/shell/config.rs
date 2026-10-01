@@ -1162,11 +1162,6 @@ impl Settings {
             .map_err(|_| set.to_string())
     }
 
-    /// Whether a switch is on in config.json.
-    pub(crate) fn switch(&self, switch: &Switch) -> bool {
-        app::switch_in(&self.doc, switch)
-    }
-
     /// A floor as the TypeSafe page shows it: its number, and whether that
     /// is the default; or config.json's value as written, when it is not a
     /// number from 0 to 1.
@@ -1918,7 +1913,7 @@ impl Screen {
             }
             KeyCode::Enter | KeyCode::Char(' ') => match items[st.setting] {
                 (_, Field::Switch(switch)) => {
-                    let on = !st.switch(switch);
+                    let on = !app::switch_in(&st.doc, switch);
                     self.switch_to(switch, on)
                 }
                 (_, Field::Number(n)) if code == KeyCode::Enter => {

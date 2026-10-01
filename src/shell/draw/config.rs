@@ -748,7 +748,11 @@ fn label(st: &Settings, row: usize, field: Field) -> String {
             format!("[{tick}] Same model for plan and implementation")
         }
         (Field::Switch(switch), _) => {
-            let tick = if st.switch(switch) { 'x' } else { ' ' };
+            let tick = if app::switch_in(&st.doc, switch) {
+                'x'
+            } else {
+                ' '
+            };
             format!("[{tick}] {}", field.name())
         }
         (Field::Model, _) if row == 0 && split => pad("implement model", 22),

@@ -985,11 +985,15 @@ fn rebase_and_address_pr_comments_rows_replace_address_and_read_an_old_address_r
             "{key}"
         );
     }
-    let old = json!({"labels": {"be": {"kind": "area", "rows": {"address": {}}}}});
-    assert_eq!(
-        labels(&old)["be"],
-        Err("labels be rows has no row address".to_string())
-    );
+    let old = repo_with(&json!({"labels": {"be": {"kind": "area",
+        "rows": {"address": {"effort": "low"}}}}}));
+    for key in ["rebase", "address_pr_comments"] {
+        assert_eq!(
+            row(old.path(), key, &names(&["be"])).map(|r| r.said()),
+            Ok("claude default/low".to_string()),
+            "{key}"
+        );
+    }
 }
 
 /// hx-1 with the bd labels given.

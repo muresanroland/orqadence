@@ -1058,12 +1058,27 @@ pub(crate) fn read(repo: &Path) -> Result<(PathBuf, Value), String> {
 /// row and neither of theirs: both rows are the address row, so the repo
 /// keeps its App, model and effort, and a save writes the new keys.
 /// One way: the address row stays, as a save never removes it, and once
-/// either new row is set it is no longer read.
+/// either new row is set it is no longer read. A label's address row moves
+/// the same way, and leaves, as a label's rows refuse a row not in ROWS.
 fn split_address(mut doc: Value) -> Value {
-    let (old, new) = ("address", ["rebase", "address_pr_comments"]);
-    if !doc[old].is_null() && new.iter().all(|key| doc[key].is_null()) {
-        for key in new {
-            doc[key] = doc[old].clone();
+    fn split(rows: &mut Value, old: Value) {
+        let new = ["rebase", "address_pr_comments"];
+        if !old.is_null() && new.iter().all(|key| rows[key].is_null()) {
+            for key in new {
+                rows[key] = old.clone();
+            }
+        }
+    }
+    let old = doc["address"].clone();
+    split(&mut doc, old);
+    if let Some(labels) = doc.get_mut("labels").and_then(Value::as_object_mut) {
+        for rows in labels
+            .values_mut()
+            .filter_map(|label| label.get_mut("rows"))
+        {
+            if let Some(old) = rows.as_object_mut().and_then(|rows| rows.remove("address")) {
+                split(rows, old);
+            }
         }
     }
     doc

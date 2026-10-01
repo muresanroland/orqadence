@@ -1,6 +1,6 @@
 use super::manifest::{
-    add, job_row, link, list, parse_source, placeholder, remove, renamed, update, update_all,
-    Added, Installed, Manifest, Source, JOBS, NONE,
+    add, link, list, parse_source, placeholder, remove, renamed, update, update_all, Added,
+    Installed, Manifest, Source, JOBS, NONE,
 };
 use crate::orchestrator::write_file;
 use crate::tempdir::TempDir;
@@ -725,13 +725,6 @@ fn the_shipped_stage_skills_hold_every_jobs_placeholder_and_no_slash_call() {
                 .map(|m| &body[m.start()..(m.end() + 20).min(body.len())])
         );
     }
-}
-
-/// The merge conflicts job's line runs on the Rebase's row, the Stage
-/// whose skill holds it.
-#[test]
-fn the_merge_conflicts_job_runs_on_the_rebase_row() {
-    assert_eq!(job_row("merge-conflicts"), "rebase");
 }
 
 /// The name line in the frontmatter alone takes the new name.
