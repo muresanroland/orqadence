@@ -1,6 +1,6 @@
 use super::manifest::{
-    add, link, list, parse_source, placeholder, remove, renamed, update, update_all,
-    Added, Installed, Manifest, Source, JOBS, NONE,
+    add, link, list, parse_source, placeholder, remove, renamed, update, update_all, Added,
+    Installed, Manifest, Source, JOBS, NONE,
 };
 use crate::orchestrator::write_file;
 use crate::tempdir::TempDir;

@@ -95,18 +95,6 @@ fn a_mapped_file_removed_falls_back_to_the_default_with_a_recent_line() {
     assert_eq!(template_input(&w, "fix-1.md"), None);
 }
 
-/// Runs hx-1 to its PR, then Address PR comments on it.
-fn address_pr_comments(o: Orchestrator, w: &World) {
-    let o = Arc::new(o);
-    let mut run = spawn_epic(o.clone(), "hx");
-    w.await_line("hx-1 PR #hx-1 opened");
-    o.command("address-pr-comments-hx-1");
-    w.await_line("hx-1 addressed PR #hx-1");
-    o.stop();
-    run.wait();
-    o.wait_in_flight();
-}
-
 /// Address PR comments gets the PR template as the last Fix does, and the
 /// Run directory its screenshots go under: the fe label's template.
 #[test]
@@ -115,7 +103,14 @@ fn address_pr_comments_gets_the_pr_template_as_fix_does() {
     write_file(&w.repo.join(TEMPLATE_DIR).join("fe.md"), "## Screenshots\n");
     write_file(&w.repo.join(DEFAULT_TEMPLATE), "## What\n");
     let run_dir = format!("- Run directory: {}", o.run_dir("hx-1").display());
-    address_pr_comments(o, &w);
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+    w.await_line("hx-1 PR #hx-1 opened");
+    o.command("address-pr-comments-hx-1");
+    w.await_line("hx-1 addressed PR #hx-1");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
     let fe = w.repo.join(TEMPLATE_DIR).join("fe.md");
     assert_eq!(
         template_input(&w, "address-pr-comments.md"),

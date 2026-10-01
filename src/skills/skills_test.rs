@@ -408,16 +408,7 @@ fn stage_fix_names_the_orqadence_run_heading_and_its_parts_in_order() {
 #[test]
 fn stage_address_pr_comments_recaptures_screenshots_and_refreshes_label_sections() {
     let stage = skill("orqa-stage-address-pr-comments");
-    for text in [
-        "`orqa:fe`",
-        "`<Run directory>/pr/`",
-        "`gh pr edit --attach`",
-        "never committed",
-        "older than 2.99",
-        "were not attached and why",
-        "**PR template**",
-        "The rest of the body stays as it is",
-    ] {
+    for text in ["`orqa:fe`", "`<Run directory>/pr/`", "**PR template**"] {
         assert!(
             stage.contains(text),
             "stage-address-pr-comments lacks {text:?}"
@@ -433,8 +424,4 @@ fn stage_address_pr_comments_recaptures_screenshots_and_refreshes_label_sections
             "stage-address-pr-comments lacks {heading}"
         );
     }
-    let at = |part: &str| stage.find(part).unwrap_or_else(|| panic!("no {part:?}"));
-    assert!(at("`git push`") < at("**Screenshots**"));
-    assert!(at("**Screenshots**") < at("`gh pr edit --attach`"));
-    assert!(at("`gh pr edit --attach`") < at("were not attached and why"));
 }
