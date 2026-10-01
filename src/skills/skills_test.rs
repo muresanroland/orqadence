@@ -410,3 +410,41 @@ fn stage_fix_names_the_orqadence_run_heading_and_its_parts_in_order() {
         assert!(at(pair[0]) < at(pair[1]), "{} before {}", pair[0], pair[1]);
     }
 }
+
+/// stage-address-pr-comments, once it has pushed, captures an orqa:fe
+/// Ticket's changed screens again into the Run directory's pr/ and attaches
+/// them, or says why not, and rewrites each shipped label section of the PR
+/// body its changes made stale, leaving the rest as it is.
+#[test]
+fn stage_address_pr_comments_recaptures_screenshots_and_refreshes_label_sections() {
+    let stage = skill("orqa-stage-address-pr-comments");
+    for text in [
+        "`orqa:fe`",
+        "`<Run directory>/pr/`",
+        "`gh pr edit --attach`",
+        "never committed",
+        "older than 2.99",
+        "were not attached and why",
+        "**PR template**",
+        "The rest of the body stays as it is",
+    ] {
+        assert!(
+            stage.contains(text),
+            "stage-address-pr-comments lacks {text:?}"
+        );
+    }
+    for label in crate::setup::LABELS
+        .iter()
+        .filter(|l| !l.pr_section.is_empty())
+    {
+        let heading = format!("`{}`", label.pr_section.lines().next().unwrap());
+        assert!(
+            stage.contains(&heading),
+            "stage-address-pr-comments lacks {heading}"
+        );
+    }
+    let at = |part: &str| stage.find(part).unwrap_or_else(|| panic!("no {part:?}"));
+    assert!(at("`git push`") < at("**Screenshots**"));
+    assert!(at("**Screenshots**") < at("`gh pr edit --attach`"));
+    assert!(at("`gh pr edit --attach`") < at("were not attached and why"));
+}
