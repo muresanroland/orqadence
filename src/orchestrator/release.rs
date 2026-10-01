@@ -33,12 +33,12 @@ impl Orchestrator {
         children: &[BdIssue],
     ) -> Result<Option<String>, String> {
         let saved = self.state.lock().unwrap().release.is_some();
-        let merged = || {
-            children
-                .iter()
-                .any(|c| self.ticket(&c.id).status == STATUS_MERGED)
-        };
-        if !saved && !(app::switch(&self.cfg.repo, &RELEASE_ON) && merged()) {
+        if !saved
+            && !(app::switch(&self.cfg.repo, &RELEASE_ON)
+                && children
+                    .iter()
+                    .any(|c| self.ticket(&c.id).status == STATUS_MERGED))
+        {
             return Ok(None);
         }
         let carries = |issue: &BdIssue| issue.labels.iter().any(|l| l == RELEASE_LABEL);
@@ -83,23 +83,24 @@ impl Orchestrator {
         epic_input: &str,
         children: &[BdIssue],
     ) -> (String, Result<(), StageError>) {
-        let (staged, fresh) = {
-            let state = self.state.lock().unwrap();
-            let release = state.release.as_ref();
-            let staged = release.filter(|r| !r.version.is_empty());
-            (staged.map(|r| r.id.clone()), release.is_none())
-        };
-        if let Some(id) = staged {
-            return (id, Ok(()));
-        }
-        let stamp = (self.cfg.clock)().format("%Y-%m-%d-%H%M%S");
-        let (mut id, bump) = if epic.is_empty() {
-            (format!("release-{stamp}"), "patch")
-        } else if fresh && self.worktree(&format!("release-{epic}")).exists() {
-            // an earlier Release's worktree, its branch off an older main
-            (format!("release-{epic}-{stamp}"), "minor")
-        } else {
-            (format!("release-{epic}"), "minor")
+        let saved = (self.state.lock().unwrap().release.as_ref())
+            .map(|r| (r.id.clone(), !r.version.is_empty()));
+        let fresh = saved.is_none();
+        let bump = if epic.is_empty() { "patch" } else { "minor" };
+        let id = match saved {
+            Some((id, true)) => return (id, Ok(())),
+            Some((id, false)) => id, // a saved one's, from its start
+            None => {
+                let stamp = (self.cfg.clock)().format("%Y-%m-%d-%H%M%S");
+                if epic.is_empty() {
+                    format!("release-{stamp}")
+                } else if self.worktree(&format!("release-{epic}")).exists() {
+                    // an earlier Release's worktree, its branch off an older main
+                    format!("release-{epic}-{stamp}")
+                } else {
+                    format!("release-{epic}")
+                }
+            }
         };
         self.change_state(|state| {
             let release = state.release.get_or_insert_with(|| {
@@ -110,7 +111,6 @@ impl Orchestrator {
             });
             release.ts.status = STATUS_RUNNING.to_string();
             release.ts.reason.clear();
-            id = release.id.clone(); // a saved one's, from its start
         });
         if fresh {
             // an earlier run's Release of the same id is not this one's
@@ -232,16 +232,18 @@ impl Orchestrator {
     fn ask_tag(&self, id: &str) -> Result<(), StageError> {
         let release = self.release_record();
         let version = release.version.as_str();
-        let target = match release.ts.pr.is_empty() {
-            true => "FETCH_HEAD",
-            false => release.commit.as_str(),
+        let target = if release.ts.pr.is_empty() {
+            "FETCH_HEAD"
+        } else {
+            &release.commit
         };
-        let [fetch, tag, push] = [
+        let cmds = [
             ["git", "fetch", "origin", "HEAD"],
             ["git", "tag", version, target],
             ["git", "push", "origin", version],
         ];
-        let lines = [fetch, tag, push].map(|argv| argv.join(" "));
+        let lines = cmds.map(|argv| argv.join(" "));
+        let [fetch, tag, push] = &cmds;
         let notice = format!(
             "{version} not tagged. To tag it and push the tag:\n\n{}",
             lines.join("\n")
@@ -259,9 +261,9 @@ impl Orchestrator {
                 self.report("", &format!("{version} not tagged: {how}"));
                 return Ok(());
             }
-            let tagged = run(&fetch)
-                .and_then(|()| run(&tag))
-                .and_then(|()| run(&push).inspect_err(|_| _ = run(&["git", "tag", "-d", version])));
+            let tagged = run(fetch)
+                .and_then(|()| run(tag))
+                .and_then(|()| run(push).inspect_err(|_| _ = run(&["git", "tag", "-d", version])));
             match tagged {
                 Ok(()) => {
                     self.change_state(|state| {
