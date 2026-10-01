@@ -4,7 +4,7 @@
 use super::judgment::fake::Fake;
 use super::judgment::Action;
 use super::result::ResultRequirements;
-use super::stage::{result_name, stage_label, Answer, Ask, ADDRESS_PR_COMMENTS, AWAY, REBASE};
+use super::stage::{stage_label, Answer, Ask, StageError, ADDRESS_PR_COMMENTS, AWAY, REBASE};
 use super::state::STATUS_PARKED;
 use super::world::{new_world, spawn_ticket, succeed, BdTicket};
 use super::write_file;
@@ -266,11 +266,10 @@ fn away_parks_a_question_with_a_bd_comment_and_the_pane_open() {
     }
 }
 
-/// Rebase and Address PR comments run on your command over a Ticket with
-/// its PR open, which has no Parked to go to: Away, their question still
-/// waits as a Question.
+/// Rebase and Address PR comments park on a question while Away, as every
+/// Stage does: a bd comment, no Question.
 #[test]
-fn away_leaves_a_pr_stages_question_waiting_for_you() {
+fn away_parks_a_pr_stages_question_too() {
     for st in [&REBASE, &ADDRESS_PR_COMMENTS] {
         let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
         o.cfg.away.store(true, Ordering::SeqCst);
@@ -278,27 +277,26 @@ fn away_leaves_a_pr_stages_question_waiting_for_you() {
         let worktree = o.worktree("hx-1").display().to_string();
         w.run(&w.repo, &["bd", "worktree", "create", &worktree])
             .unwrap();
-        w.session(|p| match p.text.as_str() {
-            "ours" => (String::new(), "working".to_string()),
-            _ => (ASKS.to_string(), "idle".to_string()),
-        });
-        let o = Arc::new(o);
-        let run = {
-            let o = o.clone();
-            thread::spawn(move || o.run_stage("hx-1", st, 0, &[], ResultRequirements::default()))
-        };
-        let asked = w.await_event(&format!("question in {}", stage_label(st, 0)));
-        let Some(Ask::StageQuestion { pane, .. }) = asked.ask else {
-            panic!("Away parked a {} question: {:?}", st.name, asked.ask);
-        };
-        o.answer("hx-1", &pane, Answer::Prompt("ours".to_string()));
-        w.await_line("hx-1 sent your answer");
-        write_file(
-            &o.run_dir("hx-1").join(result_name(st, 0)),
-            "STATUS: done\n",
+        w.session(|_| (ASKS.to_string(), "idle".to_string()));
+
+        let ended = o.run_stage("hx-1", st, 0, &[], ResultRequirements::default());
+        assert_eq!(
+            ended,
+            Err(StageError::Parked(AWAY.to_string())),
+            "{}",
+            st.name
         );
-        w.lock().agents.insert(pane, "idle".to_string());
-        assert!(run.join().unwrap().is_ok(), "{}", st.name);
-        assert!(w.called("bd comments add").is_empty(), "{}", st.name);
+        let comments = w.called("bd comments add hx-1 ");
+        let asked = format!("{} asked", stage_label(st, 0));
+        assert!(
+            comments.len() == 1 && comments[0].contains(&asked),
+            "{}: bd comments = {comments:?}",
+            st.name
+        );
+        assert!(
+            w.events().iter().all(|e| e.ask.is_none()),
+            "{}: Away still put a Question",
+            st.name
+        );
     }
 }

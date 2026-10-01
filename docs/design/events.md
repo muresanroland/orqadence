@@ -113,7 +113,7 @@ Decided on the map ticket "Delegate skills" (harness-0sx.12, Asks). A Stage writ
 | a Stage asks | question in implement (pane 2-1) *(a Question: the Stage's options, an answer of your own, open the pane, park)* |
 | answer sent into the pane | sent your answer |
 | answered in the pane instead | carrying on |
-| asked while Away | parked: asked you while away *(a bd comment on the Ticket asks for a manual resume, /continue @ticket; the pane stays open; an Address question, its PR open, waits as a Question instead)* |
+| asked while Away | parked: asked you while away *(a bd comment on the Ticket asks for a manual resume, /continue @ticket; the pane stays open; a Rebase or Address PR comments question parks too, its PR still polled for a merge but nothing started on it until /continue @ticket takes that Stage back)* |
 
 ## Ticket-start questions
 

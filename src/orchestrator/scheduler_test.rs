@@ -1,10 +1,12 @@
 use super::app::{set_count, set_switch, MAX_PR_SESSIONS, MAX_TICKETS, REBASE_AUTO};
-use super::stage::{Config, Orchestrator};
+use super::question_test::ASKS;
+use super::stage::{Answer, Ask, Config, Orchestrator, AWAY};
 use super::state::{
     acquire_lock, load_state, lock_holder, STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN,
     STATUS_RUNNING,
 };
 use super::world::{new_world, spawn_epic, succeed, wait_until, working, BdTicket, Prompt, World};
+use super::write_file;
 use std::fs;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -610,10 +612,10 @@ fn a_ticket_run_never_ends_over_a_ticket_enqueued_while_it_lists() {
 }
 
 const CONFLICTING: &str = r#"{"state":"OPEN","mergeable":"CONFLICTING"}"#;
-const MERGEABLE: &str = r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#;
+pub(crate) const MERGEABLE: &str = r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#;
 
 /// `ticket`'s PR open, as gh shows it in `pr`, its worktree kept.
-fn pr_open(w: &World, o: &Orchestrator, ticket: &str, pr: &str) {
+pub(crate) fn pr_open(w: &World, o: &Orchestrator, ticket: &str, pr: &str) {
     let url = format!("https://example.test/pr/{ticket}");
     w.lock().prs.insert(url.clone(), pr.to_string());
     o.update(ticket, |ts| {
@@ -807,4 +809,121 @@ fn a_rebase_refused_after_its_wait_comes_back_with_the_next_conflict() {
     o.stop();
     run.wait();
     o.wait_in_flight();
+}
+
+/// Away, a Rebase's question parks its Ticket, a bd comment and no
+/// Question, and the next PR session in the queue takes its slot. Its PR
+/// turning CONFLICTING again starts nothing. /continue @ticket puts the
+/// question of the session still waiting in its pane, whose answer goes
+/// there; once the Rebase is done the Ticket is pr-open, Implement never
+/// started.
+#[test]
+fn away_parks_a_rebase_question_frees_its_slot_and_continue_puts_it() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    set_count(&w.repo, &MAX_PR_SESSIONS, Some(1)).unwrap();
+    set_switch(&w.repo, &REBASE_AUTO, true).unwrap();
+    o.cfg.away.store(true, Ordering::SeqCst);
+    pr_open(&w, &o, "hx-1", CONFLICTING);
+    pr_open(&w, &o, "hx-2", CONFLICTING);
+    w.session(
+        |p| match (p.ticket.as_str(), p.stage.as_str(), p.text.as_str()) {
+            (_, _, "ours") => (String::new(), "working".to_string()),
+            ("hx-1", "rebase", _) => (ASKS.to_string(), "idle".to_string()),
+            _ => succeed(p),
+        },
+    );
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+
+    w.await_line("hx-1 parked: asked you while away");
+    w.await_line("hx-2 rebased PR #hx-2");
+    let ts = o.ticket("hx-1");
+    assert_eq!(
+        (ts.status.as_str(), ts.stage.as_str(), ts.reason.as_str()),
+        (STATUS_PARKED, "rebase", AWAY)
+    );
+    assert_eq!(w.called("bd comments add hx-1 ").len(), 1);
+    assert!(
+        w.events().iter().all(|e| e.ask.is_none()),
+        "Away put a Question"
+    );
+
+    let url = "https://example.test/pr/hx-1".to_string();
+    w.lock().prs.insert(url.clone(), MERGEABLE.to_string());
+    thread::sleep(Duration::from_millis(30)); // many more polls
+    w.lock().prs.insert(url, CONFLICTING.to_string());
+    thread::sleep(Duration::from_millis(30));
+    let said = w.lines();
+    let conflicts = said
+        .iter()
+        .filter(|l| l.contains("hx-1 PR #hx-1 conflicts"))
+        .count();
+    assert_eq!(conflicts, 1, "{said:#?}");
+    assert_eq!(w.called("herdr agent start h-hx-1-rebase ").len(), 1);
+
+    o.cfg.away.store(false, Ordering::SeqCst); // /continue turns Away off
+    o.command("continue-hx-1");
+    let asked = w.await_event("question in rebase");
+    let Some(Ask::StageQuestion { pane, question, .. }) = asked.ask else {
+        panic!("no Question: {:?}", asked.ask);
+    };
+    assert_eq!(question, "Which parser stays?");
+    o.answer("hx-1", &pane, Answer::Prompt("ours".to_string()));
+    w.await_line("hx-1 sent your answer");
+    write_file(&o.run_dir("hx-1").join("rebase.md"), "STATUS: done\n");
+    w.lock().agents.insert(pane.clone(), "idle".to_string());
+    w.await_line("hx-1 rebased PR #hx-1");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+
+    assert_eq!(o.ticket("hx-1").status, STATUS_PR_OPEN);
+    assert_eq!(
+        w.called(&format!("herdr agent prompt {pane} ours")).len(),
+        1
+    );
+    assert_eq!(
+        w.called("herdr agent start h-hx-1-rebase ").len(),
+        1,
+        "not watched"
+    );
+    assert!(
+        !started(&w, "h-hx-1-implement"),
+        "/continue went to the Pipeline"
+    );
+}
+
+/// A PR merged while its Rebase runs stays merged when the Rebase then
+/// asks while Away: not Parked, not polled, not closed twice.
+#[test]
+fn a_pr_merged_while_its_rebase_runs_stays_merged_when_it_asks() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    o.cfg.away.store(true, Ordering::SeqCst);
+    pr_open(&w, &o, "hx-1", CONFLICTING);
+    let gate = Arc::new(AtomicBool::new(false));
+    let open = gate.clone();
+    w.session(move |p| {
+        while p.stage == "rebase" && !open.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        (ASKS.to_string(), "idle".to_string())
+    });
+    o.command("rebase-hx-1");
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+    wait_until("the Rebase", || started(&w, "h-hx-1-rebase"));
+
+    let merged = r#"{"state":"MERGED","mergeable":"UNKNOWN"}"#.to_string();
+    w.lock()
+        .prs
+        .insert("https://example.test/pr/hx-1".to_string(), merged);
+    w.await_line("hx-1 merged, Ticket closed");
+    gate.store(true, Ordering::SeqCst);
+    w.await_line("hx-1 rebase gave up: asked you while away");
+    thread::sleep(Duration::from_millis(30)); // many more polls
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+    assert_eq!(o.ticket("hx-1").status, STATUS_MERGED);
+    assert_eq!(w.called("bd close hx-1 ").len(), 1);
 }

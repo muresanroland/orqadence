@@ -6,9 +6,10 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
+use super::app::{set_switch, REBASE_AUTO};
 use super::pr::{Item, Pr};
-use super::stage::{Orchestrator, REBASE};
-use super::state::STATUS_PR_OPEN;
+use super::stage::{Orchestrator, AWAY, REBASE};
+use super::state::{STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 use super::world::{new_world, set_clock, BdTicket, World};
 
 /// Greptile: resolved threads answered with the older marker, six
@@ -504,4 +505,62 @@ fn a_conflicting_pr_or_one_with_a_rebase_queued_or_running_is_offered_nothing() 
     active().clear();
     let id = "PRRT_kwDOUiwtFs6meF8y".to_string();
     assert_eq!(poll(&o), Some(vec![id]), "offered once the Rebase is done");
+}
+
+/// Parked at its PR Stage, the Ticket's PR is still polled for its merge,
+/// which closes it, but nothing starts on it: its conflict is neither said
+/// nor rebased, and no item is offered.
+#[test]
+fn a_ticket_parked_at_its_pr_stage_is_offered_nothing_and_its_merge_closes_it() {
+    let (w, o, clock) = polled();
+    set_switch(&w.repo, &REBASE_AUTO, true).unwrap();
+    o.update("hx-1", |ts| {
+        ts.status = STATUS_PARKED.to_string();
+        ts.stage = REBASE.name.to_string();
+        ts.reason = AWAY.to_string();
+    });
+    let mut pr = open(PR65, "a");
+    thread(&mut pr, 0)["isResolved"] = json!(false);
+    pr["mergeable"] = json!("CONFLICTING");
+    serve(&w, &pr);
+    poll(&o);
+    later(&clock, 60);
+    assert_eq!(poll(&o), None, "offered while parked");
+    assert!(o.commands().is_empty(), "{:?}", o.commands());
+    let said = w.lines();
+    assert!(
+        !said.iter().any(|l| l.contains("conflicts with main")),
+        "{said:?}"
+    );
+
+    pr["state"] = json!("MERGED");
+    serve(&w, &pr);
+    poll(&o);
+    assert_eq!(o.ticket("hx-1").status, STATUS_MERGED);
+    let close = format!("bd close hx-1 --reason PR merged: {URL}");
+    assert_eq!(w.called(&close).len(), 1);
+}
+
+/// A Ticket parked because its PR closed unmerged is not polled again,
+/// though a PR Stage was the last it ran: nor once /continue has it back
+/// in its Pipeline, which clears the reason.
+#[test]
+fn a_ticket_parked_because_its_pr_closed_is_not_polled_again() {
+    let (w, o, _) = polled();
+    o.update("hx-1", |ts| ts.stage = REBASE.name.to_string()); // rebased once
+    let mut pr = open(PR65, "a");
+    pr["state"] = json!("CLOSED");
+    serve(&w, &pr);
+    poll(&o);
+    assert_eq!(o.ticket("hx-1").status, STATUS_PARKED);
+
+    let asked = w.called("gh ").len();
+    poll(&o);
+    assert_eq!(w.called("gh ").len(), asked, "a closed PR polled again");
+    o.update("hx-1", |ts| {
+        ts.status = STATUS_RUNNING.to_string();
+        ts.reason.clear();
+    });
+    poll(&o);
+    assert_eq!(w.called("gh ").len(), asked, "polled in its Pipeline");
 }

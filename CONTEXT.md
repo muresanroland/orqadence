@@ -180,7 +180,7 @@ What the Shell puts to the user when the Orchestrator cannot act alone: a Wake t
 _Avoid_: Prompt, dialog, alert, form, popup
 
 **Parked**:
-A Ticket taken out of the Pipeline to wait for the user, after a Wake that a Judgment or the user settled as park, or after its Stage, its start or a failed fetch.sh asked a question while the user was Away. Other Tickets keep running. A Research Waypoint whose session needs the user while they are Away is parked the same way, and the other research goes on.
+A Ticket taken out of the Pipeline to wait for the user, after a Wake that a Judgment or the user settled as park, or after its Stage, its start or a failed fetch.sh asked a question while the user was Away. Other Tickets keep running. Parked from Rebase or Address PR comments, it keeps its pull request, still polled for its merge, and /continue takes it back to that Stage, never to the Pipeline. A Research Waypoint whose session needs the user while they are Away is parked the same way, and the other research goes on.
 _Avoid_: Stuck, paused, failed
 
 **Manual work**:

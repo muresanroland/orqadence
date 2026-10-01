@@ -1,10 +1,11 @@
 use super::app::app;
 use super::judgment::fake::Fake as TypeSafeFake;
 use super::limit::{find, until, Limit};
+use super::scheduler_test::{pr_open, MERGEABLE};
 use super::stage::{Answer, Ask, Orchestrator, IMPLEMENT};
-use super::state::{load_state, Review, Session, TicketState};
+use super::state::{load_state, Review, Session, TicketState, STATUS_PR_OPEN, STATUS_RUNNING};
 use super::world::{
-    new_world, restarted, set_clock, spawn_ticket, succeed, wait_until, BdTicket, World,
+    new_world, restarted, set_clock, spawn_epic, spawn_ticket, succeed, wait_until, BdTicket, World,
 };
 use super::write_file;
 use crate::skills::SKILLS;
@@ -1254,4 +1255,72 @@ fn a_long_codex_limit_on_a_codex_review_ticket_ends_the_run_with_its_session_sav
         "{starts:?}"
     );
     assert!(review_questions(&w).is_empty(), "a Question was asked");
+}
+
+/// A short limit holds Address PR comments as any Stage, no Wake, and it
+/// carries on at the reset.
+#[test]
+fn a_short_limit_on_address_pr_comments_holds_it_and_carries_on_at_the_reset() {
+    let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
+    let clock = clock(&mut o);
+    pr_open(&w, &o, "hx-1", MERGEABLE);
+    hits(&w, "hx-1", "address-pr-comments", "idle", CLAUDE);
+    o.command("address-pr-comments-hx-1");
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+
+    w.await_line("hx-1 claude session limit until 3:45pm: address pr comments holds (pane");
+    thread::sleep(std::time::Duration::from_millis(30));
+    let lines = w.lines();
+    assert!(!lines.iter().any(|l| l.contains("stuck")), "{lines:#?}");
+    *clock.lock().unwrap() = at(25, 15, 47);
+    w.await_line("hx-1 claude session limit over: address pr comments carries on");
+    w.await_line("hx-1 addressed PR #hx-1");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+}
+
+/// A long limit on a PR Stage ends the run with its session saved, the
+/// Ticket running as at any Stage; /continue after the reset resumes that
+/// Stage by id, never the Pipeline.
+#[test]
+fn a_long_limit_on_a_pr_stage_saves_its_session_and_continue_resumes_it_by_id() {
+    let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.lock().integration = true;
+    let clock = clock(&mut o);
+    pr_open(&w, &o, "hx-1", MERGEABLE);
+    let weekly = "You've hit your weekly limit · resets Mon 12:00am";
+    hits(&w, "hx-1", "address-pr-comments", "idle", weekly);
+    o.command("address-pr-comments-hx-1");
+    let o = Arc::new(o);
+    spawn_epic(o.clone(), "hx").wait(); // it ends by itself
+    o.wait_in_flight();
+
+    w.await_line("claude weekly limit until Mon 12:00am: sessions saved, panes closed");
+    let ts = o.ticket("hx-1");
+    let id = ts.sessions["address-pr-comments"].id.clone();
+    assert!(
+        ts.status == STATUS_RUNNING
+            && ts.stage == "address-pr-comments"
+            && ts.tab.is_empty()
+            && !id.is_empty(),
+        "{ts:?}"
+    );
+
+    *clock.lock().unwrap() = at(28, 0, 2);
+    let o = restarted(&w, &o);
+    let before = w.calls().len();
+    let mut run = spawn_epic(o.clone(), "hx");
+    w.await_line("hx-1 address pr comments resumed: claude (pane");
+    w.await_line("hx-1 addressed PR #hx-1");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+    let starts = w.since(before, "herdr agent start h-hx-1-");
+    assert!(
+        starts.len() == 1 && starts[0].contains(&format!("--resume {id} ")),
+        "{starts:?}"
+    );
+    assert_eq!(o.ticket("hx-1").status, STATUS_PR_OPEN);
 }
