@@ -5,7 +5,9 @@ use super::state::{
     acquire_lock, load_state, lock_holder, STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN,
     STATUS_RUNNING,
 };
-use super::world::{new_world, spawn_epic, succeed, wait_until, working, BdTicket, Prompt, World};
+use super::world::{
+    new_world, spawn_epic, succeed, wait_until, working, BdTicket, Prompt, Running, World,
+};
 use super::write_file;
 use std::fs;
 
@@ -517,6 +519,87 @@ fn address_pr_comments_command_starts_it_with_the_pr_and_the_gh_json() {
         STATUS_PR_OPEN,
         "status after address-pr-comments, want it still pr-open"
     );
+}
+
+/// The Address PR comments prompt of hx-1, its PR open in the run `start`
+/// spawns over the world.
+fn address_prompt(
+    (w, o): (Arc<World>, Orchestrator),
+    start: impl Fn(&Arc<Orchestrator>) -> Running,
+) -> String {
+    let prompt = first_prompt(&w, "address-pr-comments");
+    let o = Arc::new(o);
+    let mut run = start(&o);
+    w.await_line("hx-1 PR #hx-1 opened");
+
+    o.command("address-pr-comments-hx-1");
+    w.await_line("hx-1 addressed PR #hx-1");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+    let text = prompt.lock().unwrap().as_ref().map(|p| p.text.clone());
+    text.unwrap_or_default()
+}
+
+/// Address PR comments is fed the Epic's other open children, id and title
+/// each: a PR comment may ask for the work one of them does. Not the Ticket
+/// itself, nor a closed one.
+#[test]
+fn address_pr_comments_inputs_name_the_epics_other_open_tickets() {
+    let world = new_world(vec![
+        BdTicket::new("hx-1"),
+        with_deps("hx-2", &["hx-1"]), // waits on hx-1's merge: still open
+        BdTicket::new("hx-3"),
+    ]);
+    world.0.lock().tickets[2].status = "closed".to_string();
+    let text = address_prompt(world, |o| spawn_epic(o.clone(), "hx"));
+    let want = "- Other open Tickets: \n  - hx-2: Ticket hx-2\n- PR metadata (gh JSON): ";
+    assert!(text.contains(want), "prompt lacks {want:?}:\n{text}");
+}
+
+/// A Ticket run: the queue's, and the Ticket's own Epic's children that
+/// were never queued.
+#[test]
+fn address_pr_comments_inputs_name_the_queue_and_the_tickets_epics_children() {
+    let lone = BdTicket {
+        no_epic: true,
+        ..with_deps("hx-3", &["hx-1"])
+    };
+    let world = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2"), lone]);
+    let text = address_prompt(world, |o| {
+        assert!(o.enqueue(&["hx-1".to_string(), "hx-3".to_string()]));
+        spawn_epic(o.clone(), "")
+    });
+    let want = "- Other open Tickets: \n  - hx-3: Ticket hx-3\n  - hx-2: Ticket hx-2\n- PR ";
+    assert!(text.contains(want), "prompt lacks {want:?}:\n{text}");
+}
+
+/// Without bd's list the session could delete what another Ticket builds:
+/// the run does not start, as when gh's view fails.
+#[test]
+fn address_pr_comments_does_not_start_without_the_other_open_tickets() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    let down = AtomicBool::new(false);
+    w.hook(move |_, argv| {
+        // bd goes down once Address PR comments has gh's view
+        let cmd = argv.join(" ");
+        if cmd.starts_with("gh pr view") {
+            down.store(true, Ordering::SeqCst);
+        }
+        (cmd.starts_with("bd list") && down.load(Ordering::SeqCst))
+            .then(|| Err("dolt: database is locked".to_string()))
+    });
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+    w.await_line("hx-1 PR #hx-1 opened");
+
+    o.command("address-pr-comments-hx-1");
+    w.await_line("hx-1 address pr comments failed: bd list ");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+    assert!(!started(&w, "h-hx-1-address-pr-comments"));
+    assert_eq!(o.ticket("hx-1").address_runs, 0, "a run that never started");
 }
 
 /// While Address PR comments runs, its Ticket says which run of the cap it
