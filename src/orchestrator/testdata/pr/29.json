@@ -1,0 +1,152 @@
+{
+ "state": "MERGED",
+ "mergeable": "UNKNOWN",
+ "headRefOid": "bf2a3b18b76df401d142436e42a9755289f1a145",
+ "statusCheckRollup": {
+  "commit": {
+   "oid": "bf2a3b18b76df401d142436e42a9755289f1a145"
+  },
+  "state": "SUCCESS",
+  "contexts": {
+   "nodes": [
+    {
+     "name": "Greptile Review",
+     "status": "COMPLETED",
+     "conclusion": "SUCCESS",
+     "checkSuite": {
+      "app": {
+       "slug": "greptile-apps"
+      }
+     }
+    }
+   ]
+  }
+ },
+ "reviewThreads": {
+  "nodes": [
+   {
+    "id": "PRRT_kwDOUiwtFs6ltc4c",
+    "isResolved": true,
+    "path": "src/orchestrator/stage.rs",
+    "line": 1130,
+    "comments": {
+     "nodes": [
+      {
+       "databaseId": 4096948865,
+       "author": {
+        "login": "greptile-apps",
+        "__typename": "Bot"
+       },
+       "body": "<a href=\"#\"><img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\"></a> **Wrong Session ID Saved**\n\nIf another agent takes over a Stage’s pane after the initial agent-name check, subsequent polling saves that agent’s session ID as the Stage’s. Once the pane is gone, `/continue` uses the saved ID and can resume the other agent’s conversation instead. Verify the agent still belongs to the Stage before saving its ID; this must be fixed before merging.\n\n<sub><a href=\"https://www.greptile.com/trex\"><img alt=\"T-Rex\" src=\"https://greptile-static-assets.s3.amazonaws.com/trex/trex_green.svg\" height=\"14\" align=\"absmiddle\"></a> Ran code and verified through T-Rex</sub>\n\n…"
+      },
+      {
+       "databaseId": 4097277281,
+       "author": {
+        "login": "muresanroland",
+        "__typename": "User"
+       },
+       "body": "Fixed in 5870278: `watch` now saves a changed session ID only when herdr reports the Stage's own named agent is still in that pane, so another agent taking over the pane never has its ID saved. Test: `another_agent_in_the_stage_pane_never_has_its_session_id_saved`.\n\n<!-- address-greptile -->"
+      }
+     ]
+    }
+   },
+   {
+    "id": "PRRT_kwDOUiwtFs6ltc4j",
+    "isResolved": true,
+    "path": "src/orchestrator/session_test.rs",
+    "line": 198,
+    "comments": {
+     "nodes": [
+      {
+       "databaseId": 4096948876,
+       "author": {
+        "login": "greptile-apps",
+        "__typename": "Bot"
+       },
+       "body": "<a href=\"#\"><img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\"></a> **Resume Failure Lacks Coverage**\n\nThese cases skip resumption rather than testing a failed resumed start or `continue` prompt. Both fallback paths work when exercised, but without permanent tests a recovery regression could go unnoticed. This coverage gap does not block merging.\n\n<sub><a href=\"https://www.greptile.com/trex\"><img alt=\"T-Rex\" src=\"https://greptile-static-assets.s3.amazonaws.com/trex/trex_green.svg\" height=\"14\" align=\"absmiddle\"></a> Ran code and verified through T-Rex</sub>\n\n…"
+      },
+      {
+       "databaseId": 4097277557,
+       "author": {
+        "login": "muresanroland",
+        "__typename": "User"
+       },
+       "body": "Fixed in 804622a: added `a_failed_resumed_start_or_continue_starts_the_stage_fresh`, which fails the resumed `agent start` and then the `continue` prompt, and checks the Stage restarts fresh and the PR still opens. 046e110 also asserts the fresh start gets its own pane and the normal Stage prompt.\n\n<!-- address-greptile -->"
+      }
+     ]
+    }
+   }
+  ]
+ },
+ "reviews": {
+  "nodes": [
+   {
+    "databaseId": 5308382105,
+    "url": "https://github.com/muresanroland/orqadence/pull/29#pullrequestreview-5308382105",
+    "author": {
+     "login": "greptile-apps",
+     "__typename": "Bot"
+    },
+    "body": ""
+   },
+   {
+    "databaseId": 5308777676,
+    "url": "https://github.com/muresanroland/orqadence/pull/29#pullrequestreview-5308777676",
+    "author": {
+     "login": "muresanroland",
+     "__typename": "User"
+    },
+    "body": ""
+   },
+   {
+    "databaseId": 5308777981,
+    "url": "https://github.com/muresanroland/orqadence/pull/29#pullrequestreview-5308777981",
+    "author": {
+     "login": "muresanroland",
+     "__typename": "User"
+    },
+    "body": ""
+   }
+  ]
+ },
+ "comments": {
+  "nodes": [
+   {
+    "databaseId": 5819631370,
+    "url": "https://github.com/muresanroland/orqadence/pull/29#issuecomment-5819631370",
+    "author": {
+     "login": "greptile-apps",
+     "__typename": "Bot"
+    },
+    "body": "<!-- greptile_summary -->\n\n<h2><a href=\"https://app.greptile.com/api/retrigger?id=68857734\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/RetriggerDark.svg?v=2\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://greptile-static-assets.s3.amazonaws.com/badges/Retrigger.svg?v=2\"><img alt=\"Retrigger\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/Retrigger.svg?v=2\" align=\"right\"></picture></a>Confidence Score: 3/5</h2>\n\nNot safe to merge until the snapshot and cleanup failures are fixed.\n\n<h3>Summary</h3>\n\nThe new Review and Debate worktree guard needs correction before merging. A failed initial Git probe can let a read-only stage run without a usable snapshot, and a failed later probe can cause cleanup that deletes unrelated work.\n\n<!-- greptile_confidence_score:3 -->\n\n<sub>Reviews (3) · Last reviewed commit: [\"Merge origin/main into harness-7nq.13\"](https://github.com/muresanroland/harness/commit/bf2a3b18b76df401d142436e42a9755289f1a145)</sub>"
+   },
+   {
+    "databaseId": 5819634727,
+    "url": "https://github.com/muresanroland/orqadence/pull/29#issuecomment-5819634727",
+    "author": {
+     "login": "greptile-apps",
+     "__typename": "Bot"
+    },
+    "body": "<!-- greptile_outside_diff -->\n\n<h3>Comments Outside Diff</h3>\n\nThese findings sit on lines the diff does not cover, so they could not be posted inline. Each one leaves this list once its file changes.\n\n- <img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\">&nbsp;**Stage runs without snapshot** `src/orchestrator/pipeline.rs:175` <a href=\"https://github.com/muresanroland/harness/blob/bf2a3b18b76df401d142436e42a9755289f1a145/src/orchestrator/pipeline.rs#L169-L175\">▶</a>\n\n  If the initial HEAD probe fails before Review or Debate, the stage still runs and the guard accepts the missing snapshot. In the reproduced Review run, an edit remained in the worktree while the ticket proceeded to an opened PR. Require a usable snapshot before starting the stage.\n- <img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\">&nbsp;**Failed probe deletes concurrent work** `src/orchestrator/pipeline.rs:260` <a href=\"https://github.com/muresanroland/harness/blob/bf2a3b18b76df401d142436e42a9755289f1a145/src/orchestrator/pipeline.rs#L247-L260\">▶</a>\n\n  If the current-tree probe fails after Review or Debate started with a clean tree, the guard runs `git reset --hard` and `git clean -fd` without knowing what changed. In the reproduced run, it reverted an unrelated tracked edit and deleted an untracked file created while Review ran. Park rather than cleaning when the current tree cannot be read.\n- <img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\">&nbsp;**Failed initial HEAD probe disables the read\\-only worktree guard** <a href=\"https://github.com/muresanroland/harness/pull/29\">▶</a>\n\n  - **Bug**\n    - With a one-shot HEAD failure before Review, the fake-world Review dirtied `src/lib.rs`, yet the pipeline advanced through Debate and Fix, opened the PR, and left the edit in the worktree without a reset.\n  - **Cause**\n    - At `src/orchestrator/pipeline.rs:169-175`, `self.head(ticket)` returning `None` skips snapshot creation but does not stop `run_stage`; the later guard accepts the absent snapshot at `src/orchestrator/pipeline.rs:241-246`.\n  - **Fix**\n    - Park before starting Review or Debate when the initial HEAD or tree snapshot cannot be obtained; do not treat a missing snapshot for a newly run stage as a successful guard.\n- <img alt=\"P1\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p1.svg?v=9\" align=\"top\">&nbsp;**Transient tree\\-probe failure deletes concurrent work** <a href=\"https://github.com/muresanroland/harness/pull/29\">▶</a>\n\n  - **Bug**\n    - After Review completed, the test introduced an unrelated tracked edit and untracked file while making the current-tree `git status` probe fail once. The orchestrator reset the tracked file, deleted the untracked file, and continued as though it had restored Review's changes.\n  - **Cause**\n    - At `src/orchestrator/pipeline.rs:247-260`, an unavailable current-tree value fails the equality check; when the initial snapshot was clean, the guard proceeds to `git reset --hard` and `git clean -fd` without establishing that Review made the edits.\n  - **Fix**\n    - Treat a failed current-tree probe as an unsafe-to-restore condition: park and retain the snapshot rather than running destructive cleanup until the tree can be checked reliably.\n- <img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\">&nbsp;**Failed probe saves null tree** `src/orchestrator/pipeline.rs:172` <a href=\"https://github.com/muresanroland/harness/blob/bf2a3b18b76df401d142436e42a9755289f1a145/src/orchestrator/pipeline.rs#L171-L172\">▶</a>\n\n  If the initial tree probe fails, the snapshot records a null tree and Review still starts. The reproduced run parked after Review with its edit left in place, preventing Debate and Fix from proceeding. Reject the failed probe instead of saving an unusable snapshot.\n- <img alt=\"P2\" src=\"https://greptile-static-assets.s3.amazonaws.com/badges/p2.svg?v=9\" align=\"top\">&nbsp;**Failed initial tree probe records null and parks a clean stage** <a href=\"https://github.com/muresanroland/harness/pull/29\">▶</a>\n\n  - **Bug**\n    - A one-shot initial tree-probe failure saved `[\"a11ce\",null]`. After Review edited the simulated worktree, the ticket parked as though the worktree had already been dirty, retaining the edit and never starting Debate or Fix.\n  - **Cause**\n    - At `src/orchestrator/pipeline.rs:171-172`, the optional result of `self.tree(ticket)` is serialized even when it is `None`; the guard subsequently cannot treat null as a clean baseline.\n  - **Fix**\n    - Require a successful tree probe before saving the snapshot or starting the stage; park with a snapshot-probe error rather than recording null."
+   },
+   {
+    "databaseId": 5820226183,
+    "url": "https://github.com/muresanroland/orqadence/pull/29#issuecomment-5820226183",
+    "author": {
+     "login": "muresanroland",
+     "__typename": "User"
+    },
+    "body": "**Pane polling can overwrite a Stage session with another agent's ID**\n\nFixed in 5870278: `watch` saves a changed session ID only when the Stage's own named agent (`agent_name(ticket, st.name)`) is still in the polled pane. Covered by `another_agent_in_the_stage_pane_never_has_its_session_id_saved`.\n\n<!-- address-greptile -->"
+   },
+   {
+    "databaseId": 5820226518,
+    "url": "https://github.com/muresanroland/orqadence/pull/29#issuecomment-5820226518",
+    "author": {
+     "login": "muresanroland",
+     "__typename": "User"
+    },
+    "body": "**Resume-failure fallback is not covered by the changed session tests**\n\nFixed in 046e110: `a_failed_resumed_start_or_continue_starts_the_stage_fresh` (added in 804622a) fails the resumed start and the `continue` prompt; it now also asserts the fresh start runs in a distinct pane that receives the normal Stage prompt, and that the ticket completes.\n\n<!-- address-greptile -->"
+   }
+  ]
+ }
+}

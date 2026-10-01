@@ -145,6 +145,13 @@ fn every_field_survives_a_save_and_a_missing_file_is_an_empty_state() {
             conflict: true,
             conflicting: false, // live only, never saved
             limited: "codex".to_string(),
+            head: "a0bba96".to_string(),
+            head_at: Some(
+                chrono::Local
+                    .with_ymd_and_hms(2026, 9, 27, 0, 0, 0)
+                    .unwrap(),
+            ),
+            offered: ["PRRT_kwDOUiwtFs6meF8y".to_string()].into(),
             fetching: false, // live only, never saved
         },
     );
@@ -170,6 +177,9 @@ fn every_field_survives_a_save_and_a_missing_file_is_an_empty_state() {
         "\"feedback\"",
         "\"conflict_reported\"",
         "\"limited\"",
+        "\"head\"",
+        "\"head_at\"",
+        "\"offered\"",
         "\"limits\"",
         "\"reviews\"",
     ] {
