@@ -1454,6 +1454,53 @@ fn the_review_job_on_codex_hides_a_claude_only_skill() {
     assert!(find(&buf, "archify").is_none(), "{:#?}", rows(&buf));
 }
 
+/// The Address PR comments page lists its PR comments job at the Shipped
+/// address-pr-comments, installed, and its pick list suggests it.
+#[test]
+fn the_comments_page_lists_the_pr_comments_job_at_the_shipped_skill() {
+    let (repo, home) = (TempDir::new(), TempDir::new());
+    crate::setup::install_skills(
+        repo.path(),
+        home.path(),
+        false,
+        &mut std::io::sink(),
+        &mut std::io::empty(),
+        false,
+    )
+    .unwrap();
+    let mut s = screen_at(apps(""), repo.path());
+    s.cfg.home = home.path().to_path_buf();
+    type_line(&mut s, "/config");
+    keys(&mut s, &[KeyCode::Down; 5]);
+    let text =
+        |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
+    let buf = render(&s, 160, 45);
+    let right: Vec<String> = (1..15).map(|y| text(&buf, y, 99, 158)).collect();
+    let at = right.iter().position(|l| l == "DELEGATE SKILLS");
+    let job = at.and_then(|at| right.get(at + 1));
+    assert_eq!(
+        job.map(String::as_str),
+        Some("  PR comments             orqa-address-pr-comments  shipped"),
+        "{right:#?}"
+    );
+
+    keys(
+        &mut s,
+        &[KeyCode::Enter, KeyCode::Down, KeyCode::Down, KeyCode::Down],
+    );
+    s.key(key(KeyCode::Enter));
+    let buf = render(&s, 160, 45);
+    let right: Vec<String> = (1..5).map(|y| text(&buf, y, 99, 158)).collect();
+    assert_eq!(
+        right[1..3],
+        [
+            "  SUGGESTED",
+            "▸ orqa-address-pr-commen… shipped              installed ✓",
+        ],
+        "{right:#?}"
+    );
+}
+
 /// The Skills page: where the skills live, read-only, then each skill, a
 /// Shipped one said so, a fetched one with its source @ commit and the jobs
 /// using it.

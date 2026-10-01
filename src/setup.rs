@@ -275,7 +275,7 @@ pub(crate) fn install_skills(
                 Mode::Fresh => !dest.exists(),
             };
             if write {
-                fs::create_dir_all(&dir)?;
+                fs::create_dir_all(dest.parent().unwrap())?;
                 fs::write(&dest, body)?;
                 if file != "SKILL.md" {
                     fs::set_permissions(&dest, fs::Permissions::from_mode(0o755))?;

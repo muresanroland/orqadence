@@ -471,7 +471,8 @@ fn rebase_command_right_after_a_restart_sees_the_conflict() {
 }
 
 /// /address-pr-comments: a fresh session fed the PR and gh's view of its
-/// comments; the Ticket stays pr-open.
+/// comments, its pr comments line naming the Shipped default; the Ticket
+/// stays pr-open.
 #[test]
 fn address_pr_comments_command_starts_it_with_the_pr_and_the_gh_json() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
@@ -498,6 +499,7 @@ fn address_pr_comments_command_starts_it_with_the_pr_and_the_gh_json() {
         "- PR: https://example.test/pr/hx-1",
         "- PR metadata (gh JSON): ",
         "rename this",
+        "   Use the orqa-address-pr-comments skill for steps 2 to 5",
     ] {
         assert!(
             text.contains(want),

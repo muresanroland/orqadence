@@ -391,21 +391,28 @@ fn install_skills_records_every_file_it_writes_without_a_gate() {
     assert!(record.contains_key(STAGE_FIX), "record: {record:?}");
 }
 
-/// A Shipped skill's other files go beside its SKILL.md, executable, and
-/// are recorded like it.
+/// A Shipped skill's other files go beside its SKILL.md, in their folder,
+/// executable, and are recorded like it.
 #[test]
 fn install_skills_writes_a_skills_other_files_beside_it_executable() {
     let repo = TempDir::new();
     install(repo.path(), "");
-    let at = repo
+    for file in [
+        "orqa-infra-review/fetch.sh",
+        "orqa-address-pr-comments/scripts/threads.sh",
+    ] {
+        let at = repo.path().join(".orqadence/skills").join(file);
+        let mode = fs::metadata(&at).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111, "{file} mode {mode:o}");
+        assert_eq!(
+            record(repo.path())[&format!(".agents/skills/{file}")],
+            fs::read_to_string(&at).unwrap()
+        );
+    }
+    assert!(repo
         .path()
-        .join(".orqadence/skills/orqa-infra-review/fetch.sh");
-    let mode = fs::metadata(&at).unwrap().permissions().mode();
-    assert_eq!(mode & 0o111, 0o111, "fetch.sh mode {mode:o}");
-    assert_eq!(
-        record(repo.path())[".agents/skills/orqa-infra-review/fetch.sh"],
-        fs::read_to_string(&at).unwrap()
-    );
+        .join(".orqadence/skills/orqa-address-pr-comments/SKILL.md")
+        .is_file());
 }
 
 #[test]

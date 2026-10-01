@@ -263,6 +263,7 @@ pub(crate) fn job_name(j: usize) -> String {
     match JOBS[j].0 {
         "audit" => "over-engineering audit".to_string(),
         "test-first" => "test-first".to_string(),
+        "pr-comments" => "PR comments".to_string(),
         job => job.replace('-', " "),
     }
 }
@@ -567,15 +568,16 @@ impl Settings {
         out
     }
 
-    /// How app has a skill: built into it, installed by Orqadence, or
-    /// yours; with where from. None when it lacks it.
+    /// How app has a skill: built into it, installed by Orqadence (Shipped
+    /// or fetched), or yours; with where from. None when it lacks it.
     pub(crate) fn have(&self, app: &App, name: &str) -> Option<(&'static str, Color, String)> {
         if app.built_in.contains(&name) {
             return Some(("built in", CYAN, format!("built into {}", app.name)));
         }
-        let (_, dir) = self.seen(app).into_iter().find(|(n, _)| *n == name)?;
+        let (_, dir) = (self.found.iter()).find(|(n, dir)| n == name && app.loads(n, dir))?;
         Some(
             match (self.manifest.skills.get(name), name.split_once(':')) {
+                (Some(skill), _) if skill.shipped => ("installed", GREEN, "shipped".to_string()),
                 (Some(skill), _) => ("installed", GREEN, short(&skill.repo).to_string()),
                 (None, Some((plugin, _))) => ("yours", CYAN, format!("plugin {plugin}")),
                 (None, None) => ("yours", CYAN, dir.display().to_string()),
@@ -906,7 +908,8 @@ impl Settings {
         if let Some(app) = app {
             entry("SUGGESTED", String::new(), None, None);
             for &(name, source) in suggestions.iter() {
-                if name == NONE || (source.is_empty() && !app.built_in.contains(&name)) {
+                // an empty source is built in or Shipped: listed only when had
+                if name == NONE || (source.is_empty() && self.have(app, name).is_none()) {
                     continue;
                 }
                 let named = name.to_string();
