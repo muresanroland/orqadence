@@ -3,7 +3,7 @@
 //! .orqadence-local, the checkout's uncommitted folder, made here.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, TryLockError};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -53,6 +53,15 @@ pub(crate) struct TicketState {
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub(crate) conflict: bool,
+    /// Its open PR's head as the poll last saw it, and when that changed.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) head: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) head_at: Option<chrono::DateTime<chrono::Local>>,
+    /// The ids of its PR's items open at the poll's last quiet head: each
+    /// was offered once.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(crate) offered: BTreeSet<String>,
     /// The App whose usage limit holds the Ticket, while it holds.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) limited: String,
