@@ -595,6 +595,11 @@ fn the_overall_bar_counts_the_epics_tickets_and_blends_purple_to_green_by_the_pr
 }
 
 /// Types `text` without Enter.
+/// Shift with an arrow, which scrolls RECENT.
+fn shift(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::SHIFT)
+}
+
 pub(super) fn type_in(s: &mut Screen, text: &str) {
     for c in text.chars() {
         s.key(key(KeyCode::Char(c)));
@@ -774,9 +779,9 @@ fn the_at_list_ranks_open_epics_and_tickets_narrowed_by_the_command() {
 }
 
 /// With a list open Up and Down move its cursor, kept on its rows, and
-/// leave RECENT; with none open and the line empty they scroll RECENT.
+/// leave RECENT, which Shift with them scrolls.
 #[test]
-fn up_and_down_move_an_open_lists_cursor_and_scroll_recent_when_none_is() {
+fn up_and_down_move_an_open_lists_cursor_and_with_shift_scroll_recent() {
     let mut s = screen();
     for n in 0..10 {
         s.push(event(None, &format!("line {n}"), true));
@@ -806,11 +811,68 @@ fn up_and_down_move_an_open_lists_cursor_and_scroll_recent_when_none_is() {
     s.key(key(KeyCode::Down));
     s.key(key(KeyCode::Backspace));
     assert_eq!(s.pick, 0);
-    s.key(key(KeyCode::Esc));
-    s.key(key(KeyCode::Up));
-    assert_eq!(s.recent.get(), 1, "Up did not scroll RECENT");
-    s.key(key(KeyCode::Down));
+    s.key(shift(KeyCode::Up));
+    assert_eq!(
+        (s.pick, s.recent.get()),
+        (0, 1),
+        "Shift+Up did not scroll RECENT"
+    );
+    s.key(shift(KeyCode::Down));
     assert_eq!(s.recent.get(), 0);
+}
+
+/// Up on an empty line recalls the last command entered, Up and Down walk
+/// the history and Down past its newest empties the line; a line entered
+/// twice running is kept once, and a key that types leaves the history.
+#[test]
+fn up_on_an_empty_line_recalls_the_commands_entered() {
+    let mut s = screen();
+    s.push(event(None, "line", true));
+    s.key(key(KeyCode::Up));
+    assert_eq!(s.input, "", "nothing entered yet");
+    for line in ["/questions", "/questions", "/stop-demo"] {
+        type_in(&mut s, line);
+        s.key(key(KeyCode::Enter));
+    }
+    assert_eq!(s.history, ["/questions", "/stop-demo"]);
+    let mut walk = |codes: &[KeyCode]| {
+        codes.iter().for_each(|&code| s.key(key(code)));
+        s.input.clone()
+    };
+    assert_eq!(walk(&[KeyCode::Up]), "/stop-demo");
+    assert_eq!(walk(&[KeyCode::Up]), "/questions", "the slash list took Up");
+    assert_eq!(walk(&[KeyCode::Up]), "/questions", "past the oldest");
+    assert_eq!(walk(&[KeyCode::Down]), "/stop-demo");
+    assert_eq!(walk(&[KeyCode::Down, KeyCode::Down]), "", "past the newest");
+    // An edited line is the user's: Up is the open list's again.
+    assert_eq!(
+        walk(&[KeyCode::Up, KeyCode::Backspace, KeyCode::Up]),
+        "/stop-dem"
+    );
+    // A recalled line runs on Enter and is not entered twice.
+    assert_eq!(walk(&[KeyCode::Esc, KeyCode::Up, KeyCode::Enter]), "");
+    assert_eq!(s.history, ["/questions", "/stop-demo"]);
+    assert_eq!(s.recent.get(), 0, "Up and Down scrolled RECENT");
+}
+
+/// The commands entered are kept in .orqadence-local/history, a line each,
+/// and the next Shell opens with them.
+#[test]
+fn the_history_is_kept_for_the_next_shell() {
+    let repo = TempDir::new();
+    std::fs::create_dir_all(repo.path().join(".orqadence-local")).unwrap();
+    let open = || Screen::open(repo.path(), Fake::quiet(), &|_| String::new());
+    let mut s = open();
+    for line in ["/questions", "/questions", "/stop-demo"] {
+        type_in(&mut s, line);
+        s.key(key(KeyCode::Enter));
+    }
+    let kept = std::fs::read_to_string(repo.path().join(".orqadence-local/history")).unwrap();
+    assert_eq!(kept, "/questions\n/stop-demo\n");
+    let mut s = open();
+    assert_eq!(s.history, ["/questions", "/stop-demo"]);
+    s.key(key(KeyCode::Up));
+    assert_eq!(s.input, "/stop-demo");
 }
 
 /// ← and → move the input line's cursor; typing and Backspace act at it.
@@ -1008,11 +1070,11 @@ fn recent_is_newest_at_the_bottom_with_the_ticket_column_as_wide_as_its_longest_
     );
 }
 
-/// Up and Down scroll RECENT while the input is empty, the rule counting the
+/// Shift with Up and Down scrolls RECENT, the rule counting the
 /// lines hidden older and newer; scrolled up, a new line leaves the view where
 /// it is, and back at the bottom the view follows the newest again.
 #[test]
-fn up_and_down_scroll_recent_and_its_rule_counts_older_and_newer() {
+fn shift_up_and_down_scroll_recent_and_its_rule_counts_older_and_newer() {
     let mut s = screen();
     for n in 0..10 {
         s.push(event(None, &format!("line {n}"), true));
@@ -1037,37 +1099,39 @@ fn up_and_down_scroll_recent_and_its_rule_counts_older_and_newer() {
         let lines = (first..first + 3).map(|n| format!("line {n}")).collect();
         (format!(" ── RECENT{rule}"), lines)
     };
-    assert_eq!(shown(&s), view("  ↑ 7 older", 7));
-    s.key(key(KeyCode::Up));
-    assert_eq!(shown(&s), view("  ↑ 6 older · ↓ 1 newer", 6));
+    assert_eq!(shown(&s), view("  ⇧↑ 7 older", 7));
+    s.key(shift(KeyCode::Up));
+    assert_eq!(shown(&s), view("  ⇧↑ 6 older · ⇧↓ 1 newer", 6));
     s.push(event(None, "line 10", true));
     assert_eq!(
         shown(&s),
-        view("  ↑ 6 older · ↓ 2 newer", 6),
+        view("  ⇧↑ 6 older · ⇧↓ 2 newer", 6),
         "a new line moved the view"
     );
     for _ in 0..20 {
-        s.key(key(KeyCode::Up));
+        s.key(shift(KeyCode::Up));
     }
-    assert_eq!(shown(&s), view("  ↓ 8 newer", 0), "kept inside the lines");
+    assert_eq!(shown(&s), view("  ⇧↓ 8 newer", 0), "kept inside the lines");
     for _ in 0..8 {
-        s.key(key(KeyCode::Down));
+        s.key(shift(KeyCode::Down));
     }
-    assert_eq!(shown(&s), view("  ↑ 8 older", 8));
+    assert_eq!(shown(&s), view("  ⇧↑ 8 older", 8));
     s.push(event(None, "line 11", true));
-    assert_eq!(shown(&s), view("  ↑ 9 older", 9), "the bottom follows");
-    assert_eq!(s.scroll.get(), 0, "Up and Down scrolled TICKETS");
-    // Text on the input line keeps the arrows off RECENT.
+    assert_eq!(shown(&s), view("  ⇧↑ 9 older", 9), "the bottom follows");
+    assert_eq!(
+        s.scroll.get(),
+        0,
+        "Shift+Up and Shift+Down scrolled TICKETS"
+    );
+    // Up and Down alone are the history's and leave RECENT.
+    s.key(shift(KeyCode::Up));
     s.key(key(KeyCode::Up));
-    s.key(key(KeyCode::Char('x')));
     s.key(key(KeyCode::Down));
-    assert_eq!(shown(&s), view("  ↑ 8 older · ↓ 1 newer", 8));
-    s.key(key(KeyCode::Up));
-    assert_eq!(shown(&s), view("  ↑ 8 older · ↓ 1 newer", 8));
+    assert_eq!(shown(&s), view("  ⇧↑ 8 older · ⇧↓ 1 newer", 8));
     // Fewer lines than rows: nothing to scroll, the rule counts nothing.
     let mut s = screen();
     s.push(event(None, "line 0", true));
-    s.key(key(KeyCode::Up));
+    s.key(shift(KeyCode::Up));
     assert_eq!(shown(&s).0, " ── RECENT");
 }
 

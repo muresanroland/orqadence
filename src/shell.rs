@@ -251,6 +251,14 @@ pub(crate) struct Screen {
     pub(crate) input: String,
     /// The input line's cursor, in chars before its end: 0 types at the end.
     pub(crate) back: usize,
+    /// The command lines entered, oldest first; ↑ on an empty line recalls
+    /// the last.
+    pub(crate) history: Vec<String>,
+    /// Where the history is kept for the next Shell, a line per command:
+    /// .orqadence-local/history, set at open.
+    history_file: Option<PathBuf>,
+    /// The history line recalled onto the input, while ↑↓ walk the history.
+    recall: Option<usize>,
     /// The open list's cursor row, back to the top on every key that types.
     pub(crate) pick: usize,
     /// The first TICKETS row shown, for a tree taller than its room; the
@@ -364,6 +372,9 @@ impl Screen {
             events: Vec::new(),
             input: String::new(),
             back: 0,
+            history: Vec::new(),
+            history_file: None,
+            recall: None,
             pick: 0,
             scroll: Cell::new(0),
             recent: Cell::new(0),
@@ -445,6 +456,13 @@ impl Screen {
         };
         let mut screen = Screen::new(cfg, folder, truecolor, Vec::new(), state);
         screen.missing = missing;
+        let history = repo.join(LOCAL).join("history");
+        screen.history = fs::read_to_string(&history)
+            .unwrap_or_default()
+            .lines()
+            .map(String::from)
+            .collect();
+        screen.history_file = Some(history);
         screen.on_call = on_call::load(repo, env);
         screen.moshi_env = !env(on_call::TOKEN_VAR).trim().is_empty();
         screen.reload_epics();
@@ -1402,8 +1420,18 @@ impl Screen {
         }
         // With a list open Up and Down move its cursor, Tab fills in its row
         // and so does Enter, but on a command typed whole that needs no
-        // argument Enter runs it. With the input line empty, Up and Down
-        // scroll RECENT; PageUp and PageDown TICKETS.
+        // argument Enter runs it. Up on an empty line recalls the last
+        // command, then Up and Down walk the history, past its newest back to
+        // an empty line, until another key takes the line. Shift with Up and
+        // Down scrolls RECENT; on an empty line PageUp and PageDown TICKETS.
+        if key.modifiers.contains(KeyModifiers::SHIFT) {
+            match key.code {
+                KeyCode::Up => return scroll_by(&self.recent, 1),
+                KeyCode::Down => return scroll_by(&self.recent, -1),
+                _ => {}
+            }
+        }
+        let recall = self.recall.take();
         let (open, picked, whole, pick) = {
             let list = self.list();
             // a reloaded bd cache may have shortened the list under the cursor
@@ -1422,6 +1450,20 @@ impl Screen {
                 self.input.insert(at, c);
                 self.pick = 0;
             }
+            KeyCode::Up if recall.is_some() || (self.input.is_empty() && !self.composing) => {
+                let i = recall.unwrap_or(self.history.len()).saturating_sub(1);
+                if let Some(line) = self.history.get(i) {
+                    self.input.clone_from(line);
+                    self.recall = Some(i);
+                    self.back = 0;
+                }
+            }
+            KeyCode::Down if recall.is_some() => {
+                let i = recall.map_or(0, |i| i + 1);
+                self.input = self.history.get(i).cloned().unwrap_or_default();
+                self.recall = Some(i).filter(|i| *i < self.history.len());
+                self.back = 0;
+            }
             KeyCode::Up if open > 0 => self.pick = self.pick.saturating_sub(1),
             KeyCode::Down if open > 0 => self.pick = (self.pick + 1).min(open - 1),
             KeyCode::Tab if picked.is_some() => self.fill(&picked.unwrap()),
@@ -1431,8 +1473,6 @@ impl Screen {
                     self.page(key.code);
                 }
             }
-            KeyCode::Down if self.input.is_empty() => scroll_by(&self.recent, -1),
-            KeyCode::Up if self.input.is_empty() => scroll_by(&self.recent, 1),
             KeyCode::PageDown if self.input.is_empty() => scroll_by(&self.scroll, 10),
             KeyCode::PageUp if self.input.is_empty() => scroll_by(&self.scroll, -10),
             KeyCode::Left => self.back = (self.back + 1).min(self.input.chars().count()),
@@ -1465,7 +1505,17 @@ impl Screen {
             }
             KeyCode::Enter => {
                 let line = std::mem::take(&mut self.input);
-                self.command(line.trim());
+                let line = line.trim();
+                if !line.is_empty() && self.history.last().is_none_or(|last| last != line) {
+                    self.history.push(line.to_string());
+                    // ponytail: the file only grows, a line per command typed;
+                    // cut it at open if it ever gets long
+                    if let Some(file) = &self.history_file {
+                        let file = File::options().create(true).append(true).open(file);
+                        let _ = file.and_then(|mut file| writeln!(file, "{line}"));
+                    }
+                }
+                self.command(line);
             }
             _ => {}
         }
