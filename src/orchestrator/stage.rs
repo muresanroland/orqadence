@@ -754,7 +754,7 @@ impl Orchestrator {
                         let pane = self.ticket(ticket).panes.get(st.name).cloned();
                         let pane = pane.unwrap_or_default(); // the pane it asked in
                         held = match reason == ASKED {
-                            true => self.question(ticket, st, &label, &pane, &file),
+                            true => self.question(ticket, &label, &pane, &file),
                             false => self.written_plan(ticket, st, &label, &pane),
                         }
                         .unwrap_or_else(|| {
@@ -1364,20 +1364,12 @@ impl Orchestrator {
     /// A Stage's own question, its result file reading STATUS: question:
     /// never a Wake, never judged, and no deadline runs while it waits.
     /// Away, the Ticket parks with a bd comment asking for a manual resume,
-    /// its session left waiting in its pane; turning Away on while the
-    /// Question waits does the same. Otherwise, and always for Rebase and
-    /// Address PR comments, whose Ticket has its PR open and no Parked to
-    /// go to, it is a Question, whose answer goes into the pane as a
-    /// prompt. None once the answer is sent, or the session moves on in the
-    /// pane.
-    fn question(
-        &self,
-        ticket: &str,
-        st: &Stage,
-        label: &str,
-        pane: &str,
-        file: &Path,
-    ) -> Option<Held> {
+    /// its session left waiting in its pane, a PR Stage's PR still polled
+    /// for its merge; turning Away on while the Question waits does the
+    /// same. Otherwise it is a Question, whose answer goes into the pane as
+    /// a prompt. None once the answer is sent, or the session moves on in
+    /// the pane.
+    fn question(&self, ticket: &str, label: &str, pane: &str, file: &Path) -> Option<Held> {
         let mut raised = false;
         loop {
             let asked = read_question(file);
@@ -1397,8 +1389,7 @@ impl Orchestrator {
                 }
             }
             let (question, options) = asked.unwrap();
-            let on_pr = [REBASE.name, ADDRESS_PR_COMMENTS.name].contains(&st.name);
-            if self.cfg.away.load(Ordering::SeqCst) && !on_pr {
+            if self.cfg.away.load(Ordering::SeqCst) {
                 let lead = format!(
                     "{label} asked a question while you were away and needs a manual resume: \
                      /continue @{ticket} in the Orqadence Shell puts it to you, its session \

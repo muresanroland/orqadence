@@ -56,14 +56,17 @@ impl Orchestrator {
         match self.pipeline(ticket) {
             Ok(()) => {}
             Err(StageError::Stopped) => self.close_on_limit(ticket),
-            Err(StageError::Parked(reason)) => {
-                self.update(ticket, |ts| {
-                    ts.status = STATUS_PARKED.to_string();
-                    ts.reason = reason.clone();
-                });
-                self.report(ticket, &format!("parked: {reason}"));
-            }
+            Err(StageError::Parked(reason)) => self.park(ticket, &reason),
         }
+    }
+
+    /// Takes the Ticket out to wait for the user, saying why.
+    pub(super) fn park(&self, ticket: &str, reason: &str) {
+        self.update(ticket, |ts| {
+            ts.status = STATUS_PARKED.to_string();
+            ts.reason = reason.to_string();
+        });
+        self.report(ticket, &format!("parked: {reason}"));
     }
 
     fn pipeline(&self, ticket: &str) -> Result<(), StageError> {

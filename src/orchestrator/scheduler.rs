@@ -3,7 +3,7 @@
 //! stopped run left behind, polls PRs for merges (ADR 0002), conflicts and
 //! PR comments, and obeys the Shell's commands. PR sessions, Rebase and
 //! Address PR comments, count apart: at most max_pr_sessions at once, one
-//! per Ticket.
+//! per Ticket, a PR Stage that /continue takes back included.
 //! Its Tickets are an Epic's children, or a Ticket run's queue, which the
 //! Shell adds to while it runs.
 
@@ -20,7 +20,7 @@ use super::pr::{self, Item, Pr};
 use super::result::ResultRequirements;
 use super::stage::{
     plural, pr_ref, result_name, stage_label, Orchestrator, Stage, StageError, ADDRESS_PR_COMMENTS,
-    REBASE,
+    AWAY, REBASE,
 };
 use super::state::{TicketState, STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 
@@ -65,6 +65,16 @@ const QUIET: chrono::TimeDelta = chrono::TimeDelta::seconds(60);
 
 /// What a Ticket's thread runs: its Pipeline or a PR session.
 type Work = fn(&Orchestrator, &str);
+
+/// The PR Stage a Ticket goes back to, never its Pipeline: Parked from it
+/// (its question while Away), or running again for /continue to take it
+/// back. A PR that closed unmerged clears the Stage.
+fn pr_stage(ts: &TicketState) -> Option<&'static Stage> {
+    let back = [STATUS_PARKED, STATUS_RUNNING].contains(&ts.status.as_str());
+    [&REBASE, &ADDRESS_PR_COMMENTS]
+        .into_iter()
+        .find(|st| back && st.name == ts.stage)
+}
 
 impl Orchestrator {
     /// Every issue bd's reply to args holds, Epics included.
@@ -220,6 +230,10 @@ impl Orchestrator {
             let active = self.active.lock().unwrap();
             active.values().filter(|st| st.is_none()).count()
         };
+        let pr_sessions = || {
+            let active = self.active.lock().unwrap();
+            active.values().filter(|st| st.is_some()).count()
+        };
         // the PR sessions told they wait, each told once
         let mut waiting = BTreeSet::new();
 
@@ -316,8 +330,16 @@ impl Orchestrator {
 
             let max = app::count(&self.cfg.repo, &app::MAX_TICKETS);
             for ticket in self.resumable() {
-                if !busy(&ticket) && in_pipeline() < max {
-                    launch(&ticket, None, Orchestrator::run_ticket);
+                if busy(&ticket) {
+                    continue;
+                }
+                // one going back to its PR Stage takes a PR-session slot
+                match pr_stage(&self.ticket(&ticket)) {
+                    Some(st) if pr_sessions() < max_pr => {
+                        launch(&ticket, Some(st.name), Orchestrator::continue_pr)
+                    }
+                    None if in_pipeline() < max => launch(&ticket, None, Orchestrator::run_ticket),
+                    _ => {}
                 }
             }
             match self.ready(epic) {
@@ -404,7 +426,8 @@ impl Orchestrator {
         }
     }
 
-    /// The Tickets the state file says are in the Pipeline.
+    /// The Tickets the state file says are in the Pipeline, or going back
+    /// to their PR Stage.
     pub(crate) fn resumable(&self) -> Vec<String> {
         self.state
             .lock()
@@ -419,7 +442,9 @@ impl Orchestrator {
     /// Asks gh about every open PR, one GraphQL query each, serially. A
     /// merge is what closes a Ticket and so unblocks its dependents (ADR
     /// 0002). Gives back each Ticket whose PR's head is quiet, with the
-    /// PR's open items not offered before: they are offered now.
+    /// PR's open items not offered before: they are offered now. A Ticket
+    /// going back to its PR Stage is polled for its merge or close alone:
+    /// nothing starts on it, nor is offered, until /continue takes it back.
     pub(crate) fn poll_merges(&self) -> Vec<(String, Vec<Item>)> {
         let open: Vec<(String, TicketState)> = self
             .state
@@ -427,14 +452,18 @@ impl Orchestrator {
             .unwrap()
             .tickets
             .iter()
-            .filter(|(_, ts)| ts.status == STATUS_PR_OPEN)
+            .filter(|(_, ts)| ts.status == STATUS_PR_OPEN || pr_stage(ts).is_some())
             .map(|(id, ts)| (id.clone(), ts.clone()))
             .collect();
         let (tools, repo) = (&self.cfg.tools, &self.cfg.repo);
 
         let mut quiet = Vec::new();
         for (ticket, ts) in open {
-            let pr = match self.pr(&ts.pr) {
+            let reply = self.pr(&ts.pr);
+            // read again: it may have parked at its PR Stage during the call
+            let ts = self.ticket(&ticket);
+            let returning = ts.status != STATUS_PR_OPEN;
+            let pr = match reply {
                 Ok(pr) => pr,
                 Err(err) => {
                     self.log(&ticket, &format!("gh api graphql failed: {err}"));
@@ -475,12 +504,13 @@ impl Orchestrator {
                 self.update(&ticket, |ts| {
                     ts.status = STATUS_PARKED.to_string();
                     ts.reason = "PR closed without merging".to_string();
+                    ts.stage.clear(); // no PR Stage to go back to
                 });
                 self.report(
                     &ticket,
                     &format!("parked: {} closed without merging", pr_ref(&ts.pr)),
                 );
-            } else {
+            } else if !returning {
                 // The last poll's view gates /rebase; `conflict` keeps the
                 // report, and with rebase_auto the Rebase, to once per
                 // conflict: one that fails or parks waits for /rebase, until
@@ -506,7 +536,7 @@ impl Orchestrator {
                     self.update(&ticket, |ts| ts.conflict = false);
                 }
             }
-            if pr.state != "OPEN" {
+            if pr.state != "OPEN" || returning {
                 continue;
             }
 
@@ -533,7 +563,16 @@ impl Orchestrator {
             let items = pr.items();
             let ids: BTreeSet<String> = items.iter().map(|i| i.id.clone()).collect();
             if ids != ts.offered {
-                self.update(&ticket, |ts| ts.offered = ids);
+                let mut open = false;
+                self.update(&ticket, |ts| {
+                    open = ts.status == STATUS_PR_OPEN;
+                    if open {
+                        ts.offered = ids;
+                    }
+                });
+                if !open {
+                    continue;
+                }
             }
             let fresh = items.into_iter().filter(|i| !ts.offered.contains(&i.id));
             quiet.push((ticket, fresh.collect()));
@@ -646,17 +685,14 @@ impl Orchestrator {
             let text = format!("refused: {} does not conflict with main", pr_ref(&ts.pr));
             return self.report(ticket, &text);
         }
-        let base = self.origin_head(ticket);
-        let inputs = [("PR", ts.pr.as_str()), ("Default branch", base.as_str())];
-        self.on_pr(ticket, &REBASE, &inputs, "rebased");
+        self.on_pr(ticket, &REBASE, false, None);
     }
 
     /// Runs Address PR comments for a Ticket with an open PR, once its
-    /// items are approved, fed its approved and won't-fix lists, gh's view
-    /// of the PR's reviews, comments and checks, and the PR template the
-    /// last Fix had, for the body's sections; each run counts toward the
-    /// cap, which holds back a run no modal opened by hand approved: the
-    /// count may have reached it since the modal was offered.
+    /// items are approved, fed its approved and won't-fix lists; each run
+    /// counts toward the cap, which holds back a run no modal opened by
+    /// hand approved: the count may have reached it since the modal was
+    /// offered.
     fn address_pr_comments(&self, ticket: &str) {
         let ts = self.ticket(ticket);
         let (fix, skip, by_hand) = (self.approved.lock().unwrap())
@@ -674,45 +710,101 @@ impl Orchestrator {
             );
             return self.report(ticket, &text);
         }
-        let fields = "reviews,comments,statusCheckRollup";
-        let argv = ["gh", "pr", "view", &ts.pr, "--json", fields];
-        let comments = match self.cfg.tools.run(&self.cfg.repo, &argv) {
-            Ok(comments) => comments,
-            Err(err) => {
-                // no run took the lists: the poll offers their items again
-                self.unoffer(ticket, fix.iter().chain(&skip));
-                let text = format!("address pr comments failed: {err}");
-                return self.report(ticket, &text);
+        self.on_pr(ticket, &ADDRESS_PR_COMMENTS, false, Some((&fix, &skip)));
+    }
+
+    /// Takes a Ticket back to its PR Stage, never its Pipeline: Parked from
+    /// it, or stopped by a long usage limit, and continued. Its approved
+    /// lists went with the run that took them.
+    fn continue_pr(&self, ticket: &str) {
+        if let Some(st) = pr_stage(&self.ticket(ticket)) {
+            self.on_pr(ticket, st, true, None);
+        }
+    }
+
+    /// Runs a PR Stage in the kept worktree: a fresh session, or `resumed`,
+    /// the one /continue takes back. Address PR comments is fed gh's view
+    /// of the PR's reviews, comments and checks, the PR template the last
+    /// Fix had, for the body's sections, and a fresh run's `lists`, its
+    /// approved and won't-fix items, which count it toward the cap. Its tab
+    /// closes once it is done, said as "<rebased|addressed> PR #n". Away,
+    /// its question parks the Ticket; a long usage limit leaves it running
+    /// for /continue.
+    fn on_pr(&self, ticket: &str, st: &Stage, resumed: bool, lists: Option<(&[Item], &[Item])>) {
+        let pr = self.ticket(ticket).pr;
+        let rebase = st.name == REBASE.name;
+        let (name, value) = if rebase {
+            ("Default branch", self.origin_head(ticket))
+        } else {
+            let fields = "reviews,comments,statusCheckRollup";
+            let argv = ["gh", "pr", "view", &pr, "--json", fields];
+            match self.cfg.tools.run(&self.cfg.repo, &argv) {
+                Ok(json) => ("PR metadata (gh JSON)", json.trim().to_string()),
+                Err(err) => {
+                    // no run took the lists: the poll offers their items again
+                    if let Some((fix, skip)) = lists {
+                        self.unoffer(ticket, fix.iter().chain(skip));
+                    }
+                    let text = format!("address pr comments failed: {err}");
+                    // taken back, it stays Parked for the next /continue
+                    if !resumed || !self.park_live(ticket, &text) {
+                        self.report(ticket, &text);
+                    }
+                    return;
+                }
             }
         };
-        self.update(ticket, |ts| ts.address_runs += 1);
-        let (fix, skip) = (listed(&fix), listed(&skip));
-        let template = self.pr_template(ticket);
-        let mut inputs = vec![
-            ("PR", ts.pr.as_str()),
-            ("Approved", &fix),
-            ("Won't fix", &skip),
-            ("PR metadata (gh JSON)", comments.trim()),
-        ];
+        let template = if rebase {
+            None
+        } else {
+            self.pr_template(ticket)
+        };
+        let lists_s = lists.map(|(fix, skip)| (listed(fix), listed(skip)));
+        let mut inputs = vec![("PR", pr.as_str())];
+        if let Some((fix, skip)) = &lists_s {
+            inputs.extend([("Approved", fix.as_str()), ("Won't fix", skip.as_str())]);
+        }
+        inputs.push((name, value.as_str()));
         if let Some(template) = &template {
             inputs.push(("PR template", template));
         }
-        self.on_pr(ticket, &ADDRESS_PR_COMMENTS, &inputs, "addressed");
-    }
-
-    /// Runs a PR Stage: a fresh session in the kept worktree, never an
-    /// earlier one resumed, its tab closed once it is done, said as
-    /// "<done> PR #n".
-    fn on_pr(&self, ticket: &str, st: &Stage, inputs: &[(&str, &str)], done: &str) {
-        let _ = fs::remove_file(self.run_dir(ticket).join(result_name(st, 0)));
-        // a new Stage to run_stage: an earlier session, a parked one's pane
-        // still open, is dropped, not watched
-        self.update(ticket, |ts| ts.stage.clear());
-        let result = self.run_stage(ticket, st, 0, inputs, ResultRequirements::default());
-        if self.stopping() {
+        // the poll may have merged or closed it while the input was fetched:
+        // checked under the lock, before the stage it reads is cleared
+        let mut live = false;
+        self.update(ticket, |ts| {
+            live = ts.status == STATUS_PR_OPEN || pr_stage(ts).is_some();
+            if !live {
+                return;
+            }
+            if !resumed {
+                // a new Stage to run_stage: an earlier session, a parked
+                // one's pane still open, is dropped, not watched
+                ts.stage.clear();
+            }
+            if lists.is_some() {
+                ts.address_runs += 1;
+            }
+            ts.status = STATUS_PR_OPEN.to_string();
+            ts.reason.clear();
+        });
+        if !live {
             return;
         }
+        if !resumed {
+            let _ = fs::remove_file(self.run_dir(ticket).join(result_name(st, 0)));
+        }
+        let result = self.run_stage(ticket, st, 0, &inputs, ResultRequirements::default());
         match result {
+            // a long usage limit ended the run: running, as every Stage
+            Err(StageError::Stopped) if self.closed() => {
+                self.close_on_limit(ticket);
+                self.update(ticket, |ts| {
+                    if ts.status == STATUS_PR_OPEN {
+                        ts.status = STATUS_RUNNING.to_string();
+                    }
+                });
+            }
+            _ if self.stopping() => {}
             Ok(_) => {
                 let ts = self.ticket(ticket);
                 if !ts.tab.is_empty() {
@@ -723,14 +815,34 @@ impl Orchestrator {
                         ts.sessions.clear();
                     });
                 }
+                let done = if rebase { "rebased" } else { "addressed" };
                 self.report(ticket, &format!("{done} {}", pr_ref(&ts.pr)));
             }
             Err(StageError::Parked(reason)) => {
-                let text = format!("{} gave up: {reason}", stage_label(st, 0));
-                self.report(ticket, &text);
+                if reason != AWAY || !self.park_live(ticket, &reason) {
+                    let text = format!("{} gave up: {reason}", stage_label(st, 0));
+                    self.report(ticket, &text);
+                }
             }
-            Err(StageError::Stopped) => self.close_on_limit(ticket),
+            Err(StageError::Stopped) => {} // only while stopping, above
         }
+    }
+
+    /// Parks a Ticket at its PR Stage unless the poll merged or closed it
+    /// meanwhile: checked and parked under one lock. Whether it parked.
+    fn park_live(&self, ticket: &str, reason: &str) -> bool {
+        let mut live = false;
+        self.update(ticket, |ts| {
+            live = ts.status == STATUS_PR_OPEN || pr_stage(ts).is_some();
+            if live {
+                ts.status = STATUS_PARKED.to_string();
+                ts.reason = reason.to_string();
+            }
+        });
+        if live {
+            self.report(ticket, &format!("parked: {reason}"));
+        }
+        live
     }
 }
 

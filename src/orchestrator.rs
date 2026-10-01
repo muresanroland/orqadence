@@ -59,7 +59,7 @@ mod result_test;
 #[cfg(test)]
 mod retry_result_test;
 #[cfg(test)]
-mod scheduler_test;
+pub(crate) mod scheduler_test;
 #[cfg(test)]
 mod session_test;
 #[cfg(test)]
