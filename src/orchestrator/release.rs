@@ -11,7 +11,7 @@ use super::app::{self, RELEASE_ON};
 use super::result::ResultRequirements;
 use super::scheduler::BdIssue;
 use super::stage::{pr_ref, result_name, Orchestrator, StageError, RELEASE};
-use super::state::{Release, TicketState, STATUS_MERGED, STATUS_RUNNING};
+use super::state::{Release, STATUS_MERGED, STATUS_RUNNING};
 
 /// The Release label: on an Epic, or on any Ticket of a Ticket run, it asks
 /// that the run end in a Release.
@@ -57,11 +57,11 @@ impl Orchestrator {
     /// limit leaves its session saved; a park stops the run as /stop-work
     /// does, the Release saved for /continue.
     pub(super) fn release(&self, epic: &str, epic_input: &str, children: &[BdIssue]) {
-        let mut id = match epic {
-            "" => (self.cfg.clock)()
-                .format("release-%Y-%m-%d-%H%M%S")
-                .to_string(),
-            epic => format!("release-{epic}"),
+        let (mut id, bump) = if epic.is_empty() {
+            let id = (self.cfg.clock)().format("release-%Y-%m-%d-%H%M%S");
+            (id.to_string(), "patch")
+        } else {
+            (format!("release-{epic}"), "minor")
         };
         let mut fresh = false;
         self.change_state(|state| {
@@ -69,8 +69,7 @@ impl Orchestrator {
             let release = state.release.get_or_insert_with(|| {
                 Box::new(Release {
                     id: id.clone(),
-                    ts: TicketState::default(),
-                    version: String::new(),
+                    ..Default::default()
                 })
             });
             release.ts.status = STATUS_RUNNING.to_string();
@@ -89,10 +88,6 @@ impl Orchestrator {
             })
             .collect();
         let tickets = format!("\n  - {}", merged.join("\n  - "));
-        let bump = match epic {
-            "" => "patch",
-            _ => "minor",
-        };
         let inputs = [("Bump", bump), ("Epic", epic_input), ("Tickets", &tickets)];
         let want = ResultRequirements::default();
         let ended = self

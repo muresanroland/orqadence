@@ -324,15 +324,15 @@ impl Orchestrator {
                 Some(children)
                     if children.iter().all(|c| c.status == "closed") && self.finish(&queued) =>
                 {
+                    let text = match (epic.is_empty(), children.is_empty()) {
+                        (true, true) => "Ticket run done, no Ticket left in it",
+                        (true, false) => "Ticket run done, every Ticket closed",
+                        (false, _) => "Epic done, every Ticket closed",
+                    };
                     // bd failing is tried again next pass, never no Release
                     match self.release_due(epic, &children) {
                         Err(err) => self.report("", &format!("bd show failed: {err}")),
                         Ok(due) => {
-                            let text = match (epic.is_empty(), children.is_empty()) {
-                                (true, true) => "Ticket run done, no Ticket left in it",
-                                (true, false) => "Ticket run done, every Ticket closed",
-                                (false, _) => "Epic done, every Ticket closed",
-                            };
                             self.report("", text);
                             if let Some(epic_input) = due {
                                 self.release(epic, &epic_input, &children);
