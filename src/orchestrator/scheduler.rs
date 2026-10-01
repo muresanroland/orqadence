@@ -17,6 +17,7 @@ use std::time::Instant;
 
 use super::app;
 use super::pr::{self, Item, Pr};
+use super::release::RELEASE_LABEL;
 use super::result::ResultRequirements;
 use super::stage::{
     plural, pr_ref, result_name, stage_label, Orchestrator, Stage, StageError, ADDRESS_PR_COMMENTS,
@@ -78,7 +79,7 @@ fn pr_stage(ts: &TicketState) -> Option<&'static Stage> {
 
 impl Orchestrator {
     /// Every issue bd's reply to args holds, Epics included.
-    fn bd_all(&self, args: &[&str]) -> Result<Vec<BdIssue>, String> {
+    pub(super) fn bd_all(&self, args: &[&str]) -> Result<Vec<BdIssue>, String> {
         let mut argv = vec!["bd"];
         argv.extend_from_slice(args);
         let out = self
@@ -121,12 +122,17 @@ impl Orchestrator {
 
     /// The Ticket's Ticket labels, by name: its own orqa: labels as bd
     /// shows them now, read as each Stage starts, like the rows. Every other
-    /// bd label is ignored.
+    /// bd label is ignored, and orqa:release, the run's, not a Ticket label.
+    /// The Release, no bd issue, has none.
     pub(super) fn labels(&self, ticket: &str) -> Result<Vec<String>, String> {
+        if self.is_release(ticket) {
+            return Ok(Vec::new());
+        }
         let issues = self.bd_issues(&["show", ticket, "--json"])?;
         Ok(issues
             .iter()
             .flat_map(|issue| &issue.labels)
+            .filter(|label| *label != RELEASE_LABEL)
             .filter_map(|label| label.strip_prefix("orqa:"))
             .map(String::from)
             .collect())
@@ -188,7 +194,8 @@ impl Orchestrator {
     /// stopped run left behind, polls PRs for merges, obeys the Shell's
     /// commands, queueing PR sessions oldest first past max_pr_sessions, and
     /// returns when every one of its Tickets is closed (a Ticket run too
-    /// when none is left in it) or on /stop-work.
+    /// when none is left in it), after its Release when it ends in one
+    /// (release.rs), or on /stop-work.
     pub(crate) fn run(self: &Arc<Self>, epic: &str) -> Result<(), String> {
         self.change_state(|state| {
             state.epic = epic.to_string();
@@ -322,8 +329,17 @@ impl Orchestrator {
                         (true, false) => "Ticket run done, every Ticket closed",
                         (false, _) => "Epic done, every Ticket closed",
                     };
-                    self.report("", text);
-                    return Ok(());
+                    // bd failing is tried again next pass, never no Release
+                    match self.release_due(epic, &children) {
+                        Err(err) => self.report("", &format!("bd show failed: {err}")),
+                        Ok(due) => {
+                            self.report("", text);
+                            if let Some(epic_input) = due {
+                                self.release(epic, &epic_input, &children);
+                            }
+                            return Ok(());
+                        }
+                    }
                 }
                 Some(_) => {}
             }

@@ -1,0 +1,486 @@
+//! The Release at a run's end: orqa:release read on the Epic, or on any
+//! Ticket of a Ticket run, and the Release Stage the run owns.
+
+use super::app::{set_switch, RELEASE_ON};
+use super::judgment::Action;
+use super::limit_test::{at, hits, now, CLAUDE};
+use super::question_test::ASKS;
+use super::release::RELEASE_LABEL;
+use super::scheduler_test::run_epic;
+use super::stage::{Answer, Ask, Orchestrator};
+use super::state::{
+    Release, Session, TicketState, STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING,
+};
+use super::world::{
+    new_world, restarted, set_clock, spawn_epic, succeed, working, BdTicket, Prompt, World,
+};
+use super::write_file;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::time::Duration;
+
+/// The Release's result: the new version and the version PR.
+const RELEASED: &str = "STATUS: done\nVERSION: v1.5.0\nPR: https://example.test/pr/version\n";
+
+/// The Release label, as bd lists it on an issue.
+fn label() -> Vec<String> {
+    vec![RELEASE_LABEL.to_string()]
+}
+
+/// Every Stage succeeds; the Release writes RELEASED.
+fn release_done(p: &Prompt) -> (String, String) {
+    match p.stage == "release" {
+        true => (RELEASED.to_string(), "idle".to_string()),
+        false => succeed(p),
+    }
+}
+
+/// A world with releases on, every PR merged as soon as gh is asked.
+fn releasing(tickets: Vec<BdTicket>) -> (Arc<World>, Orchestrator) {
+    let (w, o) = new_world(tickets);
+    set_switch(&w.repo, &RELEASE_ON, true).unwrap();
+    w.lock().merged = true;
+    w.session(release_done);
+    (w, o)
+}
+
+/// Whether the log has `text` as a run-level line: no id before it.
+fn run_level(w: &World, text: &str) -> bool {
+    w.log().lines().any(|l| {
+        l.splitn(3, ' ')
+            .nth(2)
+            .is_some_and(|rest| rest.starts_with(text))
+    })
+}
+
+#[test]
+fn an_epic_carrying_orqa_release_ends_in_a_release_with_bump_minor_and_each_prs_url() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    w.lock().epic_labels = label();
+    let o = Arc::new(o);
+
+    run_epic(&o);
+
+    let prompt = w.prompt("release-hx/release.md");
+    for want in [
+        "- Bump: minor\n",
+        "- Epic: hx Epic hx\n",
+        "\n  - hx-1 Ticket hx-1: https://example.test/pr/hx-1",
+        "\n  - hx-2 Ticket hx-2: https://example.test/pr/hx-2",
+    ] {
+        assert!(
+            prompt.contains(want),
+            "the Release's prompt lacks {want:?}:\n{prompt}"
+        );
+    }
+    let worktree = o.worktree("release-hx").display().to_string();
+    assert_eq!(
+        w.called(&format!(
+            "bd worktree create {worktree} --branch release-hx"
+        ))
+        .len(),
+        1,
+        "the Release's worktree"
+    );
+    assert!(
+        w.called("bd update release-hx").is_empty(),
+        "bd was asked to update the Release: it has no bd issue"
+    );
+    assert_eq!(
+        w.called("herdr tab create --workspace w1 --label release-hx ")
+            .len(),
+        1,
+        "the Release's tab of its own"
+    );
+    let lines = w.lines();
+    let at = |text: &str| {
+        lines
+            .iter()
+            .position(|l| l.starts_with(text))
+            .unwrap_or_else(|| panic!("no line {text:?}:\n{}", lines.join("\n")))
+    };
+    assert!(at("Epic done, every Ticket closed") < at("release started: claude"));
+    assert!(at("release started: claude") < at("release done: v1.5.0"));
+    assert!(at("release done: v1.5.0") < at("version PR #version opened"));
+    assert!(run_level(
+        &w,
+        "version PR #version opened (https://example.test/pr/version)"
+    ));
+    let release = o.state.lock().unwrap().release.clone().unwrap();
+    assert_eq!(
+        (
+            release.id.as_str(),
+            release.version.as_str(),
+            release.ts.pr.as_str()
+        ),
+        ("release-hx", "v1.5.0", "https://example.test/pr/version")
+    );
+}
+
+#[test]
+fn an_earlier_releases_worktree_gives_a_new_epic_release_an_id_of_its_own() {
+    let (w, mut o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    set_clock(&mut o.cfg, now());
+    std::fs::create_dir_all(o.worktree("release-hx")).unwrap(); // its record discarded
+    let o = Arc::new(o);
+
+    run_epic(&o);
+
+    w.await_line("release done: v1.5.0");
+    let id = o.state.lock().unwrap().release.clone().unwrap().id;
+    assert_eq!(id, "release-hx-2026-09-25-140000");
+    let worktree = o.worktree(&id).display().to_string();
+    let create = format!("bd worktree create {worktree} --branch {id}");
+    assert_eq!(w.called(&create).len(), 1, "a worktree off today's main");
+}
+
+/// A Ticket run, as /start-ticket begins one, over `tickets`, to its end.
+fn run_tickets(w: &World, o: &Arc<Orchestrator>, tickets: &[&str]) {
+    let ids: Vec<String> = tickets.iter().map(|t| t.to_string()).collect();
+    assert!(o.enqueue(&ids));
+    let mut run = spawn_epic(o.clone(), "");
+    run.wait();
+    o.wait_in_flight();
+    w.await_line("Ticket run done, every Ticket closed");
+}
+
+#[test]
+fn a_ticket_run_whose_queued_ticket_carries_orqa_release_gets_bump_patch() {
+    let (w, mut o) = releasing(vec![
+        BdTicket::new("hx-1"),
+        BdTicket {
+            labels: label(),
+            ..BdTicket::new("hx-2")
+        },
+    ]);
+    set_clock(&mut o.cfg, now());
+    let o = Arc::new(o);
+
+    run_tickets(&w, &o, &["hx-1", "hx-2"]);
+
+    let id = o.state.lock().unwrap().release.clone().unwrap().id;
+    assert_eq!(id, "release-2026-09-25-140000", "its date and time");
+    let prompt = w.prompt(&format!("{id}/release.md"));
+    for want in [
+        "- Bump: patch\n",
+        "- Epic: none\n",
+        "\n  - hx-1 Ticket hx-1: https://example.test/pr/hx-1",
+        "\n  - hx-2 Ticket hx-2: https://example.test/pr/hx-2",
+    ] {
+        assert!(
+            prompt.contains(want),
+            "the Release's prompt lacks {want:?}:\n{prompt}"
+        );
+    }
+    w.await_line("release done: v1.5.0");
+}
+
+/// The run ended as before the Release: no record, no session, no line.
+fn no_release(w: &World, o: &Orchestrator) {
+    assert_eq!(o.state.lock().unwrap().release, None);
+    assert!(w.called("herdr agent start h-release").is_empty());
+    let lines = w.lines();
+    assert!(
+        !lines.iter().any(|l| l.contains("release")),
+        "a Release line: {lines:?}"
+    );
+}
+
+#[test]
+fn with_the_switch_off_or_the_label_on_the_epics_tickets_alone_the_run_ends_as_today() {
+    // (the switch, the Epic's labels, its Ticket's)
+    for (on, epic, ticket) in [(false, label(), vec![]), (true, vec![], label())] {
+        let (w, o) = releasing(vec![BdTicket {
+            labels: ticket,
+            ..BdTicket::new("hx-1")
+        }]);
+        set_switch(&w.repo, &RELEASE_ON, on).unwrap();
+        w.lock().epic_labels = epic;
+        let o = Arc::new(o);
+
+        run_epic(&o);
+
+        w.await_line("Epic done, every Ticket closed");
+        no_release(&w, &o);
+    }
+}
+
+#[test]
+fn a_run_where_no_ticket_merged_a_pr_gets_no_release() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    w.lock().tickets[0].status = "closed".to_string(); // closed by hand
+    let o = Arc::new(o);
+
+    run_epic(&o);
+
+    w.await_line("Epic done, every Ticket closed");
+    no_release(&w, &o);
+}
+
+#[test]
+fn orqa_release_on_a_ticket_raises_no_label_question() {
+    let (w, o) = new_world(vec![BdTicket {
+        labels: label(),
+        ..BdTicket::new("hx-1")
+    }]);
+    w.lock().merged = true;
+    let o = Arc::new(o);
+
+    run_epic(&o);
+
+    w.await_line("hx-1 merged, Ticket closed");
+    let asked: Vec<String> = w
+        .events()
+        .into_iter()
+        .filter(|e| matches!(e.ask, Some(Ask::Labels { .. })))
+        .map(|e| e.text)
+        .collect();
+    assert!(asked.is_empty(), "label Questions: {asked:?}");
+    assert!(w.called("bd label remove").is_empty());
+}
+
+#[test]
+fn a_parked_ticket_keeps_the_release_from_starting() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    w.lock().epic_labels = label();
+    w.lock().tickets[1].status = "in_progress".to_string(); // started, then Parked
+    o.update("hx-2", |ts| {
+        ts.status = STATUS_PARKED.to_string();
+        ts.reason = "by you at implement".to_string();
+    });
+    let o = Arc::new(o);
+
+    let run = spawn_epic(o.clone(), "hx");
+
+    w.await_line("hx-1 merged, Ticket closed");
+    assert!(
+        !run.finished_within(Duration::from_millis(50)),
+        "the run ended with a Ticket Parked"
+    );
+    no_release(&w, &o);
+}
+
+#[test]
+fn enqueue_is_refused_once_the_release_starts() {
+    let (w, o) = releasing(vec![BdTicket {
+        labels: label(),
+        ..BdTicket::new("hx-1")
+    }]);
+    w.session(|p| match p.stage == "release" {
+        true => working(p),
+        false => succeed(p),
+    });
+    let o = Arc::new(o);
+    assert!(o.enqueue(&["hx-1".to_string()]));
+
+    let _run = spawn_epic(o.clone(), "");
+
+    w.await_line("release started: claude");
+    assert!(
+        !o.enqueue(&["hx-2".to_string()]),
+        "a Ticket joined the run once its Release started"
+    );
+    assert_eq!(o.state.lock().unwrap().queue, ["hx-1"]);
+}
+
+#[test]
+fn the_release_is_never_resumable_nor_polled_for_a_merge() {
+    let (w, o) = new_world(vec![]);
+    o.state.lock().unwrap().release = Some(Box::new(Release {
+        id: "release-hx".to_string(),
+        ts: TicketState {
+            status: STATUS_RUNNING.to_string(),
+            stage: "release".to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }));
+    assert!(o.resumable().is_empty(), "the Release resumed as a Ticket");
+
+    o.update("release-hx", |ts| {
+        ts.status = STATUS_PR_OPEN.to_string();
+        ts.pr = "https://example.test/pr/version".to_string();
+    });
+    assert!(o.poll_merges().is_empty());
+    assert!(
+        w.called("gh ").is_empty(),
+        "gh was asked about the version PR"
+    );
+    assert!(
+        o.state.lock().unwrap().tickets.is_empty(),
+        "the Release was recorded as a Ticket"
+    );
+}
+
+/// A run stopped in its Release, every Ticket merged: the Release's session
+/// id saved, its pane gone.
+fn stopped_in_release(w: &World, o: &Orchestrator) {
+    {
+        let mut world = w.lock();
+        world.integration = true;
+        world.tickets[0].status = "closed".to_string();
+        world.tickets[0].close_reason = "PR merged: https://example.test/pr/hx-1".to_string();
+    }
+    let mut state = o.state.lock().unwrap();
+    state.tickets.insert(
+        "hx-1".to_string(),
+        TicketState {
+            status: STATUS_MERGED.to_string(),
+            pr: "https://example.test/pr/hx-1".to_string(),
+            ..Default::default()
+        },
+    );
+    let session = Session {
+        app: "claude".to_string(),
+        id: "s-saved".to_string(),
+        reset: None,
+    };
+    state.release = Some(Box::new(Release {
+        id: "release-hx".to_string(),
+        ts: TicketState {
+            status: STATUS_RUNNING.to_string(),
+            stage: "release".to_string(),
+            sessions: [("release".to_string(), session)].into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }));
+}
+
+#[test]
+fn continue_on_a_saved_run_resumes_its_release_by_its_session_id() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    stopped_in_release(&w, &o);
+    let file = o.run_dir("release-hx").join("release.md");
+    w.session(move |p| match p.text == "continue" {
+        true => {
+            write_file(&file, RELEASED);
+            (String::new(), "idle".to_string())
+        }
+        false => succeed(p),
+    });
+    let o = Arc::new(o);
+
+    run_epic(&o);
+
+    let starts = w.called("herdr agent start h-release-hx-release ");
+    assert!(
+        starts.len() == 1
+            && starts[0].contains("--kind claude --pane ")
+            && starts[0].contains(" -- --resume s-saved "),
+        "the Release's starts = {starts:?}, want one resuming s-saved"
+    );
+    let pane = o.ticket("release-hx").panes.get("release").cloned();
+    assert_eq!(pane, None, "its tab closed once done");
+    let prompts = w.called("herdr agent prompt ");
+    assert_eq!(prompts.len(), 1, "prompts = {prompts:?}");
+    assert!(prompts[0].ends_with(" continue"), "{prompts:?}");
+    assert!(run_level(&w, "release resumed: claude (pane"));
+    w.await_line("release done: v1.5.0");
+}
+
+#[test]
+fn a_short_usage_limit_on_the_release_holds_it_and_it_carries_on_at_the_reset() {
+    let (w, mut o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    let clock = set_clock(&mut o.cfg, now());
+    hits(&w, "release-hx", "release", "idle", CLAUDE);
+    let o = Arc::new(o);
+
+    let mut run = spawn_epic(o.clone(), "hx");
+
+    w.await_line("release-hx claude session limit until 3:45pm: release holds (pane");
+    assert!(
+        !run.finished_within(Duration::from_millis(30)),
+        "the Release did not hold"
+    );
+    assert_eq!(o.ticket("release-hx").limited, "claude");
+    *clock.lock().unwrap() = at(25, 15, 47);
+    run.wait();
+    w.await_line("release-hx claude session limit over: release carries on (pane");
+    w.await_line("release done");
+}
+
+#[test]
+fn a_release_question_while_away_waits_unparked_with_no_bd_comment() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    o.cfg.away.store(true, Ordering::SeqCst);
+    w.session(|p| match p.stage == "release" {
+        true => (ASKS.to_string(), "idle".to_string()),
+        false => succeed(p),
+    });
+    let o = Arc::new(o);
+
+    let run = spawn_epic(o.clone(), "hx");
+
+    let asked = w.await_event("question in release");
+    assert!(matches!(asked.ask, Some(Ask::StageQuestion { .. })));
+    assert_eq!(asked.ticket.as_deref(), Some("release-hx"));
+    assert!(
+        !run.finished_within(Duration::from_millis(30)),
+        "the run did not wait on the Release's question"
+    );
+    assert!(w.called("bd comments add").is_empty());
+    assert_eq!(o.ticket("release-hx").status, STATUS_RUNNING);
+}
+
+#[test]
+fn a_wake_on_the_release_settled_as_park_stops_the_run_and_continue_starts_it_again() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    w.session(|p| match p.stage == "release" {
+        true => (String::new(), "idle".to_string()), // no result
+        false => succeed(p),
+    });
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+    let stuck = w.await_event("stuck in release: went idle without a result");
+    let Some(Ask::Wake { pane, .. }) = stuck.ask else {
+        panic!("no Wake: {stuck:?}");
+    };
+
+    o.answer("release-hx", &pane, Answer::Act(Action::Park));
+
+    run.wait();
+    assert!(o.stopping(), "the run ended as done, not stopped");
+    w.await_line("release-hx parked: release went idle without a result");
+    assert_eq!(o.ticket("release-hx").status, STATUS_PARKED);
+
+    // /continue: its live session watched again, not started anew
+    let before = w.calls().len();
+    let again = restarted(&w, &o);
+    let mut run = spawn_epic(again.clone(), "hx");
+    w.await_nth("stuck in release: went idle without a result", 2);
+    write_file(&o.run_dir("release-hx").join("release.md"), RELEASED);
+    run.wait();
+    w.await_line("release done: v1.5.0");
+    assert!(w.since(before, "herdr agent start ").is_empty());
+}
+
+#[test]
+fn a_long_usage_limit_on_the_release_ends_the_run_with_its_session_saved() {
+    let (w, mut o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    w.lock().integration = true;
+    set_clock(&mut o.cfg, now());
+    let weekly = "You've hit your weekly limit · resets Mon 12:00am";
+    hits(&w, "release-hx", "release", "idle", weekly);
+    let o = Arc::new(o);
+
+    spawn_epic(o.clone(), "hx").wait(); // it ends by itself
+
+    w.await_line("claude weekly limit until Mon 12:00am: sessions saved, panes closed");
+    assert!(
+        o.stopping() && o.closed(),
+        "the run did not end at the limit"
+    );
+    assert!(w.lock().tabs.is_empty(), "the Release's tab stayed");
+    let ts = o.ticket("release-hx");
+    assert!(
+        ts.tab.is_empty() && ts.panes.is_empty() && !ts.sessions["release"].id.is_empty(),
+        "{ts:?}"
+    );
+}

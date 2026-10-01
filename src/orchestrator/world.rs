@@ -187,6 +187,8 @@ pub(crate) struct Inner {
     pub(crate) epic_deps: Vec<String>,
     /// The Epic's description, as 'bd show hx --json' prints it.
     pub(crate) epic_description: String,
+    /// The Epic's own bd labels, as 'bd show hx --json' prints them.
+    pub(crate) epic_labels: Vec<String>,
     /// PR url -> the PR node in the poll's GraphQL shape. 'gh pr view',
     /// Address PR comments', gets the same JSON: a test of it gives its shape.
     pub(crate) prs: BTreeMap<String, String>,
@@ -563,8 +565,8 @@ impl World {
         }
         if cmd.starts_with("bd show") && cmd.ends_with(" --json") {
             if argv[2] == EPIC {
-                let epic = json!([{"id": EPIC, "issue_type": "epic",
-                    "description": w.epic_description}]);
+                let epic = json!([{"id": EPIC, "title": "Epic hx", "issue_type": "epic",
+                    "description": w.epic_description, "labels": w.epic_labels}]);
                 return Ok(epic.to_string());
             }
             let shown = w.tickets.iter().filter(|t| t.id == argv[2]);

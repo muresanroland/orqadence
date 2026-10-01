@@ -2060,7 +2060,9 @@ impl Screen {
     /// before discarding the saved run, which goes only once the lock is
     /// held. An Epic run resumes every running Ticket, so over a saved Ticket
     /// run it asks too when one running, Parked (removed from the run or not)
-    /// or queued is not the Epic's.
+    /// or queued is not the Epic's. A saved Ticket run stopped in its Release
+    /// asks before anything, Epic or Ticket, takes it up: its Release
+    /// belongs to it alone.
     fn start(&mut self, ids: &[String], epic: bool, discard: bool) {
         let parent = |ticket: &str| {
             self.epics
@@ -2070,6 +2072,7 @@ impl Screen {
                 .map(|t| t.parent.clone())
                 .unwrap_or_default()
         };
+        let release = self.state.release.as_ref().map(|r| r.id.as_str());
         let saved = if epic && self.state.epic.is_empty() {
             // running or Parked, removed from the run too, or queued and
             // not started: the Epic run takes up the removed and clears the
@@ -2084,11 +2087,14 @@ impl Screen {
                 .chain(removed.keys())
                 .chain(&self.state.queue)
                 .map(String::as_str)
+                .chain(release)
                 .filter(|t| unfinished(t) && parent(t) != ids[0])
                 .collect();
             stray.sort();
             stray.dedup();
             stray.join(", ")
+        } else if self.state.epic.is_empty() {
+            release.unwrap_or_default().to_string()
         } else {
             self.state.epic.clone()
         };

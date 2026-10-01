@@ -12,7 +12,7 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 ## What shows
 
 - Every Ticket event shows on the panel, except `prompted` (log only).
-- Run-level errors show: state not saved, bd list failed, bd ready failed, Epic done, Ticket run done, stopped.
+- Run-level errors show: state not saved, bd list failed, bd ready failed, bd show failed, Epic done, Ticket run done, stopped.
 - Housekeeping stays in the log only: dropped a leftover pane, merged but not closed (will retry), scratch left in the run directory, prompted, waiting for the result file, an answer that came after its session moved on (dropped your park: that session has moved on), a Stage that could not be resumed (not resumed: `err`, starting it fresh), a Judgment that could not be had (no Judgment: `err`, the key never in it), a bd comment that could not be added for a question asked while Away (no bd comment: `err`).
 - A Judgment below the floor logs its judged line only: its scores show in the Wake's Question, and a panel line would close that Question.
 
@@ -62,7 +62,7 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 | Epic done | *(orqadence)* Epic done, every Ticket closed |
 | Ticket run done | *(orqadence)* Ticket run done, every Ticket closed · Ticket run done, no Ticket left in it |
 | stopped | *(orqadence)* stopped, panes left running, /continue resumes *(once every Ticket thread has left; the status row reads STOPPING until then)* |
-| errors | *(orqadence)* state not saved: `err` · bd list failed: `err` · bd ready failed: `err` |
+| errors | *(orqadence)* state not saved: `err` · bd list failed: `err` · bd ready failed: `err` · bd show failed: `err` *(the Epic's labels, at a run's end)* |
 
 ## Limited
 
@@ -79,6 +79,20 @@ Decided on the map tickets "Limited" (harness-0sx.8) and "Apps per Stage" (harne
 | the answer | you answered: wait for the reset *(the Review holds as any Stage)* · you answered: review with claude opus *(then: review 1 started: claude opus (pane 2-3))* · you answered: open the PR unreviewed |
 | a Review skipped, the PR to open unreviewed | review 1 and debate 1 skipped: codex was limited until 3:05pm *(the last Fix gets the Input Unreviewed: codex was limited until 3:05pm)* · *with an Extra review:* extra review 1 skipped: codex was limited until 3:05pm *(the Input ends ", the extra review skipped too", and the Question's option reads open the PR unreviewed, the extra review skipped too)* |
 | a Debate side's App at its limit | *no line:* the Moderator's Inputs carry Side B: limited until 3:05pm |
+
+## Release
+
+Decided on the map ticket for the Release label (harness-bsg.22). A run carrying orqa:release, with release_on set, ends in the Release once every Ticket is closed and one at least merged its PR: an Epic's own label, or any queued Ticket's in a Ticket run, read at that moment. The Release belongs to the run, not to a Ticket: its lines below are run-level. Its other lines (holds, stuck, a question, waiting at a prompt, parked) are a Stage's as above, named by the Release's id, `release-<epic>` (`release-<epic>-<date>-<time>` when an earlier Release's worktree has that name) or `release-<date>-<time>` in a Ticket run, as RECENT names a Ticket, so its Questions are answered as a Ticket's are.
+
+| Moment | Wording |
+|---|---|
+| started | *(orqadence)* release started: claude opus/high (pane 3-1) *(after Epic done or Ticket run done; its worktree and branch are its id, its tab of its own)* |
+| resumed | *(orqadence)* release resumed: claude (pane 3-1) *(/continue on a saved run whose Tickets are all merged)* |
+| done | *(orqadence)* release done: v1.5.0 |
+| version PR | *(orqadence)* version PR #12 opened *(log line adds the url; none in a repo that keeps its version only in tags)* |
+| bd cannot show the Epic | *(orqadence)* bd show failed: `err` *(tried again on the next pass, never read as no Release)* |
+| parked | release-hx parked: `reason` *(a Wake settled as park, or its worktree not made: the run stops, the Release saved, as on /stop-work; /continue starts it again)* |
+| asked while Away | *nothing:* question in release (pane 3-1) *(no Ticket to park: it waits as a Question, no bd comment)* |
 
 ## Wake reasons
 
