@@ -1,8 +1,9 @@
 //! The thin 'orqa init': tidies a checkout an older init set up, installs
 //! the shipped skills and every job's default in .orqadence/skills, offers
 //! bd init, the docs/agents setup and herdr's integrations, keeps TypeSafe
-//! on or off and its key, the shipped Ticket labels and their skills, asks
-//! On call's Moshi token, and preflights the Target repo.
+//! on or off and its key, the shipped Ticket labels and their skills, and
+//! Rebase and Address PR comments' switches, asks On call's Moshi token,
+//! and preflights the Target repo.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -344,9 +345,10 @@ fn unhide_links(repo: &Path) -> io::Result<()> {
 }
 
 /// The rest of init once the skills are in: bd, the docs/agents setup,
-/// TypeSafe, every job's default, the Ticket labels, On call, and herdr's
-/// integrations. A `committed` checkout keeps the committed TypeSafe
-/// switch, picks and labels, and is asked only for the key, when TypeSafe
+/// TypeSafe, every job's default, the Ticket labels, Rebase and Address PR
+/// comments' switches, On call, and herdr's integrations. A `committed`
+/// checkout keeps the committed TypeSafe switch, picks, labels and
+/// switches, and is asked only for the key, when TypeSafe
 /// is on and no key is set or kept; On call is per person, asked on every
 /// checkout.
 pub(crate) fn set_up(
@@ -365,11 +367,31 @@ pub(crate) fn set_up(
         let typesafe = ask_typesafe(repo, &env_key, out, input, tty)?;
         install_defaults(repo, tools, typesafe, out)?;
         ask_labels(repo, tools, out, input, tty)?;
+        ask_switches(repo, out, input, tty)?;
     } else if app::typesafe(repo) && env_key.trim().is_empty() && !repo.join(KEY_FILE).exists() {
         ask_typesafe_key(repo, out, input, tty)?;
     }
     ask_on_call(repo, &env(on_call::TOKEN_VAR), out, input, tty)?;
     install_integrations(repo, tools, out, input, tty)
+}
+
+/// Rebase and Address PR comments by themselves, each a yes/no kept in
+/// config.json, its default the switch as it is: off on a first init, so
+/// enter alone is no, and a re-run keeps a switch already set. Nobody
+/// answering keeps it too.
+fn ask_switches(
+    repo: &Path,
+    out: &mut dyn Write,
+    input: &mut dyn Read,
+    tty: bool,
+) -> io::Result<()> {
+    step(out, named("PULL REQUESTS"))?;
+    for switch in [&app::REBASE_AUTO, &app::ADDRESS_PR_COMMENTS_AUTO] {
+        let on = app::switch(repo, switch);
+        let on = yes(out, input, tty, switch.question, on)?.unwrap_or(on);
+        app::set_switch(repo, switch, on).map_err(io::Error::other)?;
+    }
+    Ok(())
 }
 
 /// On call's opt-in, default no: yes asks for the Moshi token with echo off
