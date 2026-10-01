@@ -299,6 +299,7 @@ pub(super) fn start(s: &mut Screen) {
         title: "Demo: resumable uploads".to_string(),
         tickets,
         blockers: Vec::new(),
+        labels: Vec::new(),
     };
     let state = State {
         epic: EPIC.to_string(),
@@ -556,6 +557,7 @@ fn summary(s: &Screen) -> Summary {
         tickets,
         cost,
         time: Some(now - started),
+        released: None,
         scroll: Cell::new(0),
         opened: now,
     }

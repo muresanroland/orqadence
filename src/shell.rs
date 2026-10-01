@@ -24,9 +24,10 @@ use ratatui::layout::{Position, Rect};
 use ratatui::DefaultTerminal;
 
 use crate::on_call::{self, Doorbell, OnCall};
-use crate::orchestrator::app::{self, ADDRESS_PR_COMMENTS_COUNTDOWN};
+use crate::orchestrator::app::{self, ADDRESS_PR_COMMENTS_COUNTDOWN, RELEASE_ON};
 use crate::orchestrator::judgment::{self, Action};
 use crate::orchestrator::pr::Item;
+use crate::orchestrator::release;
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::{
     log_line, plural, pr_ref, Answer, Ask, Config, Event, Orchestrator,
@@ -122,6 +123,8 @@ pub(crate) struct Epic {
     pub(crate) tickets: Vec<BdIssue>,
     /// What the Epic waits on: its bd blocks dependencies.
     pub(crate) blockers: Vec<String>,
+    /// Its own bd labels.
+    pub(crate) labels: Vec<String>,
 }
 
 /// The live run: the Orchestrator, its scheduler thread and the lock, held
@@ -138,6 +141,8 @@ struct Run {
     /// The summary has opened by itself, which it does once a run, again
     /// after a Ticket joins a Ticket run.
     summarized: bool,
+    /// The run ends in a Release: its summary waits for the run's end.
+    release: bool,
     _lock: Lock,
 }
 
@@ -585,7 +590,8 @@ impl Screen {
 
     /// Takes the Events and snapshots the live run's State, after the
     /// scheduler's end so a finished run's snapshot is its last; the summary
-    /// opens by itself once every Ticket of the run has its PR. Once the
+    /// opens by itself once every Ticket of the run has its PR, or at the
+    /// end of a run that ends in a Release. Once the
     /// scheduler thread has returned the run is stopping until every Ticket
     /// thread has left (each sees stop at its next sleep, and still saves
     /// state after its current Tools call); then the run is over, the lock
@@ -627,10 +633,12 @@ impl Screen {
         self.state = run.o.state.lock().unwrap().clone();
         // the cache again once it says done: a Ticket added since has no PR
         if !run.summarized && self.all_prs_open() && self.reload_epics() && self.all_prs_open() {
-            self.run.as_mut().unwrap().summarized = true;
-            let state = self.state.clone();
-            self.summarize(&state, &state.epic);
-            self.ring_end("run done");
+            let release = self.ends_in_release();
+            let run = self.run.as_mut().unwrap();
+            (run.summarized, run.release) = (true, release);
+            if !release {
+                self.summarize_run();
+            }
         }
         let over = self
             .run
@@ -658,6 +666,10 @@ impl Screen {
         } else if run.failed {
             self.state = load_state(&self.cfg.repo).unwrap_or_default();
         } else {
+            // the summary held for the Release: after it, or with none after all
+            if run.release || self.state.release.is_some() {
+                self.summarize_run();
+            }
             let done = std::mem::take(&mut self.state); // run done: nothing to resume
             if let Err(err) = self.state.save(&self.cfg.repo) {
                 self.notice(&format!("state not saved: {err}"), NOTICE_WINDOW);
@@ -719,6 +731,21 @@ impl Screen {
         let out = [STATUS_PR_OPEN, STATUS_MERGED, STATUS_PARKED];
         ids.iter().all(|id| out.contains(&status(id)))
             && ids.iter().any(|id| status(id) != STATUS_PARKED)
+    }
+
+    /// Whether the run ends in a Release: one already started, as
+    /// release_due resumes it; else, read on the bd cache, releases on and
+    /// orqa:release on its Epic, or on any Ticket of a Ticket run.
+    fn ends_in_release(&self) -> bool {
+        if self.state.release.is_some() {
+            return true;
+        }
+        let labelled = match self.saved() {
+            Some(epic) => release::carries(&epic.labels),
+            None => (self.state.queue.iter())
+                .any(|id| find(&self.epics, id).is_some_and(|t| release::carries(&t.labels))),
+        };
+        labelled && app::switch(&self.cfg.repo, &RELEASE_ON)
     }
 
     /// The saved run's Epic on the tree; never the no-Epic group.
@@ -1614,6 +1641,7 @@ impl Screen {
     /// Closes the done Epic in bd, its summary in the reason, after a comment
     /// that lists each Ticket with its PR, from the 'PR merged: <url>'
     /// poll_merges closed it with; a Ticket closed any other way has no PR.
+    /// Both name the version its Release released, and the tag.
     /// The summary is of the run's completed State, Parked Tickets and all.
     /// A failure asks `text` again, to retry what has not gone in yet.
     fn close_epic(&mut self, text: &str, done: State, commented: bool) {
@@ -1635,13 +1663,16 @@ impl Screen {
                 format!("- {} {}: {pr}", t.id, t.title)
             })
             .collect();
-        let comment = format!("Every Ticket merged:\n{}", lines.join("\n"));
+        let released =
+            summary::released(&done).map_or(String::new(), |v| format!("; released {v}"));
+        let comment = format!("Every Ticket merged{released}:\n{}", lines.join("\n"));
         let (tools, repo) = (&self.cfg.tools, &self.cfg.repo);
+        let merged = format!("every Ticket merged{released}");
         let reason = match bd_list(repo, &**tools)
             .and_then(|issues| Summary::build(repo, &self.cfg.home, &issues, &done, epic))
         {
-            Ok(summary) => format!("every Ticket merged\n\n{}", draw::plain(&summary)),
-            Err(_) => "every Ticket merged".to_string(), // no evidence: the reason alone
+            Ok(summary) => format!("{merged}\n\n{}", draw::plain(&summary)),
+            Err(_) => merged, // no evidence: the reason alone
         };
         let mut closed = Ok(String::new());
         if !commented {
@@ -1865,7 +1896,12 @@ impl Screen {
             "/summary" => {
                 let ran = |state: &State| !state.epic.is_empty() || !state.queue.is_empty();
                 let (state, epic) = if !query.is_empty() {
-                    (self.state.clone(), query.to_string())
+                    // the last run's State when it is that Epic's: its Release
+                    let state = match self.state.epic != query && self.last.epic == query {
+                        true => &self.last,
+                        false => &self.state,
+                    };
+                    (state.clone(), query.to_string())
                 } else if ran(&self.state) {
                     (self.state.clone(), self.state.epic.clone())
                 } else if ran(&self.last) {
@@ -2180,6 +2216,13 @@ impl Screen {
         }
     }
 
+    /// Opens the live run's summary by itself, and rings On call.
+    fn summarize_run(&mut self) {
+        let state = self.state.clone();
+        self.summarize(&state, &state.epic);
+        self.ring_end("run done");
+    }
+
     /// Opens the summary of an Epic, or with none of the State's Ticket
     /// run, built fresh from bd, that State and the Run directories; a
     /// failure, or a run with no evidence, is a notice.
@@ -2249,6 +2292,7 @@ impl Screen {
             epic,
             failed: false,
             summarized: false,
+            release: false,
             _lock: lock,
         });
         self.running = true;
@@ -2452,6 +2496,7 @@ fn load_epics(repo: &Path, tools: &dyn Tools, queue: &[String]) -> Result<Vec<Ep
             title: i.title.clone(),
             tickets: Vec::new(),
             blockers: i.blockers().map(String::from).collect(),
+            labels: i.labels.clone(),
         })
         .collect();
     let mut no_epic = Epic {
@@ -2459,6 +2504,7 @@ fn load_epics(repo: &Path, tools: &dyn Tools, queue: &[String]) -> Result<Vec<Ep
         title: "no Epic".to_string(),
         tickets: Vec::new(),
         blockers: Vec::new(),
+        labels: Vec::new(),
     };
     issues.sort_by_key(|i| suffix_order(&i.id));
     for issue in issues {
