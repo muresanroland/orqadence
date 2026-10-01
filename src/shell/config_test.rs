@@ -4,7 +4,7 @@
 use super::brand::{PURPLE, RED};
 use super::config::{
     put, Field, LabelItem, ADDRESS_PR_COMMENTS_PAGE, APPS_PAGE, LABELS_PAGE, ON_CALL_PAGE,
-    REBASE_PAGE, RUN_PAGE, SKILLS_PAGE, TYPESAFE_PAGE,
+    REBASE_PAGE, RELEASE_PAGE, RUN_PAGE, SKILLS_PAGE, TYPESAFE_PAGE,
 };
 use super::shell_test::{
     asking, await_line, cols, find, key, logged, notice_modal, render, row, rows, screen_at, shell,
@@ -384,7 +384,7 @@ fn the_pipeline_list_a_stage_page_and_a_pick_list_render() {
     );
     let text =
         |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
-    let left: Vec<String> = (1..19).map(|y| text(&buf, y, 69, 97)).collect();
+    let left: Vec<String> = (1..21).map(|y| text(&buf, y, 69, 97)).collect();
     assert_eq!(
         left,
         [
@@ -400,6 +400,8 @@ fn the_pipeline_list_a_stage_page_and_a_pick_list_render() {
             "  Rebase    claude",
             "  │",
             "  Comments  claude",
+            "  │",
+            "  Release   claude",
             "────────────────────────────",
             "  Apps      6 of 6 installed",
             "  Skills    0 installed",
@@ -1050,7 +1052,7 @@ fn the_apps_page_renders_each_app_installed_or_not() {
     let text =
         |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
     let buf = render(&s, 160, 45);
-    assert_eq!(text(&buf, 14, 69, 97), "▸ Apps      4 of 6 installed");
+    assert_eq!(text(&buf, 16, 69, 97), "▸ Apps      4 of 6 installed");
     s.key(key(KeyCode::Enter));
     let buf = render(&s, 160, 45);
     let right: Vec<String> = (1..15).map(|y| text(&buf, y, 99, 158)).collect();
@@ -1520,7 +1522,7 @@ fn the_skills_page_renders_the_location_and_each_skill() {
     let text =
         |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
     let buf = render(&s, 160, 45);
-    assert_eq!(text(&buf, 15, 69, 97), "▸ Skills    1 installed");
+    assert_eq!(text(&buf, 17, 69, 97), "▸ Skills    1 installed");
     let right: Vec<String> = (1..14).map(|y| text(&buf, y, 99, 158)).collect();
     assert_eq!(
         right,
@@ -1955,6 +1957,52 @@ fn toggling_a_switch_saves_config_json_at_once() {
     );
 }
 
+/// The Release page: its row, then its switch, off by default. Toggling the
+/// switch and picking a model each save config.json at once.
+#[test]
+fn the_release_page_lists_its_row_and_switch_and_each_saves_at_once() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, RELEASE_PAGE);
+    let buf = render(&s, 160, 45);
+    for line in [
+        "Release",
+        "▸ app                   claude",
+        "  model                 default  Anthropic",
+        "  effort                default",
+        "  [ ] Turn on releases (the orqa:release label)",
+    ] {
+        assert!(find(&buf, line).is_some(), "{line:?}: {:#?}", rows(&buf));
+    }
+
+    keys(&mut s, &[KeyCode::Down; 3]);
+    s.key(key(KeyCode::Enter));
+    assert_eq!(config_json(repo.path()), json!({"release_on": true}));
+    assert_eq!(
+        note(&s),
+        "Turn on releases (the orqa:release label): on, saved uncommitted in .orqadence/config.json"
+    );
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "▸ [x] Turn on releases (the orqa:release label)").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    s.key(key(KeyCode::Char(' ')));
+    assert_eq!(config_json(repo.path()), json!({"release_on": false}));
+
+    keys(&mut s, &[KeyCode::Up, KeyCode::Up, KeyCode::Enter]);
+    type_in(&mut s, "type");
+    s.key(key(KeyCode::Enter));
+    type_in(&mut s, "claude-a");
+    s.key(key(KeyCode::Enter));
+    await_probe(&mut s);
+    assert_eq!(
+        config_json(repo.path()),
+        json!({"release_on": false, "release": {"model": "claude-a"}})
+    );
+}
+
 /// The countdown takes 0, no countdown, and refuses -1 and text, the text
 /// kept to mend; the runs cap refuses 0. A bad one in config.json is
 /// flagged on the page.
@@ -2338,7 +2386,7 @@ fn the_labels_page_lists_each_label_and_renders() {
     let text =
         |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
     let buf = render(&s, 160, 45);
-    assert_eq!(text(&buf, 16, 69, 97), "▸ Labels    2 labels");
+    assert_eq!(text(&buf, 18, 69, 97), "▸ Labels    2 labels");
     let right: Vec<String> = (1..8).map(|y| text(&buf, y, 99, 158)).collect();
     assert_eq!(
         right,

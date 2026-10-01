@@ -1,9 +1,9 @@
 //! The thin 'orqa init': tidies a checkout an older init set up, installs
 //! the shipped skills and every job's default in .orqadence/skills, offers
 //! bd init, the docs/agents setup and herdr's integrations, keeps TypeSafe
-//! on or off and its key, the shipped Ticket labels and their skills, and
-//! Rebase and Address PR comments' switches, asks On call's Moshi token,
-//! and preflights the Target repo.
+//! on or off and its key, the shipped Ticket labels and their skills,
+//! Rebase and Address PR comments' switches and the Release's, asks On
+//! call's Moshi token, and preflights the Target repo.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -350,11 +350,10 @@ fn unhide_links(repo: &Path) -> io::Result<()> {
 
 /// The rest of init once the skills are in: bd, the docs/agents setup,
 /// TypeSafe, every job's default, the Ticket labels, Rebase and Address PR
-/// comments' switches, On call, and herdr's integrations. A `committed`
-/// checkout keeps the committed TypeSafe switch, picks, labels and
-/// switches, and is asked only for the key, when TypeSafe
-/// is on and no key is set or kept; On call is per person, asked on every
-/// checkout.
+/// comments' switches, the Release's, On call, and herdr's integrations. A
+/// `committed` checkout keeps the committed TypeSafe switch, picks, labels
+/// and switches, and is asked only for the key, when TypeSafe is on and no
+/// key is set or kept; On call is per person, asked on every checkout.
 pub(crate) fn set_up(
     repo: &Path,
     tools: &dyn Tools,
@@ -372,6 +371,7 @@ pub(crate) fn set_up(
         install_defaults(repo, tools, typesafe, out)?;
         ask_labels(repo, tools, out, input, tty)?;
         ask_switches(repo, out, input, tty)?;
+        ask_release(repo, out, input, tty)?;
     } else if app::typesafe(repo) && env_key.trim().is_empty() && !repo.join(KEY_FILE).exists() {
         ask_typesafe_key(repo, out, input, tty)?;
     }
@@ -396,6 +396,23 @@ fn ask_switches(
         app::set_switch(repo, switch, on).map_err(io::Error::other)?;
     }
     Ok(())
+}
+
+/// Releases (the orqa:release label), a yes/no kept in config.json, its
+/// default the switch as it is, yes while unset: enter alone turns it on on
+/// a first init, and nobody answering turns it on only there; a re-run
+/// keeps a switch already set.
+fn ask_release(
+    repo: &Path,
+    out: &mut dyn Write,
+    input: &mut dyn Read,
+    tty: bool,
+) -> io::Result<()> {
+    step(out, named("RELEASES"))?;
+    let (_, doc) = app::read(repo).map_err(io::Error::other)?;
+    let on = doc[app::RELEASE_ON.key].is_null() || app::switch_in(&doc, &app::RELEASE_ON);
+    let on = yes(out, input, tty, app::RELEASE_ON.question, on)?.unwrap_or(on);
+    app::set_switch(repo, &app::RELEASE_ON, on).map_err(io::Error::other)
 }
 
 /// On call's opt-in, default no: yes asks for the Moshi token with echo off

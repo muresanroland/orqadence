@@ -5,7 +5,7 @@ use super::app::{
     app, canonical, checks, clash, count, debate_inputs, extra_review, fallback_row, floor_in,
     labels, row, runs_on, switch, Clash, ExtraReview, Floor, Label, ADDRESS_PR_COMMENTS_AUTO,
     ADDRESS_PR_COMMENTS_COUNTDOWN, ADDRESS_PR_COMMENTS_RUNS, IF_LIMITED, MAX_PR_SESSIONS,
-    MAX_TICKETS, REBASE_AUTO,
+    MAX_TICKETS, REBASE_AUTO, RELEASE_ON,
 };
 use super::stage::{Answer, Ask, Orchestrator, AWAY};
 use super::state::STATUS_PARKED;
@@ -994,6 +994,29 @@ fn rebase_and_address_pr_comments_rows_replace_address_and_read_an_old_address_r
             "{key}"
         );
     }
+}
+
+/// The Release's row reads like the Fix's, missing as claude default, and
+/// is refused on codex; no label overrides it, as the Release is not a
+/// Pipeline Stage. Its switch is off until config.json sets it true.
+#[test]
+fn the_release_row_reads_like_fix_and_its_switch_is_off_unless_set() {
+    let repo = repo_with(&json!({"release": {"model": "opus", "effort": "high"}}));
+    let said = |repo: &TempDir| row(repo.path(), "release", &[]).map(|r| r.said());
+    assert_eq!(said(&repo), Ok("claude opus/high".to_string()));
+    assert_eq!(said(&repo_with(&json!({}))), Ok("claude".to_string()));
+    let codex = repo_with(&json!({"release": {"app": "codex"}}));
+    assert!(said(&codex).is_err_and(|err| err.ends_with("release does not run on codex")));
+    let doc = json!({"labels": {"fast": {"kind": "modifier",
+        "rows": {"release": {"effort": "low"}}}}});
+    assert_eq!(
+        labels(&doc)["fast"],
+        Err("labels fast rows has no row release".to_string())
+    );
+
+    assert!(!switch(repo.path(), &RELEASE_ON));
+    let on = repo_with(&json!({"release_on": true}));
+    assert!(switch(on.path(), &RELEASE_ON));
 }
 
 /// hx-1 with the bd labels given.
