@@ -1,8 +1,10 @@
 //! The scheduler: starts ready Tickets, at most max_tickets at once, each on
 //! a thread of its own that is never joined (ADR 0003), resumes the ones a
-//! stopped run left behind, polls PRs for merges (ADR 0002) and obeys the
-//! Shell's commands. Its Tickets are an Epic's children, or a Ticket run's
-//! queue, which the Shell adds to while it runs.
+//! stopped run left behind, polls PRs for merges (ADR 0002) and conflicts,
+//! and obeys the Shell's commands. PR sessions, Rebase and Address PR
+//! comments, count apart: at most max_pr_sessions at once, one per Ticket.
+//! Its Tickets are an Epic's children, or a Ticket run's queue, which the
+//! Shell adds to while it runs.
 
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -58,6 +60,9 @@ pub(crate) struct BdDependency {
 /// How long a PR's head holds before the poll trusts that nothing is at
 /// work on it: a bot's context appears seconds after a push.
 const QUIET: chrono::TimeDelta = chrono::TimeDelta::seconds(60);
+
+/// What a Ticket's thread runs: its Pipeline or a PR session.
+type Work = fn(&Orchestrator, &str);
 
 impl Orchestrator {
     /// Every issue bd's reply to args holds, Epics included.
@@ -169,8 +174,9 @@ impl Orchestrator {
     /// Drives an Epic, or with none the Ticket run over the State's queue: it
     /// starts ready Tickets, at most max_tickets at once, resumes the ones a
     /// stopped run left behind, polls PRs for merges, obeys the Shell's
-    /// commands, and returns when every one of its Tickets is closed (a
-    /// Ticket run too when none is left in it) or on /stop-work.
+    /// commands, queueing PR sessions oldest first past max_pr_sessions, and
+    /// returns when every one of its Tickets is closed (a Ticket run too
+    /// when none is left in it) or on /stop-work.
     pub(crate) fn run(self: &Arc<Self>, epic: &str) -> Result<(), String> {
         self.change_state(|state| {
             state.epic = epic.to_string();
@@ -190,13 +196,13 @@ impl Orchestrator {
             state.queue.splice(0..0, saved);
         });
 
-        let launch = |ticket: &str, work: fn(&Orchestrator, &str)| {
+        let launch = |ticket: &str, pr: Option<&'static str>, work: Work| {
             // A Ticket can consume stop while the scheduler is in a bd call.
             // Its saved state stays running for resume, but this run is over.
             if self.stopping() {
                 return;
             }
-            self.active.lock().unwrap().insert(ticket.to_string());
+            self.active.lock().unwrap().insert(ticket.to_string(), pr);
             let slot = Slot {
                 o: Arc::clone(self),
                 ticket: ticket.to_string(),
@@ -207,8 +213,13 @@ impl Orchestrator {
             #[cfg(not(test))]
             let _ = handle; // never joined: /stop-work must not wait out a Stage
         };
-        let busy = |ticket: &str| self.active.lock().unwrap().contains(ticket);
-        let in_pipeline = || self.active.lock().unwrap().len();
+        let busy = |ticket: &str| self.active.lock().unwrap().contains_key(ticket);
+        let in_pipeline = || {
+            let active = self.active.lock().unwrap();
+            active.values().filter(|st| st.is_none()).count()
+        };
+        // the PR sessions told they wait, each told once
+        let mut waiting = BTreeSet::new();
 
         let mut last_poll: Option<Instant> = None;
         loop {
@@ -218,14 +229,39 @@ impl Orchestrator {
                 self.poll_merges();
                 last_poll = Some(Instant::now());
             }
+            let max_pr = app::count(&self.cfg.repo, &app::MAX_PR_SESSIONS);
+            // one view of what runs per pass: a slot freed during it goes
+            // to the oldest command waiting, on the next
+            let mut running = self.active.lock().unwrap().clone();
             for command in self.commands() {
                 let (kind, ticket) = match command.strip_prefix("address-pr-comments-") {
                     Some(ticket) => ("address-pr-comments", ticket),
                     None => command.split_once('-').unwrap_or((&command, "")),
                 };
                 let ts = self.ticket(ticket);
+                let pr: Option<(&Stage, Work)> = match kind {
+                    "rebase" => Some((&REBASE, Orchestrator::rebase)),
+                    "address-pr-comments" => {
+                        Some((&ADDRESS_PR_COMMENTS, Orchestrator::address_pr_comments))
+                    }
+                    _ => None,
+                };
                 if kind == "remove" && self.consume(&command) {
                     self.remove(ticket, busy(ticket));
+                } else if let Some((st, work)) = pr {
+                    // PR sessions queue here, oldest first: past
+                    // max_pr_sessions, and behind the Ticket's own session
+                    let sessions = running.values().filter(|st| st.is_some()).count();
+                    if running.contains_key(ticket) || sessions >= max_pr {
+                        if waiting.insert(command.clone()) {
+                            let text = format!("{} waits for a slot", stage_label(st, 0));
+                            self.report(ticket, &text);
+                        }
+                    } else if self.consume(&command) {
+                        waiting.remove(&command);
+                        running.insert(ticket.to_string(), Some(st.name));
+                        launch(ticket, Some(st.name), work);
+                    }
                 } else if busy(ticket) || ticket.is_empty() {
                     // a running Ticket's own waits consume its retry and
                     // park, and sleep owns stop, in every mode; a Question's
@@ -245,10 +281,6 @@ impl Orchestrator {
                 {
                     // /continue @ticket: its live session watched again, its question asked
                     self.update(ticket, |ts| ts.status = STATUS_RUNNING.to_string());
-                } else if kind == "rebase" && self.consume(&command) {
-                    launch(ticket, Orchestrator::rebase);
-                } else if kind == "address-pr-comments" && self.consume(&command) {
-                    launch(ticket, Orchestrator::address_pr_comments);
                 } else if ts.status.is_empty() && self.consume(&command) {
                     self.report(ticket, "refused: not a Ticket of this run");
                 } else if self.consume(&command) {
@@ -281,7 +313,7 @@ impl Orchestrator {
             let max = app::count(&self.cfg.repo, &app::MAX_TICKETS);
             for ticket in self.resumable() {
                 if !busy(&ticket) && in_pipeline() < max {
-                    launch(&ticket, Orchestrator::run_ticket);
+                    launch(&ticket, None, Orchestrator::run_ticket);
                 }
             }
             match self.ready(epic) {
@@ -290,7 +322,7 @@ impl Orchestrator {
                     for issue in ready {
                         if self.ticket(&issue.id).status.is_empty() && in_pipeline() < max {
                             self.update(&issue.id, |_| {});
-                            launch(&issue.id, Orchestrator::run_ticket);
+                            launch(&issue.id, None, Orchestrator::run_ticket);
                         }
                     }
                 }
@@ -451,21 +483,27 @@ impl Orchestrator {
                     &format!("parked: {} closed without merging", pr_ref(&ts.pr)),
                 );
             } else {
-                // The last poll's view gates /rebase; `conflict` only keeps
-                // the report to once, until the PR is seen mergeable again.
+                // The last poll's view gates /rebase; `conflict` keeps the
+                // report, and with rebase_auto the Rebase, to once per
+                // conflict: one that fails or parks waits for /rebase, until
+                // the PR is seen mergeable again.
                 let conflicting = pr.mergeable == "CONFLICTING";
                 if conflicting != ts.conflicting {
                     self.update(&ticket, |ts| ts.conflicting = conflicting);
                 }
                 if conflicting && !ts.conflict {
                     self.update(&ticket, |ts| ts.conflict = true);
-                    self.report(
-                        &ticket,
-                        &format!(
-                            "{} conflicts with main, /rebase resolves it",
-                            pr_ref(&ts.pr)
-                        ),
-                    );
+                    let auto = app::switch(repo, &app::REBASE_AUTO);
+                    let then = if auto {
+                        "rebasing it"
+                    } else {
+                        "/rebase resolves it"
+                    };
+                    let text = format!("{} conflicts with main, {then}", pr_ref(&ts.pr));
+                    self.report(&ticket, &text);
+                    if auto {
+                        self.command(&format!("rebase-{ticket}"));
+                    }
                 } else if pr.mergeable == "MERGEABLE" && ts.conflict {
                     self.update(&ticket, |ts| ts.conflict = false);
                 }
@@ -485,6 +523,13 @@ impl Orchestrator {
             if pr.busy() || ts.head_at.is_none_or(|at| now - at < QUIET) {
                 continue;
             }
+            // Rebase goes first: a PR that conflicts, or has a Rebase queued
+            // or running, is offered nothing until it is done
+            let rebasing = self.active.lock().unwrap().get(&ticket) == Some(&Some(REBASE.name));
+            let queued = self.commands().contains(&format!("rebase-{ticket}"));
+            if pr.mergeable == "CONFLICTING" || rebasing || queued {
+                continue;
+            }
             // what is no longer open leaves the set, so it is offered
             // again if it comes back
             let items = pr.items();
@@ -499,13 +544,16 @@ impl Orchestrator {
     }
 
     /// Runs Rebase for a Ticket whose open PR the last poll saw conflict
-    /// with main, on the user's command only.
+    /// with main, on the user's command or, with rebase_auto, the poll's.
     fn rebase(&self, ticket: &str) {
         let ts = self.ticket(ticket);
         if ts.status != STATUS_PR_OPEN {
             return self.report(ticket, "rebase refused: no open PR");
         }
         if !ts.conflicting {
+            // a conflict the poll sees next is a new one: said, and with
+            // rebase_auto rebased, again
+            self.update(ticket, |ts| ts.conflict = false);
             let text = format!("refused: {} does not conflict with main", pr_ref(&ts.pr));
             return self.report(ticket, &text);
         }
@@ -543,9 +591,9 @@ impl Orchestrator {
     /// "<done> PR #n".
     fn on_pr(&self, ticket: &str, st: &Stage, inputs: &[(&str, &str)], done: &str) {
         let _ = fs::remove_file(self.run_dir(ticket).join(result_name(st, 0)));
-        self.update(ticket, |ts| {
-            ts.sessions.remove(st.name);
-        });
+        // a new Stage to run_stage: an earlier session, a parked one's pane
+        // still open, is dropped, not watched
+        self.update(ticket, |ts| ts.stage.clear());
         let result = self.run_stage(ticket, st, 0, inputs, ResultRequirements::default());
         if self.stopping() {
             return;
@@ -572,8 +620,8 @@ impl Orchestrator {
     }
 }
 
-/// A Ticket's place in the Pipeline, given back when its thread ends, also
-/// by a panic.
+/// A Ticket's place in the Pipeline, or its PR session's, given back when
+/// its thread ends, also by a panic.
 struct Slot {
     o: Arc<Orchestrator>,
     ticket: String,

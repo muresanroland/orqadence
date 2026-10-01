@@ -1,7 +1,7 @@
 //! The Orchestrator and its Config, the Stage table and the Stage loop: one
 //! Stage run to its completion rule, with the Wake hold when it cannot advance.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -64,8 +64,9 @@ pub(crate) const FIX: Stage = stage("fix", "orqa-stage-fix", 60);
 /// The Round number of the steps after the last Round, when an Extra review
 /// runs before the PR: its files and labels say "final".
 pub(crate) const FINAL: usize = MAX_ROUNDS + 1;
-/// Rebase and Address PR comments: outside the Pipeline, each on its
-/// Ticket's open PR in the kept worktree, on the user's command.
+/// Rebase and Address PR comments, the PR sessions: outside the Pipeline,
+/// each on its Ticket's open PR in the kept worktree, on the user's command
+/// or, Rebase with rebase_auto, by itself.
 pub(crate) const REBASE: Stage = stage("rebase", "orqa-stage-rebase", 60);
 pub(crate) const ADDRESS_PR_COMMENTS: Stage =
     stage("address-pr-comments", "orqa-stage-address-pr-comments", 60);
@@ -270,8 +271,9 @@ pub(crate) struct Orchestrator {
     pub(crate) commands: Mutex<Vec<String>>,
     /// Answers to Questions, each for one session: (ticket, pane, answer).
     pub(crate) answers: Mutex<Vec<(String, String, Answer)>>,
-    /// The Tickets running on a thread of this process.
-    pub(crate) active: Mutex<BTreeSet<String>>,
+    /// The Tickets running on a thread of this process, each with the PR
+    /// Stage it runs, None for its Pipeline.
+    pub(crate) active: Mutex<BTreeMap<String, Option<&'static str>>>,
     /// The Review limit Questions out, by App, each asked by a Ticket
     /// still holding for its answer: that Ticket, the text and the Ask.
     pub(super) asked: Mutex<BTreeMap<String, (String, String, Ask)>>,
@@ -317,7 +319,7 @@ impl Orchestrator {
             done: AtomicBool::new(false),
             commands: Mutex::new(Vec::new()),
             answers: Mutex::new(Vec::new()),
-            active: Mutex::new(BTreeSet::new()),
+            active: Mutex::new(BTreeMap::new()),
             asked: Mutex::new(BTreeMap::new()),
             deadlines: Mutex::new(BTreeMap::new()),
             plans: Mutex::new(BTreeMap::new()),

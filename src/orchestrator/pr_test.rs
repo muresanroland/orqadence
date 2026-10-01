@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use super::pr::{Item, Pr};
-use super::stage::Orchestrator;
+use super::stage::{Orchestrator, REBASE};
 use super::state::STATUS_PR_OPEN;
 use super::world::{new_world, set_clock, BdTicket, World};
 
@@ -478,4 +478,30 @@ fn a_greptile_context_only_on_an_earlier_commit_does_not_hold_it() {
     pr["statusCheckRollup"] = Value::Null; // no context on b at all
     serve(&w, &pr);
     assert!(poll(&o).is_some());
+}
+
+/// Rebase goes before PR comments: a quiet head is offered nothing while
+/// its PR conflicts, or has a Rebase queued or running, and its items wait.
+#[test]
+fn a_conflicting_pr_or_one_with_a_rebase_queued_or_running_is_offered_nothing() {
+    let (w, o, clock) = polled();
+    let mut pr = open(PR65, "a");
+    thread(&mut pr, 0)["isResolved"] = json!(false);
+    pr["mergeable"] = json!("CONFLICTING");
+    serve(&w, &pr);
+    poll(&o);
+    later(&clock, 60);
+    assert_eq!(poll(&o), None, "conflicting");
+
+    pr["mergeable"] = json!("MERGEABLE");
+    serve(&w, &pr);
+    o.command("rebase-hx-1");
+    assert_eq!(poll(&o), None, "a Rebase queued");
+    o.consume("rebase-hx-1");
+    let active = || o.active.lock().unwrap();
+    active().insert("hx-1".to_string(), Some(REBASE.name));
+    assert_eq!(poll(&o), None, "a Rebase running");
+    active().clear();
+    let id = "PRRT_kwDOUiwtFs6meF8y".to_string();
+    assert_eq!(poll(&o), Some(vec![id]), "offered once the Rebase is done");
 }
