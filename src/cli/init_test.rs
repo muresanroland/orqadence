@@ -1041,14 +1041,21 @@ fn a_rerun_of_init_keeps_a_switch_that_is_on() {
 const RELEASE_QUESTION: &str = "Turn on releases (the orqa:release label)?";
 
 /// After the two switches init asks the Release's, default yes: enter alone
-/// turns it on, n off, and nobody answering turns it on where config.json
-/// has no value yet, and keeps the one it has.
+/// turns it on, even over a saved off, n off, and nobody answering turns it
+/// on where config.json has no value yet, and keeps the one it has.
 #[test]
 fn init_asks_the_release_switch_and_enter_is_yes() {
     // (the answers after the docs/agents setup, TypeSafe no, the labels and
     // both switches)
-    for (key, want) in [("\n", true), ("n\n", false)] {
+    for (key, saved, want) in [
+        ("\n", None, true),
+        ("\n", Some(false), true),
+        ("n\n", None, false),
+    ] {
         let (repo, home) = (bare_repo(), TempDir::new());
+        if let Some(saved) = saved {
+            app::set_switch(repo.path(), &app::RELEASE_ON, saved).unwrap();
+        }
         let keys = ["\n", "n\n", "\n", "\n", "\n", key];
         let (code, out) = init_keys(repo.path(), home.path(), &keys);
         assert_eq!(code, 0, "{key:?}:\n{out}");

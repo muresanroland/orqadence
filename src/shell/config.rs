@@ -1109,7 +1109,7 @@ impl Settings {
                 job_name(j)
             ),
             Field::Skills | Field::Template | Field::ExtraSkill => return self.labels_note(),
-            Field::Switch(switch) if *switch == RELEASE_ON => "Enter or Space turns it on or off, saved at once, uncommitted; on, orqa:release on an Epic, or on any Ticket of a Ticket run, ends the run in a Release; off, the label is ignored.",
+            Field::Switch(switch) if *switch == RELEASE_ON => "Enter or Space turns it on or off, saved at once, uncommitted.",
             Field::Switch(_) => "Enter or Space turns it on or off, saved at once, uncommitted; off, the poll only says it in a line and the command still works by hand.",
             Field::Number(n) => return number_note(n),
             Field::App => "Changing the App leads into its model list; the pair saves together.",

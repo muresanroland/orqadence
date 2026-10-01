@@ -2222,6 +2222,19 @@ fn the_on_call_page_renders_its_three_rows_and_the_doc_url() {
     }
 }
 
+/// A short terminal drops the PIPELINE's connectors so the left's last
+/// lines, Run and On call, still show.
+#[test]
+fn a_short_terminal_shows_every_line_on_the_left() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    type_line(&mut s, "/config");
+    let buf = render(&s, 160, 24);
+    for text in ["Run", "On call   off"] {
+        assert!(find(&buf, text).is_some(), "{text:?}: {:#?}", rows(&buf));
+    }
+}
+
 /// A typed token is shown as dots, saved at once, and the Screen's settings
 /// read it; an empty entry clears it: On call off.
 #[test]

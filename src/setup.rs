@@ -398,10 +398,9 @@ fn ask_switches(
     Ok(())
 }
 
-/// Releases (the orqa:release label), a yes/no kept in config.json, its
-/// default the switch as it is, yes while unset: enter alone turns it on on
-/// a first init, and nobody answering turns it on only there; a re-run
-/// keeps a switch already set.
+/// Releases (the orqa:release label), a yes/no kept in config.json, default
+/// yes: enter alone turns it on, and nobody answering turns it on only while
+/// unset; a re-run nobody answers keeps a switch already set.
 fn ask_release(
     repo: &Path,
     out: &mut dyn Write,
@@ -411,7 +410,7 @@ fn ask_release(
     step(out, named("RELEASES"))?;
     let (_, doc) = app::read(repo).map_err(io::Error::other)?;
     let on = doc[app::RELEASE_ON.key].is_null() || app::switch_in(&doc, &app::RELEASE_ON);
-    let on = yes(out, input, tty, app::RELEASE_ON.question, on)?.unwrap_or(on);
+    let on = yes(out, input, tty, app::RELEASE_ON.question, true)?.unwrap_or(on);
     app::set_switch(repo, &app::RELEASE_ON, on).map_err(io::Error::other)
 }
 
