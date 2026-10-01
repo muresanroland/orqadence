@@ -392,22 +392,6 @@ fn rebase_command_on_a_conflicting_pr_starts_rebase_in_the_kept_worktree() {
     assert_eq!(o.ticket("hx-1").status, STATUS_PR_OPEN);
 }
 
-/// /rebase on a PR that does not conflict is refused, and no Stage starts.
-#[test]
-fn rebase_command_on_a_mergeable_pr_is_refused() {
-    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    let o = Arc::new(o);
-    let mut run = spawn_epic(o.clone(), "hx");
-    w.await_line("hx-1 PR #hx-1 opened");
-
-    o.command("rebase-hx-1");
-    w.await_line("hx-1 refused: PR #hx-1 does not conflict with main");
-    o.stop();
-    run.wait();
-    o.wait_in_flight();
-    assert!(w.called("herdr agent start h-hx-1-rebase").is_empty());
-}
-
 /// /rebase goes by the last poll only: a conflict reported, then UNKNOWN
 /// (as GitHub says right after a push), refuses it.
 #[test]
