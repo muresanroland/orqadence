@@ -550,13 +550,22 @@ impl Orchestrator {
                 .unwrap()
                 .get(&ticket)
                 .is_some_and(Option::is_some);
-            let approved = self.approved.lock().unwrap().contains_key(&ticket);
-            let settled = fresh.as_ref().is_some_and(Vec::is_empty) && !pr_stage && !approved;
+            // decided and written under the approved lock, which an approval
+            // takes before it clears settled: a stale true never lands after
+            let approved = self.approved.lock().unwrap();
+            let settled = fresh.as_ref().is_some_and(Vec::is_empty)
+                && !pr_stage
+                && !approved.contains_key(&ticket);
+            let mut flipped = false;
             if settled != ts.settled {
-                self.update(&ticket, |ts| ts.settled = settled);
-                if settled {
-                    self.wait_dependents(&ticket, &ts.pr);
-                }
+                self.update(&ticket, |ts| {
+                    flipped = settled && !ts.settled;
+                    ts.settled = settled;
+                });
+            }
+            drop(approved);
+            if flipped {
+                self.wait_dependents(&ticket, &ts.pr);
             }
             quiet.extend(fresh.map(|items| (ticket, items)));
         }
