@@ -42,6 +42,10 @@ pub(crate) const SKILLS: &[(&str, &str)] = &[
         include_str!("../skills/orqa-stage-rebase/SKILL.md"),
     ),
     (
+        "orqa-stage-release",
+        include_str!("../skills/orqa-stage-release/SKILL.md"),
+    ),
+    (
         "orqa-stage-review",
         include_str!("../skills/orqa-stage-review/SKILL.md"),
     ),

@@ -101,7 +101,7 @@ pub(super) enum Held {
     /// The Stage asked while the user was Away: parked, its session left
     /// waiting in its pane.
     Away,
-    Done(StageResult),
+    Done(Box<StageResult>),
     Stopped,
     /// The Stage cannot advance, for this reason: a Wake.
     Woke(String),
@@ -745,7 +745,7 @@ impl Orchestrator {
                     return Err(StageError::Stopped);
                 }
                 let (reason, at_limit) = match held {
-                    Held::Done(result) => return Ok(result),
+                    Held::Done(result) => return Ok(*result),
                     Held::Stopped => return Err(StageError::Stopped),
                     Held::Park => return Err(StageError::Parked(format!("by you at {label}"))),
                     Held::Away => return Err(StageError::Parked(AWAY.to_string())),
@@ -1111,7 +1111,7 @@ impl Orchestrator {
                 Some("idle" | "done") => {
                     let (result, reason) = read_stage_result(file, want);
                     if reason.is_empty() {
-                        return Held::Done(result);
+                        return Held::Done(Box::new(result));
                     }
                     if Instant::now() > settled {
                         return Held::Woke(reason);
@@ -1653,7 +1653,7 @@ impl Orchestrator {
             let status = self.watch(ticket, st, pane);
             let (result, reason) = read_stage_result(file, want);
             if reason.is_empty() && matches!(status.as_deref(), None | Some("idle" | "done")) {
-                return Held::Done(result);
+                return Held::Done(Box::new(result));
             }
             if let Some((settled, waiting)) = armed {
                 let now = Instant::now();
