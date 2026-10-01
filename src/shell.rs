@@ -733,9 +733,13 @@ impl Screen {
             && ids.iter().any(|id| status(id) != STATUS_PARKED)
     }
 
-    /// Whether the run ends in a Release, read on the bd cache: releases on,
-    /// and orqa:release on its Epic, or on any Ticket of a Ticket run.
+    /// Whether the run ends in a Release: one already started, as
+    /// release_due resumes it; else, read on the bd cache, releases on and
+    /// orqa:release on its Epic, or on any Ticket of a Ticket run.
     fn ends_in_release(&self) -> bool {
+        if self.state.release.is_some() {
+            return true;
+        }
         let labelled = match self.saved() {
             Some(epic) => release::carries(&epic.labels),
             None => (self.state.queue.iter())

@@ -6006,6 +6006,53 @@ fn only_a_run_ending_in_a_release_holds_its_summary_when_every_pr_is_open() {
     }
 }
 
+/// A Release already started holds the summary back on /continue though
+/// releases are off now and orqa:release gone, as the Release goes on.
+#[test]
+fn a_resumed_release_holds_the_summary_with_releases_off_and_no_label() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
+    let open = r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#.to_string();
+    w.lock().prs.insert(VERSION_PR.to_string(), open);
+    let merged = TicketState {
+        status: STATUS_MERGED.to_string(),
+        pr: "https://example.test/pr/hx-1".to_string(),
+        ..Default::default()
+    };
+    let release = Release {
+        id: "release-hx".to_string(),
+        version: "v1.5.0".to_string(),
+        ts: TicketState {
+            status: STATUS_RUNNING.to_string(),
+            stage: "release".to_string(),
+            pr: VERSION_PR.to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    State {
+        epic: "hx".to_string(),
+        queue: vec!["hx-1".to_string()],
+        tickets: [("hx-1".to_string(), merged)].into(),
+        release: Some(Box::new(release)),
+        ..Default::default()
+    }
+    .save(&w.repo)
+    .unwrap();
+    let mut s = shell(&w);
+    s.command("/continue");
+    if s.run.is_none() {
+        s.key(key(KeyCode::Enter)); // the checklist of saved Tickets
+    }
+    assert!(s.running, "/continue did not start: {:?}", s.notice);
+    for _ in 0..20 {
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(s.summary.is_none(), "opened while the version PR waits");
+    s.command("/stop-work");
+    await_end(&mut s);
+}
+
 /// A Ticket added to the Epic mid-run holds the summary back until it has
 /// its PR too: bd is read again before the summary opens by itself.
 #[test]
