@@ -821,6 +821,8 @@ pub(crate) struct Label {
     /// A file name; empty is the default template.
     pub(crate) pr_template: String,
     pub(crate) extra_review: ExtraReview,
+    /// A human merges its Tickets' PRs: the Orchestrator never does.
+    pub(crate) human_merge: bool,
 }
 
 /// The Extra review a label adds: none while its skill is empty.
@@ -1011,15 +1013,34 @@ impl Clash {
     }
 }
 
+/// The built-in Modifier label orqa:human-merge, by name: known with no
+/// entry in config.json's labels, and an entry under its name is not read.
+pub(crate) const HUMAN_MERGE: &str = "human-merge";
+
+/// The label under name as a Ticket carries it: its entry in doc, or why
+/// it cannot be read; None with no entry. orqa:human-merge is the built-in
+/// Modifier, which sets no row.
+fn known(doc: &Value, name: &str) -> Option<Result<Label, String>> {
+    if name == HUMAN_MERGE {
+        return Some(Ok(Label {
+            kind: "modifier".to_string(),
+            human_merge: true,
+            ..Default::default()
+        }));
+    }
+    match &doc["labels"][name] {
+        Value::Null => None,
+        value => Some(entry(name, value)),
+    }
+}
+
 /// The Ticket's labels' entries in doc, by name, the Area's first: a label
 /// with no entry is refused.
 fn entries(doc: &Value, names: &[String]) -> Result<Vec<(String, Label)>, String> {
     let mut picked = Vec::new();
     for name in names {
-        let label = match &doc["labels"][name.as_str()] {
-            Value::Null => Err(format!("orqa:{name} has no entry in config.json's labels")),
-            value => entry(name, value),
-        }?;
+        let label = known(doc, name)
+            .unwrap_or_else(|| Err(format!("orqa:{name} has no entry in config.json's labels")))?;
         picked.push((name.clone(), label));
     }
     // The Area's first, so a Modifier's field wins.
@@ -1033,17 +1054,26 @@ pub(crate) fn ticket_labels(repo: &Path, names: &[String]) -> Result<Vec<(String
     entries(&read(repo)?.1, names)
 }
 
+/// Whether a Ticket with these labels, by name, is human-merge: it carries
+/// orqa:human-merge, or a label whose entry in doc says human_merge. The
+/// entry is read raw, so one broken elsewhere still counts.
+#[allow(dead_code)] // harness-72t.3 sets the PR's label from it
+pub(crate) fn human_merge(doc: &Value, names: &[String]) -> bool {
+    names
+        .iter()
+        .any(|name| name == HUMAN_MERGE || doc["labels"][name.as_str()]["human_merge"] == true)
+}
+
 /// The first clash among the Ticket's labels, by name: an entry missing,
 /// then two Areas, then two Modifiers on one field. None for a clean set,
 /// and for an entry that cannot be read: that is the row's to refuse.
 pub(crate) fn clash(doc: &Value, names: &[String]) -> Option<Clash> {
     let mut picked = Vec::new();
     for name in names {
-        let label = match &doc["labels"][name.as_str()] {
-            Value::Null => return Some(Clash::Unknown(format!("orqa:{name}"))),
-            value => entry(name, value).ok()?,
+        let Some(label) = known(doc, name) else {
+            return Some(Clash::Unknown(format!("orqa:{name}")));
         };
-        picked.push((name, label));
+        picked.push((name, label.ok()?));
     }
     let areas: Vec<String> = picked
         .iter()

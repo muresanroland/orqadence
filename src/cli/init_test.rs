@@ -1274,6 +1274,13 @@ fn init_lists_the_shipped_labels_checked_and_writes_all_seven_unanswered() {
         assert_eq!(installed, sources, "{name}");
     }
     assert_eq!(labels.len(), shipped.len());
+    // a human merges these three's PRs, and no other's
+    let human: Vec<&str> = labels
+        .iter()
+        .filter(|(_, label)| label.human_merge)
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(human, ["db", "infra", "security"]);
     for (name, said) in [
         ("fe", "screenshots of every changed screen"),
         ("be", "status codes"),

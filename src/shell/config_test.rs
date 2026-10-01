@@ -2799,6 +2799,25 @@ fn a_name_that_is_not_a_valid_label_is_refused() {
     );
 }
 
+/// orqa:human-merge is built in: /config adds no label of that name.
+#[test]
+fn the_built_in_human_merge_label_is_refused_as_a_new_labels_name() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), LABELS);
+    let mut s = labels_page(clones(), repo.path());
+    s.key(key(KeyCode::Char('a')));
+    type_in(&mut s, "orqa:human-merge");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        note(&s),
+        "Refused: orqa:human-merge is built in. Nothing changed."
+    );
+    assert_eq!(
+        config_json(repo.path()),
+        serde_json::from_str::<Value>(LABELS).unwrap()
+    );
+}
+
 /// A label added to config.json since /config opened clashes as well: the
 /// fresh read refuses it, the entry already there kept whole.
 #[test]
@@ -3136,6 +3155,37 @@ fn an_extra_review_takes_a_skill_and_its_own_row() {
     );
 }
 
+/// Space or Enter on "A human merges these Tickets' PRs" turns a label's
+/// human_merge on and off again, a Modifier's too; each saves at once, the
+/// rest of the entry as it was.
+#[test]
+fn a_label_saves_whether_a_human_merges_its_tickets_prs() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), EXTRA);
+    let mut s = open_label(clones(), repo.path());
+    goto(&mut s, LabelItem::HumanMerge);
+    s.key(key(KeyCode::Char(' ')));
+    assert_eq!(
+        config_json(repo.path())["labels"]["codex-review"],
+        json!({"kind": "modifier", "human_merge": true})
+    );
+    assert_eq!(
+        note(&s),
+        "a human merges orqa:codex-review Tickets' PRs, saved uncommitted in .orqadence/config.json"
+    );
+    let shown = |s: &Screen, row: &str| {
+        let buf = render(s, 160, 45);
+        assert!(find(&buf, row).is_some(), "{:#?}", rows(&buf));
+    };
+    shown(&s, "▸ [x] A human merges these Tickets' PRs");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        config_json(repo.path())["labels"]["codex-review"]["human_merge"],
+        json!(false)
+    );
+    shown(&s, "▸ [ ] A human merges these Tickets' PRs");
+}
+
 /// A Modifier only changes rows: its page offers no Extra review.
 #[test]
 fn a_modifier_offers_no_extra_review() {
@@ -3342,7 +3392,7 @@ fn a_labels_page_renders_its_extra_review_and_rows() {
               "rows": {"fix": {"effort": "high"}}}}}"#,
     );
     let mut s = open_label(clones(), repo.path());
-    let page = pane(&s, 24);
+    let page = pane(&s, 25);
     assert_eq!(
         page,
         [
@@ -3352,6 +3402,7 @@ fn a_labels_page_renders_its_extra_review_and_rows() {
             "  skills      none",
             "  guidance    none",
             "  PR template security.md  not found: the default is used",
+            "  [ ] A human merges these Tickets' PRs",
             "",
             "EXTRA REVIEW",
             "  skill       orqa-security-review",
