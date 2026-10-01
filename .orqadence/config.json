@@ -3,9 +3,18 @@
     "effort": "high",
     "model": "opus"
   },
+  "address_pr_comments": {
+    "effort": "high",
+    "model": "opus"
+  },
   "fix": {
     "effort": "high",
     "model": "opus"
+  },
+  "labels": {
+    "frontend": {
+      "kind": "area"
+    }
   },
   "max_tickets": 4,
   "moderator": {
@@ -13,6 +22,10 @@
     "model": "opus"
   },
   "plan_floor": 0.7,
+  "rebase": {
+    "effort": "high",
+    "model": "opus"
+  },
   "review": {
     "effort": "high",
     "model": "gpt-6.1-sol"
