@@ -980,7 +980,7 @@ fn the_moderator_is_told_which_side_is_limited() {
     write_file(&o.run_dir("hx-1").join("implement.md"), "STATUS: done\n");
     write_file(
         &o.run_dir("hx-1").join("review-1.md"),
-        "STATUS: done\n\n## Findings\n",
+        "STATUS: done\n\n## Findings\n\n- (low) a.rs:1 — a nit\n",
     );
     o.run_ticket("hx-1");
 

@@ -66,8 +66,10 @@ fn an_area_labels_extra_review_runs_after_the_review_each_round_on_its_row() {
         &w,
         json!({"app": "claude", "model": "opus", "effort": "high"}),
     );
-    // its Finding fixed in Round 1, so a second Round runs, skipped in Round 2
+    // its Finding fixed in Round 1, so a second Round runs, skipped in Round
+    // 2; the Review finds nothing, so the Debate is the Extra review's alone
     w.session(|p| match (p.stage.as_str(), p.round) {
+        ("review", _) => ("STATUS: done\n".to_string(), "idle".to_string()),
         ("extra-review", _) => (FOUND.to_string(), "idle".to_string()),
         ("verdict", 1) => (FIX.to_string(), "idle".to_string()),
         ("verdict", _) => (SKIP.to_string(), "idle".to_string()),
@@ -547,7 +549,7 @@ fn with_debate_off_the_findings_reach_the_fix_not_debated_and_keep_the_rounds_go
             .contains("- Extra review file:"));
     }
     assert!(w.prompt("fix-3.md").contains("- Open PR: yes\n"));
-    w.await_line("hx-1 debate 1 settled: 0 to fix, 0 skipped");
+    w.await_line("hx-1 debate 1 settled: 0 to fix, 1 skipped");
 }
 
 /// The Questions the Orchestrator put about a limit on the Review.
