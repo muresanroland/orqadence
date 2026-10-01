@@ -664,7 +664,7 @@ fn hint(st: &Settings) -> &'static str {
 }
 
 /// The left: PIPELINE, each section with its summary joined by │ where
-/// there is room, a rule, then the lines whose pages come later.
+/// every line fits, a rule, then the lines whose pages come later.
 fn pipeline(s: &Screen, st: &Settings, height: u16, width: usize) -> Vec<Line<'static>> {
     let row = |name: &str, summary: String, mark: bool, selected: bool| {
         let (name_style, bg) = match (selected, st.open) {
@@ -688,7 +688,7 @@ fn pipeline(s: &Screen, st: &Settings, height: u16, width: usize) -> Vec<Line<'s
     };
     let mut lines = vec![Line::from(Span::styled("PIPELINE", bold(MUTED)))];
     for (i, (_, short, _)) in SECTIONS.iter().enumerate() {
-        if i > 0 && height >= 17 {
+        if i > 0 && height as usize >= SECTIONS.len() * 2 + 7 {
             lines.push(Line::from(Span::styled("  │", fg(BORDER))));
         }
         lines.push(row(

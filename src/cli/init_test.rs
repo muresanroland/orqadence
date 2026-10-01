@@ -732,15 +732,15 @@ codex: outdated (v7) (/h/.codex/herdr-agent-state.sh)
             .filter(|c| c.starts_with("herdr integration install"))
             .collect()
     };
-    // The docs/agents setup, TypeSafe no, the labels, both switches no, On
-    // call no, then the integrations: yes.
+    // The docs/agents setup, TypeSafe no, the labels, both switches no, the
+    // Release's yes, On call no, then the integrations: yes.
     let (repo, home) = (bare_repo(), TempDir::new());
     let tools = herdr(true);
     let (_, out) = init_with(
         repo.path(),
         home.path(),
         tools.clone(),
-        &["\n", "n\n", "\n", "\n", "\n", "\n", "\n"],
+        &["\n", "n\n", "\n", "\n", "\n", "\n", "\n", "\n"],
         "",
     );
     assert_eq!(
@@ -907,10 +907,10 @@ fn on_call(repo: &Path) -> Option<serde_json::Value> {
 /// readable only by you; enter alone, or nobody answering, keeps none.
 #[test]
 fn init_asks_on_call_and_keeps_the_moshi_token_readable_only_by_you() {
-    // The docs/agents setup, TypeSafe no, the labels, both switches no, On
-    // call yes, the token.
+    // The docs/agents setup, TypeSafe no, the labels, both switches no, the
+    // Release's yes, On call yes, the token.
     let (repo, home) = (bare_repo(), TempDir::new());
-    let keys = ["\n", "n\n", "\n", "\n", "\n", "y\n", "moshi-tok\n"];
+    let keys = ["\n", "n\n", "\n", "\n", "\n", "\n", "y\n", "moshi-tok\n"];
     let (code, out) = init_keys(repo.path(), home.path(), &keys);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains(ON_CALL) && out.contains("› 2. No"), "{out}");
@@ -931,7 +931,7 @@ fn init_asks_on_call_and_keeps_the_moshi_token_readable_only_by_you() {
     );
 
     // Enter alone is no; nobody answering changes nothing.
-    for keys in [&["\n", "n\n", "\n", "\n", "\n", "\n"][..], &[][..]] {
+    for keys in [&["\n", "n\n", "\n", "\n", "\n", "\n", "\n"][..], &[][..]] {
         let (repo, home) = (bare_repo(), TempDir::new());
         let (code, out) = init_keys(repo.path(), home.path(), keys);
         assert_eq!(code, 0, "{out}");
@@ -1038,6 +1038,46 @@ fn a_rerun_of_init_keeps_a_switch_that_is_on() {
     assert_eq!(switches(repo.path()), (true, true), "{out}");
 }
 
+const RELEASE_QUESTION: &str = "Turn on releases (the orqa:release label)?";
+
+/// After the two switches init asks the Release's, default yes: enter alone
+/// turns it on, even over a saved off, n off, and nobody answering turns it
+/// on where config.json has no value yet, and keeps the one it has.
+#[test]
+fn init_asks_the_release_switch_and_enter_is_yes() {
+    // (the answers after the docs/agents setup, TypeSafe no, the labels and
+    // both switches)
+    for (key, saved, want) in [
+        ("\n", None, true),
+        ("\n", Some(false), true),
+        ("n\n", None, false),
+    ] {
+        let (repo, home) = (bare_repo(), TempDir::new());
+        if let Some(saved) = saved {
+            app::set_switch(repo.path(), &app::RELEASE_ON, saved).unwrap();
+        }
+        let keys = ["\n", "n\n", "\n", "\n", "\n", key];
+        let (code, out) = init_keys(repo.path(), home.path(), &keys);
+        assert_eq!(code, 0, "{key:?}:\n{out}");
+        assert!(out.contains(RELEASE_QUESTION), "{out}");
+        assert_eq!(
+            app::switch(repo.path(), &app::RELEASE_ON),
+            want,
+            "{key:?}:\n{out}"
+        );
+    }
+    let repo = bare_repo();
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains(RELEASE_QUESTION), "{out}");
+    assert!(app::switch(repo.path(), &app::RELEASE_ON), "{out}");
+
+    app::set_switch(repo.path(), &app::RELEASE_ON, false).unwrap();
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "{out}");
+    assert!(!app::switch(repo.path(), &app::RELEASE_ON), "{out}");
+}
+
 /// The switches are team settings: a checkout whose settings are committed
 /// is not asked them.
 #[test]
@@ -1048,7 +1088,9 @@ fn a_committed_checkout_is_not_asked_the_switches() {
     let (_, out) = init_with(repo.path(), home.path(), committed_tools(), &["\n"], "");
     assert!(out.contains(COMMITTED), "{out}");
     assert!(
-        !out.contains(REBASE_QUESTION) && !out.contains(ADDRESS_PR_COMMENTS_QUESTION),
+        !out.contains(REBASE_QUESTION)
+            && !out.contains(ADDRESS_PR_COMMENTS_QUESTION)
+            && !out.contains(RELEASE_QUESTION),
         "{out}"
     );
     assert_eq!(read(repo.path(), ".orqadence/config.json"), config);
