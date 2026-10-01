@@ -2,7 +2,10 @@
 //! lists, the probe, and a change saved during a run.
 
 use super::brand::{PURPLE, RED};
-use super::config::{put, Field, LabelItem};
+use super::config::{
+    put, Field, LabelItem, APPS_PAGE, LABELS_PAGE, ON_CALL_PAGE, RUN_PAGE, SKILLS_PAGE,
+    TYPESAFE_PAGE,
+};
 use super::shell_test::{
     asking, await_line, cols, find, key, logged, notice_modal, render, row, rows, screen_at, shell,
     type_in, type_line,
@@ -381,7 +384,7 @@ fn the_pipeline_list_a_stage_page_and_a_pick_list_render() {
     );
     let text =
         |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
-    let left: Vec<String> = (1..17).map(|y| text(&buf, y, 69, 97)).collect();
+    let left: Vec<String> = (1..19).map(|y| text(&buf, y, 69, 97)).collect();
     assert_eq!(
         left,
         [
@@ -394,7 +397,9 @@ fn the_pipeline_list_a_stage_page_and_a_pick_list_render() {
             "  │",
             "  Fix       claude",
             "  │",
-            "  Address   claude",
+            "  Rebase    claude",
+            "  │",
+            "  Comments  claude",
             "────────────────────────────",
             "  Apps      6 of 6 installed",
             "  Skills    0 installed",
@@ -1041,11 +1046,11 @@ fn the_apps_page_renders_each_app_installed_or_not() {
     let repo = TempDir::new();
     let mut s = screen_at(codex_missing(), repo.path());
     type_line(&mut s, "/config");
-    keys(&mut s, &[KeyCode::Down; 5]);
+    keys(&mut s, &[KeyCode::Down; APPS_PAGE]);
     let text =
         |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
     let buf = render(&s, 160, 45);
-    assert_eq!(text(&buf, 12, 69, 97), "▸ Apps      4 of 6 installed");
+    assert_eq!(text(&buf, 14, 69, 97), "▸ Apps      4 of 6 installed");
     s.key(key(KeyCode::Enter));
     let buf = render(&s, 160, 45);
     let right: Vec<String> = (1..15).map(|y| text(&buf, y, 99, 158)).collect();
@@ -1100,11 +1105,9 @@ fn an_app_not_installed_says_where_to_get_it() {
     assert_eq!(tools.calls().len(), calls, "{:#?}", tools.calls());
 
     // From the Apps page.
-    keys(
-        &mut s,
-        &[KeyCode::Left, KeyCode::Down, KeyCode::Down, KeyCode::Down],
-    );
-    keys(&mut s, &[KeyCode::Down, KeyCode::Enter, KeyCode::Down]);
+    s.key(key(KeyCode::Left));
+    keys(&mut s, &[KeyCode::Down; APPS_PAGE - 1]);
+    keys(&mut s, &[KeyCode::Enter, KeyCode::Down]);
     let buf = render(&s, 160, 45);
     assert!(find(&buf, where_).is_some(), "{:#?}", rows(&buf));
     assert_eq!(tools.calls().len(), calls, "{:#?}", tools.calls());
@@ -1244,7 +1247,7 @@ fn manifest(repo: &Path) -> Manifest {
 fn skills_page(tools: Arc<Fake>, repo: &Path) -> Screen {
     let mut s = screen_at(tools, repo);
     type_line(&mut s, "/config");
-    keys(&mut s, &[KeyCode::Down; 6]);
+    keys(&mut s, &[KeyCode::Down; SKILLS_PAGE]);
     s.key(key(KeyCode::Enter));
     s
 }
@@ -1472,7 +1475,7 @@ fn the_skills_page_renders_the_location_and_each_skill() {
     let text =
         |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
     let buf = render(&s, 160, 45);
-    assert_eq!(text(&buf, 13, 69, 97), "▸ Skills    1 installed");
+    assert_eq!(text(&buf, 15, 69, 97), "▸ Skills    1 installed");
     let right: Vec<String> = (1..14).map(|y| text(&buf, y, 99, 158)).collect();
     assert_eq!(
         right,
@@ -1522,7 +1525,7 @@ fn the_skills_page_turns_your_personal_skills_on_and_off() {
     let mut s = screen_at(tools.clone(), repo.path());
     s.cfg.home = home.path().to_path_buf();
     type_line(&mut s, "/config");
-    keys(&mut s, &[KeyCode::Down; 6]);
+    keys(&mut s, &[KeyCode::Down; SKILLS_PAGE]);
     s.key(key(KeyCode::Enter));
     let seen = |s: &Screen| {
         s.settings
@@ -1556,7 +1559,7 @@ fn the_skills_page_turns_your_personal_skills_on_and_off() {
 /// /config open on the TypeSafe page.
 fn typesafe_page(s: &mut Screen) {
     type_line(s, "/config");
-    keys(s, &[KeyCode::Down; 8]);
+    keys(s, &[KeyCode::Down; TYPESAFE_PAGE]);
     s.key(key(KeyCode::Enter));
 }
 
@@ -1730,7 +1733,7 @@ fn a_floor_that_is_not_a_number_from_0_to_1_is_flagged() {
     assert!(row(&buf, 0).contains("━ ✗ 1 check ┓"), "{:?}", row(&buf, 0));
     assert!(find(&buf, "TypeSafe  on ✗").is_some(), "{:#?}", rows(&buf));
 
-    keys(&mut s, &[KeyCode::Down; 8]);
+    keys(&mut s, &[KeyCode::Down; TYPESAFE_PAGE]);
     s.key(key(KeyCode::Enter));
     let buf = render(&s, 160, 45);
     let (x, y) = find(&buf, "\"high\"").unwrap_or_else(|| panic!("{:#?}", rows(&buf)));
@@ -1755,7 +1758,7 @@ fn the_run_page_keeps_the_tickets_a_run_takes_at_once() {
     let repo = TempDir::new();
     let mut s = screen_at(apps(""), repo.path());
     type_line(&mut s, "/config");
-    keys(&mut s, &[KeyCode::Down; 9]);
+    keys(&mut s, &[KeyCode::Down; RUN_PAGE]);
     s.key(key(KeyCode::Enter));
     let buf = render(&s, 160, 45);
     assert!(
@@ -1805,7 +1808,7 @@ fn the_run_page_keeps_the_tickets_a_run_takes_at_once() {
         "{:#?}",
         rows(&buf)
     );
-    keys(&mut s, &[KeyCode::Down; 9]);
+    keys(&mut s, &[KeyCode::Down; RUN_PAGE]);
     let buf = render(&s, 160, 45);
     let (x, y) =
         find(&buf, "tickets at once       \"lots\"").unwrap_or_else(|| panic!("{:#?}", rows(&buf)));
@@ -1906,7 +1909,7 @@ fn a_garbled_manifest_opens_config_and_refuses_a_pick() {
 /// /config open on the On call page.
 fn on_call_page(s: &mut Screen) {
     type_line(s, "/config");
-    keys(s, &[KeyCode::Down; 10]);
+    keys(s, &[KeyCode::Down; ON_CALL_PAGE]);
     s.key(key(KeyCode::Enter));
 }
 
@@ -2086,7 +2089,7 @@ const LABELS: &str = r#"{"labels": {
 fn labels_page(tools: Arc<Fake>, repo: &Path) -> Screen {
     let mut s = screen_at(tools, repo);
     type_line(&mut s, "/config");
-    keys(&mut s, &[KeyCode::Down; 7]);
+    keys(&mut s, &[KeyCode::Down; LABELS_PAGE]);
     s.key(key(KeyCode::Enter));
     s
 }
@@ -2101,7 +2104,7 @@ fn the_labels_page_lists_each_label_and_renders() {
     let text =
         |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
     let buf = render(&s, 160, 45);
-    assert_eq!(text(&buf, 14, 69, 97), "▸ Labels    2 labels");
+    assert_eq!(text(&buf, 16, 69, 97), "▸ Labels    2 labels");
     let right: Vec<String> = (1..8).map(|y| text(&buf, y, 99, 158)).collect();
     assert_eq!(
         right,

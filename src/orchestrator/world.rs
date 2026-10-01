@@ -104,9 +104,14 @@ fn parse_prompt(pane: &str, text: &str) -> Prompt {
             "Result file" => {
                 p.file = value.to_string();
                 let base = Path::new(value).file_name().unwrap().to_string_lossy();
-                // its name without the Round: verdict, extra-review
+                // its name without the Round: verdict, extra-review,
+                // address-pr-comments
                 let name = base.trim_end_matches(".md");
-                p.stage = name.rsplit_once('-').map_or(name, |(n, _)| n).to_string();
+                p.stage = match name.rsplit_once('-') {
+                    Some((n, round)) if round == "final" || round.parse::<usize>().is_ok() => n,
+                    _ => name,
+                }
+                .to_string();
             }
             "Open PR" => p.open_pr = value == "yes",
             _ => {}
@@ -183,7 +188,7 @@ pub(crate) struct Inner {
     /// The Epic's description, as 'bd show hx --json' prints it.
     pub(crate) epic_description: String,
     /// PR url -> the PR node in the poll's GraphQL shape. 'gh pr view',
-    /// the address Stage's, gets the same JSON: a test of it gives its shape.
+    /// Address PR comments', gets the same JSON: a test of it gives its shape.
     pub(crate) prs: BTreeMap<String, String>,
     /// Command prefix -> the error its next call fails with.
     failing: BTreeMap<String, String>,

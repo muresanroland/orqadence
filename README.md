@@ -23,7 +23,7 @@ Review, Debate and Fix repeat for up to 3 rounds, then a pull request opens. You
 | [beads (`bd`)](https://github.com/gastownhall/beads) | The Epic and its Tickets | `bd init` in the Target repo, which `orqa init` offers to run |
 | [git](https://git-scm.com) | Branches and worktrees | The repo needs a remote on GitHub |
 | [GitHub CLI (`gh`)](https://cli.github.com) | Opens PRs, watches for merges | `gh auth login` |
-| [Claude Code (`claude`)](https://claude.com/claude-code) | Implement, Debate, Fix, Address | Logged in |
+| [Claude Code (`claude`)](https://claude.com/claude-code) | Implement, Debate, Fix, Rebase, Address PR comments | Logged in |
 | [Codex CLI (`codex`)](https://github.com/openai/codex) | Review | Logged in |
 | [TypeSafe](https://docs.typesafe.ai) API key | Optional: the Judgment approves plans and handles stuck sessions, and the Debate settles disputed Findings | `TYPESAFE_API_KEY`, or say yes and paste it at `orqa init` |
 
@@ -94,7 +94,8 @@ orqa init
 | `/stop-work` | Stop scheduling. Agent panes keep running and the state is saved |
 | `/retry <ticket>` | Rerun the Ticket's failed Stage with a fresh session |
 | `/park <ticket>` | Take the Ticket out of the pipeline; the others keep going |
-| `/address <ticket>` | Act on the review comments or merge conflicts on the Ticket's open PR |
+| `/rebase <ticket>` | Rebase the Ticket's open PR onto main, keeping both sides' intent or asking you; refused unless the last poll saw it conflict with main |
+| `/address-pr-comments <ticket>` | Act on the PR comments and failing checks on the Ticket's open PR, and push to the same PR |
 | `/questions` | Show the Questions waiting for you |
 | `/config` | Pick the App, model and effort each Stage runs on, and a plan model other than Implement's; every change saves at once to `.orqadence/config.json`, and during a run the Stages that start after it use it. A change that breaks a check (the Review on Implement's model, the Debate's sides in one family) is refused; the Apps page shows which Apps are installed. Each Stage's page also picks its jobs' Delegate skills; the Skills page adds (`a`), updates (`u`, `U` for all) and removes (`d`) the skills Orqadence installed; the TypeSafe page turns TypeSafe on or off and asks the key when there is none; the Run page sets how many Tickets a run has in the Pipeline at once, which the live run takes up at once |
 | `/away` | Toggle Away: a Stage's question parks its Ticket, with a bd comment, until you `/continue @ticket` it |

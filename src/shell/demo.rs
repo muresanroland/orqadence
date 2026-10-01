@@ -220,7 +220,7 @@ const SCRIPT: &[(usize, &str, Then)] = &[
     ),
     (4, "fix 1 done", Line),
     (4, "PR #43 opened after 1 round", Pr(43)),
-    (4, "PR #43 conflicts with main, /address resolves it", Line),
+    (4, "PR #43 conflicts with main, /rebase resolves it", Line),
     (3, "review 1 found 1 finding", Line),
     (
         3,

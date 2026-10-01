@@ -133,7 +133,7 @@ pub(crate) fn job_row(job: &str) -> &'static str {
     match job {
         "review" => "review",
         "audit" => "side_a",
-        "merge-conflicts" => "address",
+        "merge-conflicts" => "rebase",
         _ => "implement",
     }
 }

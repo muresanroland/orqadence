@@ -55,7 +55,7 @@ const KEPT_EVENTS: usize = 1000;
 const RETRY: Duration = Duration::from_secs(60);
 /// Every command the Shell takes: its name, arguments and what it does. The
 /// / list shows it, and the README's table.
-const COMMANDS: [(&str, &str, &str); 15] = [
+const COMMANDS: [(&str, &str, &str); 16] = [
     ("/start-epic", "<epic>", "run every Ticket of an open Epic"),
     (
         "/start-ticket",
@@ -80,9 +80,14 @@ const COMMANDS: [(&str, &str, &str); 15] = [
     ),
     ("/park", "<ticket>", "take a Ticket out to wait for you"),
     (
-        "/address",
+        "/rebase",
         "<ticket>",
-        "resolve a PR's conflicts or review comments",
+        "rebase a PR that conflicts with main",
+    ),
+    (
+        "/address-pr-comments",
+        "<ticket>",
+        "act on a PR's comments and failing checks",
     ),
     ("/questions", "", "show the hidden Questions"),
     (
@@ -1781,7 +1786,7 @@ impl Screen {
                     self.off_call("away is on");
                 }
             }
-            "/retry" | "/park" | "/address" => {
+            "/retry" | "/park" | "/rebase" | "/address-pr-comments" => {
                 let waiting = self
                     .questions
                     .iter()
@@ -1793,7 +1798,7 @@ impl Screen {
                     None => {
                         self.refuse("refused: no run is live, /start-epic or /continue starts one")
                     }
-                    Some(_) if name != "/address" && waiting => self.refuse(&format!(
+                    Some(_) if waiting => self.refuse(&format!(
                         "refused: Ticket {} has a Question waiting",
                         suffix(query)
                     )),

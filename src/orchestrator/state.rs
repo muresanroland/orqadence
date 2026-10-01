@@ -53,6 +53,9 @@ pub(crate) struct TicketState {
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub(crate) conflict: bool,
+    /// The last poll saw its PR conflict with main. Live only, never saved.
+    #[serde(skip)]
+    pub(crate) conflicting: bool,
     /// Its open PR's head as the poll last saw it, and when that changed.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) head: String,

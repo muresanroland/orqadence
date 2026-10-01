@@ -17,8 +17,8 @@ pub(crate) const SKILLS: &[(&str, &str)] = &[
         include_str!("../skills/orqa-infra-review/SKILL.md"),
     ),
     (
-        "orqa-stage-address",
-        include_str!("../skills/orqa-stage-address/SKILL.md"),
+        "orqa-stage-address-pr-comments",
+        include_str!("../skills/orqa-stage-address-pr-comments/SKILL.md"),
     ),
     (
         "orqa-stage-fix",
@@ -31,6 +31,10 @@ pub(crate) const SKILLS: &[(&str, &str)] = &[
     (
         "orqa-stage-moderate",
         include_str!("../skills/orqa-stage-moderate/SKILL.md"),
+    ),
+    (
+        "orqa-stage-rebase",
+        include_str!("../skills/orqa-stage-rebase/SKILL.md"),
     ),
     (
         "orqa-stage-review",

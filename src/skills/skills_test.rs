@@ -235,6 +235,15 @@ fn the_stage_skills_know_the_extra_review() {
     assert!(skill("orqa-stage-review").contains("`extra-review-*.md`"));
 }
 
+/// Address PR comments never rebases.
+#[test]
+fn stage_address_pr_comments_holds_no_rebase() {
+    let comments = skill("orqa-stage-address-pr-comments");
+    assert!(comments.contains("gh run view") && comments.contains("--log-failed"));
+    assert!(!comments.to_lowercase().contains("rebase"));
+    assert!(!comments.contains("{{merge-conflicts}}"));
+}
+
 /// create-pr fills a template it is given before any it finds itself, and
 /// replaces each section's comment with content.
 #[test]

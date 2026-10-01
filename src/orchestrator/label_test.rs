@@ -36,19 +36,25 @@ fn label_inputs(w: &World, file: &str) -> Vec<String> {
         .collect()
 }
 
-/// A Ticket's labels reach the code-editing Stages, Implement, Fix and
-/// address, as Inputs: the labels, Area first, the entries' installed
-/// skills and their guidance, with the Ticket file. The Review and the
-/// Debate get none of them.
+/// A Ticket's labels reach the code-editing Stages, Implement, Fix, Rebase
+/// and Address PR comments, as Inputs: the labels, Area first, the
+/// entries' installed skills and their guidance, with the Ticket file. The
+/// Review and the Debate get none of them.
 #[test]
 fn the_code_editing_stages_get_the_labels_skills_and_guidance_and_the_review_none() {
     let (w, o) = new_world(vec![labelled_ticket(&["orqa:codex-review", "orqa:db"])]);
     config(&w, &["orqa-db-skill"], "Migrations are reversible.");
     w.installed("orqa-db-skill");
+    w.lock().prs.insert(
+        "https://example.test/pr/hx-1".to_string(),
+        r#"{"state":"OPEN","mergeable":"CONFLICTING"}"#.to_string(),
+    );
     let o = Arc::new(o);
     let mut run = spawn_epic(o.clone(), "hx");
-    w.await_line("hx-1 PR #hx-1 opened");
-    o.command("address-hx-1");
+    w.await_line("hx-1 PR #hx-1 conflicts with main, /rebase resolves it");
+    o.command("rebase-hx-1");
+    w.await_line("hx-1 rebased PR #hx-1");
+    o.command("address-pr-comments-hx-1");
     w.await_line("hx-1 addressed PR #hx-1");
     o.stop();
     run.wait();
@@ -63,7 +69,12 @@ fn the_code_editing_stages_get_the_labels_skills_and_guidance_and_the_review_non
         "- Ticket file: {}",
         o.run_dir("hx-1").join("ticket.md").display()
     );
-    for file in ["implement.md", "fix-1.md", "address.md"] {
+    for file in [
+        "implement.md",
+        "fix-1.md",
+        "rebase.md",
+        "address-pr-comments.md",
+    ] {
         assert_eq!(label_inputs(&w, file), want, "{file}");
         assert!(w.prompt(file).contains(&ticket), "{file}");
     }
@@ -222,7 +233,8 @@ fn the_code_editing_stage_skills_load_the_label_skills_and_bound_the_epic_contex
     for name in [
         "orqa-stage-implement",
         "orqa-stage-fix",
-        "orqa-stage-address",
+        "orqa-stage-rebase",
+        "orqa-stage-address-pr-comments",
     ] {
         let skill = SKILLS.iter().find(|(n, _)| *n == name).unwrap().1;
         assert!(skill.contains(line), "{name} lacks the label line");
