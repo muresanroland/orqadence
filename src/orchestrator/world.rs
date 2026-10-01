@@ -561,6 +561,7 @@ impl World {
                     status: "open".to_string(),
                     issue_type: "epic".to_string(),
                     deps: w.epic_deps.clone(),
+                    labels: w.epic_labels.clone(),
                     no_epic: true,
                     ..BdTicket::new(EPIC)
                 };

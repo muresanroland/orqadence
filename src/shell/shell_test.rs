@@ -4,7 +4,7 @@ use super::brand::{
 };
 use super::draw::{draw, ticket_color};
 use super::{About, Epic, NoticeKind, Pending, Screen};
-use crate::orchestrator::app::{set_count, MAX_TICKETS};
+use crate::orchestrator::app::{set_count, set_switch, MAX_TICKETS, RELEASE_ON};
 use crate::orchestrator::judgment::fake::Fake as TypeSafeFake;
 use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
 use crate::orchestrator::limit_test::{hits, CODEX};
@@ -87,6 +87,7 @@ pub(super) fn screen_at(tools: Arc<dyn Tools>, repo: &Path) -> Screen {
             issue("harness-kqe.14", "Self-update", "open"),
         ],
         blockers: Vec::new(),
+        labels: Vec::new(),
     };
     let mut state = State {
         epic: "harness-kqe".to_string(),
@@ -664,6 +665,7 @@ fn lists_screen() -> Screen {
         title: title.to_string(),
         tickets,
         blockers: Vec::new(),
+        labels: Vec::new(),
     };
     let epics = vec![
         epic(
@@ -1903,6 +1905,7 @@ fn a_tall_tree_scrolls_to_its_last_epic_and_one_that_fits_never_scrolls() {
                 .map(|i| issue(&format!("harness-e{n}.{i}"), "work", "open"))
                 .collect(),
             blockers: Vec::new(),
+            labels: Vec::new(),
         });
     }
     // 80x24 leaves TICKETS 7 of its 26 rows: six rows and the tail.
@@ -2665,7 +2668,6 @@ fn the_tag_question_offers_yes_and_no_and_either_answer_ends_the_run() {
         let mut s = shell(&w);
         s.command("/start-epic hx");
         await_questions(&mut s, 1);
-        s.summary = None; // opened by itself once every Ticket had its PR
         assert_eq!(question(&s), "Tag v1.5.0 and push it?");
         assert_eq!(s.options(), ["yes", "no"]);
 
@@ -2686,6 +2688,48 @@ fn the_tag_question_offers_yes_and_no_and_either_answer_ends_the_run() {
         }
         assert!(matches!(s.notices[0].kind, NoticeKind::Info));
         assert_eq!(s.notices[0].closes, None, "it closes by itself");
+    }
+}
+
+/// A run carrying orqa:release keeps its summary back while every PR is
+/// open: it opens once the tag Question ends the run, its Version line
+/// naming the version, its PR and the tag. The Epic's close names it too,
+/// and /summary shows it while the run's State is kept.
+#[test]
+fn a_releasing_runs_summary_opens_after_its_release_naming_the_version() {
+    for (n, tagged) in [(1, "tagged"), (2, "not tagged")] {
+        let (w, _) = releasing(vec![BdTicket::new("hx-1")]);
+        w.lock().epic_labels = label();
+        let mut s = shell(&w);
+        s.command("/start-epic hx");
+        await_questions(&mut s, 1);
+        assert!(s.summary.is_none(), "opened before the Release ended");
+
+        pick(&mut s, n);
+        await_end(&mut s);
+
+        let released = format!("v1.5.0 (PR #version), {tagged}");
+        let version = |s: &Screen| s.summary.as_ref().and_then(|sum| sum.released.clone());
+        assert_eq!(version(&s), Some(released.clone()), "answered {n}");
+        if n == 2 {
+            s.key(key(KeyCode::Esc)); // no's Notice: how to tag it by hand
+        }
+        s.key(key(KeyCode::Esc));
+        assert_eq!(question(&s), "close Epic hx Epic hx?");
+        s.key(key(KeyCode::Char('y')));
+        let comment = format!(
+            "bd comments add hx Every Ticket merged; released {released}:\n\
+             - hx-1 Ticket hx-1: https://example.test/pr/hx-1"
+        );
+        assert_eq!(w.called("bd comments add hx "), [comment]);
+        let closed = w.called("bd close hx ");
+        let reason = format!("bd close hx --reason every Ticket merged; released {released}\n\n");
+        assert!(
+            closed.len() == 1 && closed[0].starts_with(&reason),
+            "{closed:?}"
+        );
+        s.command("/summary");
+        assert_eq!(version(&s), Some(released));
     }
 }
 
@@ -5751,6 +5795,37 @@ fn the_summary_pages_over_the_whole_terminal_and_esc_closes_it() {
     );
 }
 
+/// A run that ended in a Release: its Version line, the version, its PR and
+/// whether it is tagged, right under the title bar; the rest one row down.
+#[test]
+fn the_summary_pager_draws_the_version_line_under_its_header() {
+    let (_w, mut s) = summary_world();
+    s.state.release = Some(Box::new(Release {
+        version: "v1.5.0".to_string(),
+        ts: TicketState {
+            pr: VERSION_PR.to_string(),
+            ..Default::default()
+        },
+        commit: "m3rg3d".to_string(),
+        tagged: true,
+        ..Default::default()
+    }));
+    s.command("/summary");
+    let buf = render(&s, 120, 40);
+    assert!(row(&buf, 0).starts_with(" EPIC DONE · hx Epic hx"));
+    assert_eq!(
+        row(&buf, 1).trim_end(),
+        " Version v1.5.0 (PR #version), tagged",
+        "{:#?}",
+        rows(&buf)
+    );
+    assert_eq!(buf[(1, 1)].fg, GREEN);
+    assert!(row(&buf, 2).starts_with(" Cost $15.50 API-equivalent"));
+    assert!(row(&buf, 4).starts_with(" 5 Rounds"));
+    assert!(row(&buf, 6).starts_with(" TICKETS"), "{:#?}", rows(&buf));
+    assert_eq!(cols(&buf, 6, 31, 43), "Ticket  Apps");
+}
+
 /// '/summary @<epic>' shows that Epic's summary, picked from the @ list,
 /// which offers Epics alone; typed whole, /summary runs on Enter. An Epic
 /// none of whose Tickets has run, or no run at all, is a notice.
@@ -5886,6 +5961,49 @@ fn the_summary_opens_by_itself_once_when_the_last_pr_opens() {
     assert!(s.summary.is_none(), "it opened again");
     s.command("/stop-work");
     await_end(&mut s);
+}
+
+/// A run without orqa:release, or with releases off, opens its summary once
+/// every PR is open, as before; one carrying it, on its Epic or on a Ticket
+/// of a Ticket run, holds it back for its Release. An Epic run reads the
+/// Epic's own labels, never its Tickets'.
+#[test]
+fn only_a_run_ending_in_a_release_holds_its_summary_when_every_pr_is_open() {
+    let epic = "/start-epic hx";
+    // the run, the label on the Epic, on its Ticket, releases on, opens
+    for (command, on_epic, on_ticket, on, opens) in [
+        (epic, false, false, true, true),
+        (epic, false, true, true, true),
+        (epic, true, false, false, true),
+        (epic, true, false, true, false),
+        ("/start-ticket hx-1", false, true, true, false),
+    ] {
+        let labels = |on: bool| if on { label() } else { Vec::new() };
+        let ticket = BdTicket {
+            labels: labels(on_ticket),
+            ..BdTicket::new("hx-1")
+        };
+        let (w, _) = new_world(vec![ticket]);
+        set_switch(&w.repo, &RELEASE_ON, on).unwrap();
+        w.lock().epic_labels = labels(on_epic);
+        let mut s = shell(&w);
+        s.command(command);
+        await_line(&mut s, "hx-1 PR #hx-1 opened after 1 round");
+        if opens {
+            await_summary(&mut s);
+        } else {
+            for _ in 0..20 {
+                s.poll();
+                thread::sleep(Duration::from_millis(1));
+            }
+            assert!(
+                s.summary.is_none(),
+                "{command} opened it before its Release"
+            );
+        }
+        s.command("/stop-work");
+        await_end(&mut s);
+    }
 }
 
 /// A Ticket added to the Epic mid-run holds the summary back until it has

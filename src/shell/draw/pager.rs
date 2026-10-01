@@ -1,8 +1,9 @@
 //! The Epic summary as a read-only pager over the whole terminal (layout B
-//! of harness-0sx.5): the title bar, the Epic's cost and time, the lead and
-//! the totals, a TICKETS outline on the left from 100 columns, the cost
-//! table, a section per Ticket then PARKED, and the position line. No
-//! cursor: a PR opens by Cmd-clicking its url.
+//! of harness-0sx.5): the title bar, the run's Version line after a Release,
+//! the Epic's cost and time, the lead and the totals, a TICKETS outline on
+//! the left from 100 columns, the cost table, a section per Ticket then
+//! PARKED, and the position line. No cursor: a PR opens by Cmd-clicking its
+//! url.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier};
@@ -28,7 +29,7 @@ pub(super) fn pager(f: &mut Frame, s: &Screen, summary: &Summary) {
     let area = f.area();
     let [top, lead, mid, foot] = Layout::vertical([
         Constraint::Length(1),
-        Constraint::Length(4),
+        Constraint::Length(4 + u16::from(summary.released.is_some())),
         Constraint::Min(0),
         Constraint::Length(1),
     ])
@@ -74,14 +75,16 @@ pub(super) fn pager(f: &mut Frame, s: &Screen, summary: &Summary) {
         "Cost {} API-equivalent, at list prices, not what was billed · time {time}",
         dollars(&summary.cost)
     );
-    f.render_widget(
-        Paragraph::new(vec![
-            Line::from(Span::styled(cut(&spent, w), bold(TEXT))),
-            Line::from(Span::styled(cut(text, w), fg(TEXT))),
-            Line::from(Span::styled(cut(&totals, w), fg(MUTED))),
-        ]),
-        inset(lead),
-    );
+    let mut lines = vec![
+        Line::from(Span::styled(cut(&spent, w), bold(TEXT))),
+        Line::from(Span::styled(cut(text, w), fg(TEXT))),
+        Line::from(Span::styled(cut(&totals, w), fg(MUTED))),
+    ];
+    if let Some(released) = &summary.released {
+        let version = cut(&format!("Version {released}"), w);
+        lines.insert(0, Line::from(Span::styled(version, bold(GREEN))));
+    }
+    f.render_widget(Paragraph::new(lines), inset(lead));
 
     // The body from its scroll row, kept inside, with a column each side.
     let outline_w = if area.width >= OUTLINE {

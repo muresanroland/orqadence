@@ -13,7 +13,9 @@ use crate::orchestrator::cost::{self, Cost, Logged, Span};
 use crate::orchestrator::pipeline::MAX_ROUNDS;
 use crate::orchestrator::result::{read_stage_result, ResultRequirements, StageResult};
 use crate::orchestrator::scheduler::BdIssue;
-use crate::orchestrator::stage::{plural, result_name, run_dir, DEBATE, EXTRA_REVIEW, FINAL, FIX};
+use crate::orchestrator::stage::{
+    plural, pr_ref, result_name, run_dir, DEBATE, EXTRA_REVIEW, FINAL, FIX,
+};
 use crate::orchestrator::state::{State, STATUS_MERGED, STATUS_PARKED};
 
 /// One Epic's or Ticket run's summary, as it stood when built.
@@ -28,6 +30,8 @@ pub(crate) struct Summary {
     /// Every Ticket's cost summed, and the run's time on the wall clock.
     pub(crate) cost: Cost,
     pub(crate) time: Option<chrono::TimeDelta>,
+    /// The run's Release, as released names it; none for another Epic's.
+    pub(crate) released: Option<String>,
     /// The first body row shown; the draw keeps it inside.
     pub(crate) scroll: Cell<usize>,
     /// When it was built, for its count of the lines on RECENT since.
@@ -132,10 +136,33 @@ impl Summary {
             time: cost::wall_clock(tickets.iter().filter_map(|t| t.time.as_ref())),
             cost: total,
             tickets,
+            released: released(state).filter(|_| state.epic == epic),
             scroll: Cell::new(0),
             opened: chrono::Local::now(),
         })
     }
+}
+
+/// The run's Release, as the Version line and the Epic's close name it:
+/// "v1.5.0 (PR #12), tagged", or "not tagged"; no PR in a repo that keeps
+/// its version only in tags. None without one, or when its version PR
+/// closed unmerged: nothing was released.
+pub(crate) fn released(state: &State) -> Option<String> {
+    let release = state.release.as_deref()?;
+    let pr = &release.ts.pr;
+    if release.version.is_empty() || !pr.is_empty() && release.commit.is_empty() {
+        return None;
+    }
+    let pr = match pr.is_empty() {
+        true => String::new(),
+        false => format!(" ({})", pr_ref(pr)),
+    };
+    let tagged = if release.tagged {
+        "tagged"
+    } else {
+        "not tagged"
+    };
+    Some(format!("{}{pr}, {tagged}", release.version))
 }
 
 /// One Ticket from its Run directory: a Round per verdict-N.md, the PR from

@@ -19,6 +19,11 @@ use super::state::{Release, STATUS_MERGED, STATUS_RUNNING};
 /// that the run end in a Release.
 pub(crate) const RELEASE_LABEL: &str = "orqa:release";
 
+/// Whether bd labels hold the Release label.
+pub(crate) fn carries(labels: &[String]) -> bool {
+    labels.iter().any(|l| l == RELEASE_LABEL)
+}
+
 impl Orchestrator {
     /// Whether the run, every Ticket closed, ends in a Release, read now so
     /// a label added mid-run counts: the Epic Input ("<epic> <title>", or
@@ -41,7 +46,7 @@ impl Orchestrator {
         {
             return Ok(None);
         }
-        let carries = |issue: &BdIssue| issue.labels.iter().any(|l| l == RELEASE_LABEL);
+        let carries = |issue: &BdIssue| carries(&issue.labels);
         if epic.is_empty() {
             let due = saved || children.iter().any(carries);
             return Ok(due.then(|| "none".to_string()));
