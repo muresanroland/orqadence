@@ -415,6 +415,41 @@ fn install_skills_writes_a_skills_other_files_beside_it_executable() {
         .is_file());
 }
 
+/// A linked folder inside a skill is the repo's own too: --force does not
+/// write through it.
+#[test]
+fn install_skills_force_does_not_write_through_a_linked_folder() {
+    let repo = TempDir::new();
+    install(repo.path(), "");
+    let shared = TempDir::new();
+    fs::write(shared.path().join("threads.sh"), "shared").unwrap();
+    fs::set_permissions(
+        shared.path().join("threads.sh"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    let scripts = repo
+        .path()
+        .join(".orqadence/skills/orqa-address-pr-comments/scripts");
+    fs::remove_dir_all(&scripts).unwrap();
+    std::os::unix::fs::symlink(shared.path(), &scripts).unwrap();
+    install_skills(
+        repo.path(),
+        TempDir::new().path(),
+        true,
+        &mut Vec::new(),
+        &mut "".as_bytes(),
+        false,
+    )
+    .unwrap();
+    let at = shared.path().join("threads.sh");
+    assert_eq!(fs::read_to_string(&at).unwrap(), "shared");
+    assert_eq!(
+        fs::metadata(&at).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+}
+
 #[test]
 fn install_skills_refresh_rewrites_only_files_unedited_since_install() {
     let repo = TempDir::new();

@@ -259,7 +259,11 @@ pub(crate) fn install_skills(
             .map(|&(_, file, body)| (file, body));
         for (file, body) in iter::once(("SKILL.md", body)).chain(extra) {
             let (rel, dest) = (record_key(name, file), dir.join(file));
-            if is_link(&dest) {
+            // The file or any folder on its way, as a linked scripts/.
+            let linked = Path::new(file)
+                .ancestors()
+                .any(|part| !part.as_os_str().is_empty() && is_link(&dir.join(part)));
+            if linked {
                 continue;
             }
             let write = match mode {
