@@ -309,6 +309,24 @@ fn a_modal_approved_past_the_runs_cap_starts_nothing_but_one_by_hand_runs() {
     assert_eq!(run(&s).ticket("hx-1").address_runs, 4);
 }
 
+/// gh failing as Address PR comments starts takes its approved items out
+/// of offered, so the poll opens them again.
+#[test]
+fn a_gh_failure_at_the_start_offers_the_items_again() {
+    let (w, mut s, clock) = polled(&["hx-1"], &commented("a"), true);
+    later(&clock, 60);
+    await_approvals(&mut s, 1);
+    w.fail_once("gh pr view", "gh: boom");
+    s.key(key(KeyCode::Enter));
+    await_line(
+        &mut s,
+        "hx-1 address pr comments failed: gh pr view https://example.test/pr/hx-1 \
+         --json reviews,comments,statusCheckRollup: exit status 1: gh: boom",
+    );
+    await_approvals(&mut s, 1);
+    assert!(!addressing(&w, "hx-1"));
+}
+
 /// Exiting with a modal unanswered, by Ctrl-C twice as /exit does, withdraws
 /// its items from offered, so the next run's poll opens them again.
 #[test]

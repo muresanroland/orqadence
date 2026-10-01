@@ -605,12 +605,18 @@ impl Orchestrator {
             .into_iter()
             .map(|(t, (fix, skip, _))| (t, [fix, skip].concat()));
         for (ticket, items) in open.chain(lists) {
-            self.update(&ticket, |ts| {
-                for item in &items {
-                    ts.offered.remove(&item.id);
-                }
-            });
+            self.unoffer(&ticket, &items);
         }
+    }
+
+    /// Takes `items` out of the Ticket's offered set, so the poll offers
+    /// them again while they stay open.
+    fn unoffer<'a>(&self, ticket: &str, items: impl IntoIterator<Item = &'a Item>) {
+        self.update(ticket, |ts| {
+            for item in items {
+                ts.offered.remove(&item.id);
+            }
+        });
     }
 
     /// /address-pr-comments: every item open on the Ticket's PR now, each
@@ -673,6 +679,8 @@ impl Orchestrator {
         let comments = match self.cfg.tools.run(&self.cfg.repo, &argv) {
             Ok(comments) => comments,
             Err(err) => {
+                // no run took the lists: the poll offers their items again
+                self.unoffer(ticket, fix.iter().chain(&skip));
                 let text = format!("address pr comments failed: {err}");
                 return self.report(ticket, &text);
             }
