@@ -1,4 +1,7 @@
-use super::{ask_typesafe, install_skills, preflight, typesafe_key, warnings, yes};
+use super::{
+    ask_typesafe, coderabbit_skipping, install_skills, preflight, typesafe_key, warnings,
+    write_bot_exclusions, yes,
+};
 use crate::orchestrator::write_file;
 use crate::skills::manifest::{Manifest, JOBS, NONE};
 use crate::skills::{EXTRA_FILES, SKILLS};
@@ -981,4 +984,248 @@ fn warnings_of_an_old_gh_when_orqa_fe_is_configured() {
     );
     let (got, _) = gh_warnings(repo.path(), "2.101.0");
     assert_eq!(got, Vec::<String>::new());
+}
+
+/// init's bot exclusions step over a repo whose config.json is `config`:
+/// what it said.
+fn exclusions(repo: &Path, config: &str) -> String {
+    write_file(&repo.join(".orqadence/config.json"), config);
+    let mut out = Vec::new();
+    write_bot_exclusions(repo, &mut out).unwrap();
+    String::from_utf8(out).unwrap()
+}
+
+const MERGE_CODERABBIT: &str =
+    r#"{"address_pr_comments_auto": true, "agent_merge": true, "review_bots": ["coderabbit"]}"#;
+const MERGE_GREPTILE: &str =
+    r#"{"address_pr_comments_auto": true, "agent_merge": true, "review_bots": ["greptile"]}"#;
+
+/// Agent merge on and coderabbit listed, a repo without a .coderabbit.yaml
+/// gets one whose reviews.auto_review.labels excludes orqa:no-review, and
+/// init lists it; Greptile, not listed, gets nothing.
+#[test]
+fn a_repo_without_a_coderabbit_yaml_gets_one_with_the_exclusion() {
+    let repo = TempDir::new();
+    let out = exclusions(repo.path(), MERGE_CODERABBIT);
+    assert_eq!(
+        read(repo.path(), ".coderabbit.yaml"),
+        "reviews:\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n"
+    );
+    assert!(out.contains("init: wrote .coderabbit.yaml"), "{out}");
+    assert!(!repo.path().join("greptile.json").exists(), "{out}");
+}
+
+/// The text edit of .coderabbit.yaml finds reviews.auto_review.labels or
+/// adds what is missing of it, and puts the label after the list's last
+/// item: every other line, comment and line ending stays, and a text that
+/// has the label is left alone. A comment naming the label is not the label.
+#[test]
+fn coderabbit_skipping_adds_the_label_and_keeps_every_other_line() {
+    let cases = [
+        // No reviews key, and no newline ending the file.
+        (
+            "# \"!orqa:no-review\" goes below\nlanguage: en-US\nchat:\n  auto_reply: true",
+            "# \"!orqa:no-review\" goes below\nlanguage: en-US\nchat:\n  auto_reply: true\nreviews:\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n",
+        ),
+        // reviews without auto_review: added where reviews' block ends.
+        (
+            "language: en-US\nreviews:\n  profile: chill # calm\n  path_filters:\n    - \"!dist/**\"\n\nchat:\n  auto_reply: true\n",
+            "language: en-US\nreviews:\n  profile: chill # calm\n  path_filters:\n    - \"!dist/**\"\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n\nchat:\n  auto_reply: true\n",
+        ),
+        // auto_review without labels, the file indented by four.
+        (
+            "reviews:\n    auto_review:\n        enabled: true\n        drafts: false\n    profile: chill\n",
+            "reviews:\n    auto_review:\n        enabled: true\n        drafts: false\n        labels:\n          - \"!orqa:no-review\"\n    profile: chill\n",
+        ),
+        // A list: after its last item, at the items' indent.
+        (
+            "reviews:\n  auto_review:\n    labels:\n      - bug\n      - \"!wip\" # not yet\n    drafts: false\n",
+            "reviews:\n  auto_review:\n    labels:\n      - bug\n      - \"!wip\" # not yet\n      - \"!orqa:no-review\"\n    drafts: false\n",
+        ),
+        // A list whose items sit at the key's own indent.
+        (
+            "reviews:\n  auto_review:\n    labels:\n    - bug\n    drafts: false\n",
+            "reviews:\n  auto_review:\n    labels:\n    - bug\n    - \"!orqa:no-review\"\n    drafts: false\n",
+        ),
+        // labels with nothing under it.
+        (
+            "reviews:\n  auto_review:\n    labels:\n    drafts: false\n",
+            "reviews:\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n    drafts: false\n",
+        ),
+        // A list on labels' own line, empty or not.
+        (
+            "reviews:\n  auto_review:\n    labels: []\n",
+            "reviews:\n  auto_review:\n    labels: [\"!orqa:no-review\"]\n",
+        ),
+        (
+            "reviews:\n  auto_review:\n    labels: [\"bug\"] # only bugs\n",
+            "reviews:\n  auto_review:\n    labels: [\"bug\", \"!orqa:no-review\"] # only bugs\n",
+        ),
+        // Windows line endings stay on the lines that had them.
+        (
+            "reviews:\r\n  auto_review:\r\n    labels:\r\n      - bug\r\n",
+            "reviews:\r\n  auto_review:\r\n    labels:\r\n      - bug\r\n      - \"!orqa:no-review\"\n",
+        ),
+        // The label under another key, or in a comment ending a line, is not
+        // the label in reviews.auto_review.labels.
+        (
+            "reviews:\n  profile: chill # add \"!orqa:no-review\" later\n  path_filters:\n    - \"!orqa:no-review-docs/**\"\n",
+            "reviews:\n  profile: chill # add \"!orqa:no-review\" later\n  path_filters:\n    - \"!orqa:no-review-docs/**\"\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n",
+        ),
+        // Quoted keys, and a space before the colon.
+        (
+            "\"reviews\":\n  'auto_review' :\n    labels:\n      - bug\n",
+            "\"reviews\":\n  'auto_review' :\n    labels:\n      - bug\n      - \"!orqa:no-review\"\n",
+        ),
+        // A file indented as a whole.
+        (
+            "  language: en-US\n  reviews:\n    profile: chill\n",
+            "  language: en-US\n  reviews:\n    profile: chill\n    auto_review:\n      labels:\n        - \"!orqa:no-review\"\n",
+        ),
+        // A block of text ending in a line that reads as a comment keeps it.
+        (
+            "reviews:\n  tone: |\n    hello\n    # heading\n\n# the chat\nchat:\n  auto_reply: true\n",
+            "reviews:\n  tone: |\n    hello\n    # heading\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n\n# the chat\nchat:\n  auto_reply: true\n",
+        ),
+    ];
+    for (before, after) in cases {
+        assert_eq!(
+            coderabbit_skipping(before),
+            Ok(Some(after.to_string())),
+            "{before}"
+        );
+        assert_eq!(coderabbit_skipping(after), Ok(None), "{after}");
+    }
+    for unreadable in [
+        "reviews: {}\n",
+        "{}\n",
+        "{\"reviews\": {\"profile\": \"chill\"}}\n",
+        "\u{feff}reviews:\n  profile: chill\n",
+        "reviews:\n  - chill\n",
+        "reviews:\n  auto_review:\n    {enabled: true}\n",
+        "reviews:\n  auto_review: {enabled: true}\n",
+        "reviews:\n  auto_review:\n    labels: bug\n",
+        "reviews:\n  auto_review:\n    labels:\n      [bug,\n       feature]\n",
+    ] {
+        assert!(coderabbit_skipping(unreadable).is_err(), "{unreadable}");
+    }
+}
+
+/// An existing .coderabbit.yaml keeps every other key and comment and gains
+/// the label once: a re-run changes nothing and lists nothing.
+#[test]
+fn an_existing_coderabbit_yaml_gains_the_exclusion_once() {
+    let repo = TempDir::new();
+    let file = repo.path().join(".coderabbit.yaml");
+    write_file(
+        &file,
+        "# our CodeRabbit settings\nlanguage: en-US\nreviews:\n  profile: chill\n",
+    );
+    let out = exclusions(repo.path(), MERGE_CODERABBIT);
+    let written = read(repo.path(), ".coderabbit.yaml");
+    assert_eq!(
+        written,
+        "# our CodeRabbit settings\nlanguage: en-US\nreviews:\n  profile: chill\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n"
+    );
+    assert!(out.contains("init: wrote .coderabbit.yaml"), "{out}");
+
+    let out = exclusions(repo.path(), MERGE_CODERABBIT);
+    assert_eq!(read(repo.path(), ".coderabbit.yaml"), written);
+    assert_eq!(out, "");
+}
+
+/// Greptile listed: its disabledLabels gains orqa:no-review once, in a
+/// greptile.json made when missing or beside every key an existing one has,
+/// and in .greptile/config.json instead when the repo has that, since
+/// Greptile reads it first.
+#[test]
+fn greptiles_config_gains_the_exclusion_once() {
+    let repo = TempDir::new();
+    let out = exclusions(repo.path(), MERGE_GREPTILE);
+    let doc: serde_json::Value = serde_json::from_str(&read(repo.path(), "greptile.json")).unwrap();
+    assert_eq!(
+        doc,
+        serde_json::json!({"disabledLabels": ["orqa:no-review"]})
+    );
+    assert!(out.contains("init: wrote greptile.json"), "{out}");
+    assert!(!repo.path().join(".coderabbit.yaml").exists(), "{out}");
+
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join("greptile.json"),
+        r#"{"strictness": 2, "disabledLabels": ["wip-*"], "instructions": "be kind"}"#,
+    );
+    exclusions(repo.path(), MERGE_GREPTILE);
+    let written = read(repo.path(), "greptile.json");
+    let doc: serde_json::Value = serde_json::from_str(&written).unwrap();
+    assert_eq!(
+        doc,
+        serde_json::json!({
+            "strictness": 2,
+            "disabledLabels": ["wip-*", "orqa:no-review"],
+            "instructions": "be kind"
+        })
+    );
+    let out = exclusions(repo.path(), MERGE_GREPTILE);
+    assert_eq!(read(repo.path(), "greptile.json"), written);
+    assert_eq!(out, "");
+
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join(".greptile/config.json"),
+        r#"{"strictness": 3}"#,
+    );
+    let out = exclusions(repo.path(), MERGE_GREPTILE);
+    let doc: serde_json::Value =
+        serde_json::from_str(&read(repo.path(), ".greptile/config.json")).unwrap();
+    assert_eq!(
+        doc,
+        serde_json::json!({"strictness": 3, "disabledLabels": ["orqa:no-review"]})
+    );
+    assert!(out.contains("init: wrote .greptile/config.json"), "{out}");
+    assert!(!repo.path().join("greptile.json").exists(), "{out}");
+}
+
+/// Without Agent merge, or with no bot listed, no bot's file is written.
+#[test]
+fn no_exclusion_is_written_without_agent_merge_or_a_listed_bot() {
+    for config in [
+        r#"{"address_pr_comments_auto": true, "review_bots": ["coderabbit", "greptile"]}"#,
+        // Agent merge counts only with PR comments opened by themselves.
+        r#"{"agent_merge": true, "review_bots": ["coderabbit", "greptile"]}"#,
+        r#"{"address_pr_comments_auto": true, "agent_merge": true}"#,
+    ] {
+        let repo = TempDir::new();
+        let out = exclusions(repo.path(), config);
+        assert_eq!(out, "", "{config}");
+        assert!(!repo.path().join(".coderabbit.yaml").exists(), "{config}");
+        assert!(!repo.path().join("greptile.json").exists(), "{config}");
+    }
+}
+
+/// A file init cannot edit is left as it is, and init says what to add by
+/// hand; the other bot's file is still written.
+#[test]
+fn a_bot_file_that_cannot_be_edited_is_left_and_named() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".coderabbit.yaml"), "reviews: {}\n");
+    write_file(&repo.path().join("greptile.json"), "{not json");
+    let both = r#"{"address_pr_comments_auto": true, "agent_merge": true, "review_bots": ["coderabbit", "greptile"]}"#;
+    let out = exclusions(repo.path(), both);
+    assert_eq!(read(repo.path(), ".coderabbit.yaml"), "reviews: {}\n");
+    assert_eq!(read(repo.path(), "greptile.json"), "{not json");
+    assert!(
+        out.contains("init: .coderabbit.yaml not changed")
+            && out.contains("add \"!orqa:no-review\" to reviews.auto_review.labels by hand"),
+        "{out}"
+    );
+    assert!(
+        out.contains("init: greptile.json not changed")
+            && out.contains("add \"orqa:no-review\" to disabledLabels by hand"),
+        "{out}"
+    );
+
+    fs::remove_file(repo.path().join("greptile.json")).unwrap();
+    let out = exclusions(repo.path(), both);
+    assert!(out.contains("init: wrote greptile.json"), "{out}");
 }

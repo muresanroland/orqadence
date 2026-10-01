@@ -2,8 +2,9 @@
 //! the shipped skills and every job's default in .orqadence/skills, offers
 //! bd init, the docs/agents setup and herdr's integrations, keeps TypeSafe
 //! on or off and its key, the shipped Ticket labels and their skills,
-//! Rebase and Address PR comments' switches and the Release's, asks On
-//! call's Moshi token, and preflights the Target repo.
+//! Rebase and Address PR comments' switches and the Release's, tells the
+//! review bots to skip a No-review pull request, asks On call's Moshi token,
+//! and preflights the Target repo.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -350,10 +351,12 @@ fn unhide_links(repo: &Path) -> io::Result<()> {
 
 /// The rest of init once the skills are in: bd, the docs/agents setup,
 /// TypeSafe, every job's default, the Ticket labels, Rebase and Address PR
-/// comments' switches, the Release's, On call, and herdr's integrations. A
-/// `committed` checkout keeps the committed TypeSafe switch, picks, labels
-/// and switches, and is asked only for the key, when TypeSafe is on and no
-/// key is set or kept; On call is per person, asked on every checkout.
+/// comments' switches, the Release's, the review bots' No-review exclusion,
+/// On call, and herdr's integrations. A `committed` checkout keeps the
+/// committed TypeSafe switch, picks, labels and switches, and is asked only
+/// for the key, when TypeSafe is on and no key is set or kept; On call is
+/// per person, asked on every checkout, and the exclusion, which asks
+/// nothing, is written on every checkout that lacks it.
 pub(crate) fn set_up(
     repo: &Path,
     tools: &dyn Tools,
@@ -375,6 +378,7 @@ pub(crate) fn set_up(
     } else if app::typesafe(repo) && env_key.trim().is_empty() && !repo.join(KEY_FILE).exists() {
         ask_typesafe_key(repo, out, input, tty)?;
     }
+    write_bot_exclusions(repo, out)?;
     ask_on_call(repo, &env(on_call::TOKEN_VAR), out, input, tty)?;
     install_integrations(repo, tools, out, input, tty)
 }
@@ -438,6 +442,219 @@ fn ask_agent_merge(
         return Ok(());
     }
     app::set_review_bots(repo, &bots).map_err(io::Error::other)
+}
+
+/// The GitHub label of a No-review pull request, which the review bots skip.
+const NO_REVIEW: &str = "orqa:no-review";
+
+/// Under Agent merge, tells each review bot that review_bots lists to skip
+/// a No-review pull request: CodeRabbit in .coderabbit.yaml, Greptile in
+/// .greptile/config.json when the repo has one, which wins, else in
+/// greptile.json. A file is made when missing, written only when it lacks
+/// the label, and named so it gets committed; one that cannot be edited is
+/// left as it is, with what to add by hand.
+fn write_bot_exclusions(repo: &Path, out: &mut dyn Write) -> io::Result<()> {
+    let (_, doc) = app::read(repo).map_err(io::Error::other)?;
+    if !app::switch_in(&doc, &app::AGENT_MERGE) {
+        return Ok(());
+    }
+    type Edit = fn(&str) -> Result<Option<String>, String>;
+    // A list that cannot be read is /config's to flag.
+    for bot in app::review_bots_in(&doc).unwrap_or_default() {
+        let (file, name, by_hand, edit): (_, _, _, Edit) = match bot {
+            "coderabbit" => (
+                ".coderabbit.yaml",
+                "CodeRabbit",
+                format!("\"!{NO_REVIEW}\" to reviews.auto_review.labels"),
+                coderabbit_skipping,
+            ),
+            "greptile" => {
+                let folder = ".greptile/config.json";
+                let file = if repo.join(folder).exists() {
+                    folder
+                } else {
+                    "greptile.json"
+                };
+                (
+                    file,
+                    "Greptile",
+                    format!("\"{NO_REVIEW}\" to disabledLabels"),
+                    greptile_skipping,
+                )
+            }
+            _ => continue,
+        };
+        let text = match fs::read_to_string(repo.join(file)) {
+            Ok(text) => text,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(err) => return Err(err),
+        };
+        match edit(&text) {
+            Ok(Some(text)) => {
+                fs::write(repo.join(file), text)?;
+                write!(
+                    out,
+                    "init: wrote {file}: {name} skips {NO_REVIEW} pull requests\r\n"
+                )?;
+            }
+            Ok(None) => {}
+            Err(err) => write!(
+                out,
+                "init: {file} not changed ({err}): add {by_hand} by hand, so {name} skips {NO_REVIEW} pull requests\r\n"
+            )?,
+        }
+    }
+    Ok(())
+}
+
+/// What follows `key:` on a YAML line holding that key, bare or quoted.
+fn after_key<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let line = line.trim_start();
+    let rest = ['"', '\'']
+        .into_iter()
+        .find_map(|quote| {
+            line.strip_prefix(quote)?
+                .strip_prefix(key)?
+                .strip_prefix(quote)
+        })
+        .or_else(|| line.strip_prefix(key))?
+        .trim_start()
+        .strip_prefix(':')?;
+    (rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(rest)
+}
+
+/// .coderabbit.yaml's `text` with "!orqa:no-review" in
+/// reviews.auto_review.labels, a label CodeRabbit reads as not to review,
+/// and every other line as it was; None when that list has it already.
+/// serde_yaml is not an allowed crate, so the YAML is edited as text: each
+/// key of the path is found by its indent, a missing one added with the
+/// rest of the path at the end of its parent's block, and the label added
+/// after the list's last item, or inside a `[..]` on labels' own line. Err
+/// when text cannot follow the path, as through a `{..}`.
+// ponytail: line by line, so a key only a YAML parser sees (a merge `<<`, a
+// `? ` key) reads as missing and is added again; parse the file once a YAML
+// crate is allowed.
+fn coderabbit_skipping(text: &str) -> Result<Option<String>, String> {
+    if text.starts_with('\u{feff}') {
+        return Err("it starts with a byte order mark".to_string());
+    }
+    let label = format!("!{NO_REVIEW}");
+    let entry = format!("\"{label}\"");
+    let mut lines: Vec<String> = text.split_inclusive('\n').map(String::from).collect();
+    let content = |line: &str| !line.trim().is_empty() && !line.trim_start().starts_with('#');
+    let indent = |line: &str| line.len() - line.trim_start().len();
+    let item = |line: &str| line.trim() == "-" || line.trim_start().starts_with("- ");
+    // A list's entry, its quotes and a comment after it aside.
+    let is_label = |entry: &str| {
+        let entry = entry.split(" #").next().unwrap_or("").trim();
+        entry.trim_matches(['"', '\'']) == label
+    };
+    // Added lines end in \n whatever the file's line endings: YAML reads both.
+    let add = |mut lines: Vec<String>, at: usize, block: String| {
+        if at > 0 && !lines[at - 1].ends_with('\n') {
+            lines[at - 1].push('\n');
+        }
+        lines.insert(at, block);
+        Ok(Some(lines.concat()))
+    };
+    let opening =
+        |lines: &[String], from: usize, to: usize| (from..to).find(|&i| content(&lines[i]));
+    let path = ["reviews", "auto_review", "labels"];
+    // The block searched, lines[from..to], and its keys' indent: its first
+    // line's, or two more than its key's while it is empty.
+    let (mut from, mut to, mut depth) = (0, lines.len(), 0);
+    for (n, key) in path.iter().enumerate() {
+        if let Some(first) = opening(&lines, from, to) {
+            depth = indent(&lines[first]);
+            if item(&lines[first]) || lines[first].trim_start().starts_with(['{', '[']) {
+                let holder = if n == 0 { "the file" } else { path[n - 1] };
+                return Err(format!("{holder} is not a block of keys"));
+            }
+        }
+        let found = (from..to).find(|&i| {
+            content(&lines[i]) && indent(&lines[i]) == depth && after_key(&lines[i], key).is_some()
+        });
+        let Some(at) = found else {
+            let mut block = String::new();
+            for (level, key) in path[n..].iter().enumerate() {
+                block += &format!("{}{key}:\n", " ".repeat(depth + 2 * level));
+            }
+            block += &format!("{}- {entry}\n", " ".repeat(depth + 2 * (path.len() - n)));
+            return add(lines, to, block);
+        };
+        let rest = after_key(&lines[at], key).unwrap_or_default();
+        let start = lines[at].len() - rest.len();
+        let value = rest.split(" #").next().unwrap_or("").trim();
+        if *key == "labels" && value.starts_with('[') && value.ends_with(']') {
+            let inner = value[1..value.len() - 1].trim_end();
+            if inner.split(',').any(is_label) {
+                return Ok(None);
+            }
+            let comma = if inner.trim().is_empty() || inner.ends_with(',') {
+                ""
+            } else {
+                ", "
+            };
+            let last = start + rest.find('[').unwrap_or(0) + 1 + inner.len();
+            lines[at].insert_str(last, &format!("{comma}{entry}"));
+            return Ok(Some(lines.concat()));
+        }
+        if !value.is_empty() {
+            return Err(format!("{key} is not a block"));
+        }
+        // The key's block: to the next line at its indent or less, a list's
+        // items at its own indent aside, less the blank lines and the
+        // comments at its indent or less that end it; a deeper line that
+        // reads as a comment may be the end of a block of text.
+        let mut end = (at + 1..to)
+            .find(|&i| {
+                content(&lines[i])
+                    && indent(&lines[i]) <= depth
+                    && !(indent(&lines[i]) == depth && item(&lines[i]))
+            })
+            .unwrap_or(to);
+        while end > at + 1
+            && (lines[end - 1].trim().is_empty()
+                || !content(&lines[end - 1]) && indent(&lines[end - 1]) <= depth)
+        {
+            end -= 1;
+        }
+        (from, to, depth) = (at + 1, end, depth + 2);
+    }
+    if let Some(first) = opening(&lines, from, to) {
+        depth = indent(&lines[first]);
+    }
+    let mut entries = (from..to).filter(|&i| content(&lines[i]) && indent(&lines[i]) == depth);
+    if entries.clone().any(|i| !item(&lines[i])) {
+        return Err("labels is not a list".to_string());
+    }
+    if entries.any(|i| is_label(&lines[i].trim_start()[1..])) {
+        return Ok(None);
+    }
+    add(lines, to, format!("{}- {entry}\n", " ".repeat(depth)))
+}
+
+/// Greptile's config `text` with orqa:no-review in disabledLabels, the
+/// labels whose pull requests Greptile skips; None when it is there. An
+/// empty text is a missing file. Every key is kept, sorted as serde_json
+/// writes them.
+fn greptile_skipping(text: &str) -> Result<Option<String>, String> {
+    let mut doc = match text.trim() {
+        "" => json!({}),
+        text => serde_json::from_str(text).map_err(|err| err.to_string())?,
+    };
+    let Value::Object(top) = &mut doc else {
+        return Err("not a JSON object".to_string());
+    };
+    let labels = top.entry("disabledLabels").or_insert_with(|| json!([]));
+    let Value::Array(labels) = labels else {
+        return Err("disabledLabels is not a list".to_string());
+    };
+    if labels.iter().any(|label| label == NO_REVIEW) {
+        return Ok(None);
+    }
+    labels.push(json!(NO_REVIEW));
+    Ok(Some(format!("{doc:#}\n")))
 }
 
 /// Releases (the orqa:release label), a yes/no kept in config.json, default
