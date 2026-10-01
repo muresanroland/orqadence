@@ -340,6 +340,22 @@ fn an_offer_unread_at_exit_is_withdrawn() {
     assert!(o.ticket("hx-1").offered.is_empty());
 }
 
+/// An offer sent after the poll last read the Events, as the run stops,
+/// is withdrawn with the run: /continue offers its items again.
+#[test]
+fn an_offer_unread_when_the_run_ends_is_withdrawn() {
+    let (_w, mut s, clock) = polled(&["hx-1"], &commented("a"), true);
+    let o = run(&s);
+    later(&clock, 60);
+    wait_until("the poll offering", || !o.ticket("hx-1").offered.is_empty());
+    let mut ended = s.run.take().unwrap();
+    ended.o.stop();
+    let _ = ended.scheduler.take().unwrap().join();
+    s.withdraw(&ended);
+    assert!(s.approvals.is_empty(), "an orphan modal opened");
+    assert!(o.ticket("hx-1").offered.is_empty());
+}
+
 /// A Notice modal over the approval modal takes its keys, so its countdown
 /// holds; once the Notice closes it runs again in full.
 #[test]

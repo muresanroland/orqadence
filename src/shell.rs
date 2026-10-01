@@ -555,14 +555,10 @@ impl Screen {
     /// and Ctrl-C twice, with no re-exec). Another process's lock drops it.
     pub(crate) fn close(&mut self) {
         if let Some(mut run) = self.run.take() {
-            // the scheduler alone sends offers: once it has returned, the
-            // ones still unread are withdrawn too
             run.o.stop();
             if let Some(scheduler) = run.scheduler.take() {
                 let _ = scheduler.join();
             }
-            let unread = self.receiver.try_iter().filter(|e| !e.offer.is_empty());
-            run.o.withdraw(unread.map(|e| (e.ticket.unwrap_or_default(), e.offer)));
             self.withdraw(&run);
         }
         self.install(false);
@@ -650,8 +646,8 @@ impl Screen {
             self.ring_end("run stopped");
         }
         self.running = false;
-        self.questions.retain(|q| q.ticket.is_none()); // never saved: derived again on resume
         self.withdraw(&run);
+        self.questions.retain(|q| q.ticket.is_none()); // never saved: derived again on resume
         self.composing = false;
         self.first = None;
         if run.o.stopping() {
@@ -685,11 +681,22 @@ impl Screen {
         self.install(false); // the last act of /stop-work
     }
 
-    /// The run's end: its unanswered approval modals go, withdrawn from
-    /// offered, so the next run's poll offers them again.
+    /// The run's end, its scheduler returned: its unanswered approval
+    /// modals go, and the offers the scheduler sent after the poll last
+    /// read the Events, withdrawn from offered, so the next run's poll
+    /// offers them again. The other Events still unread show.
     fn withdraw(&mut self, run: &Run) {
+        let (unread, rest): (Vec<Event>, Vec<Event>) =
+            self.receiver.try_iter().partition(|e| !e.offer.is_empty());
+        for event in rest {
+            self.push(event);
+        }
         let items = |a: Approval| (a.ticket, a.rows.into_iter().map(|(i, _)| i).collect());
-        run.o.withdraw(self.approvals.drain(..).map(items));
+        let unread = unread
+            .into_iter()
+            .map(|e| (e.ticket.unwrap_or_default(), e.offer));
+        run.o
+            .withdraw(self.approvals.drain(..).map(items).chain(unread));
     }
 
     /// Whether every Ticket of the run (its Epic's on the bd tree, or the
@@ -2253,11 +2260,8 @@ impl Screen {
     fn close_notice(&mut self) {
         self.notices.remove(0);
         self.show_notice();
-        let now = (self.cfg.clock)();
-        if let Some(a) = self.approvals.first_mut().filter(|a| a.approves.is_some()) {
-            if self.notices.is_empty() {
-                a.approves = a.countdown.map(|length| now + length);
-            }
+        if self.notices.is_empty() && self.approvals.first().is_some_and(|a| a.approves.is_some()) {
+            self.show_approval();
         }
     }
 
