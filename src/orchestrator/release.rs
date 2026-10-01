@@ -1,8 +1,9 @@
 //! The Release: the Stage a run carrying orqa:release ends in, once every
 //! Ticket of the run is merged. It belongs to the run, not to a Ticket: its
 //! record is the State's release, apart from the Tickets', and its id
-//! (release-<epic>, or release-<date> in a Ticket run) names its worktree,
-//! Run directory, branch and tab as a Ticket's id names its own.
+//! (release-<epic>, or release-<date>-<time> in a Ticket run, of which a
+//! day may have several) names its worktree, Run directory, branch and tab
+//! as a Ticket's id names its own.
 
 use std::fs;
 
@@ -55,26 +56,26 @@ impl Orchestrator {
     /// limit leaves its session saved; a park stops the run as /stop-work
     /// does, the Release saved for /continue.
     pub(super) fn release(&self, epic: &str, epic_input: &str, children: &[BdIssue]) {
-        let id = match epic {
-            "" => (self.cfg.clock)().format("release-%Y-%m-%d").to_string(),
+        let mut id = match epic {
+            "" => (self.cfg.clock)()
+                .format("release-%Y-%m-%d-%H%M%S")
+                .to_string(),
             epic => format!("release-{epic}"),
         };
         let mut fresh = false;
-        let mut saved = String::new();
         self.change_state(|state| {
             fresh = state.release.is_none();
             let release = state.release.get_or_insert_with(|| {
                 Box::new(Release {
-                    id,
+                    id: id.clone(),
                     ts: TicketState::default(),
                     version: String::new(),
                 })
             });
             release.ts.status = STATUS_RUNNING.to_string();
             release.ts.reason.clear();
-            saved = release.id.clone();
+            id = release.id.clone(); // a saved one's, from its start
         });
-        let id = saved;
         if fresh {
             // an earlier run's Release of the same id is not this one's
             let _ = fs::remove_file(self.run_dir(&id).join(result_name(&RELEASE, 0)));

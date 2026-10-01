@@ -85,8 +85,8 @@ pub(crate) struct TicketState {
 /// a Ticket, its record apart from the Tickets'.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Release {
-    /// release-<epic>, or release-<date> in a Ticket run: its worktree, Run
-    /// directory, branch and tab go by it.
+    /// release-<epic>, or release-<date>-<time> in a Ticket run: its
+    /// worktree, Run directory, branch and tab go by it.
     pub(crate) id: String,
     /// Its Stage's record, kept as a Ticket's is: pane, session, its PR.
     #[serde(flatten)]
@@ -130,7 +130,8 @@ pub(crate) struct State {
     /// every Review on it while its limit holds.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) reviews: BTreeMap<String, Review>,
-    /// Boxed: a TicketState inside, which a State held by value pays for.
+    /// Boxed: by value, its TicketState grew the Shell's Pending and About,
+    /// which hold a State, past clippy's large_enum_variant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) release: Option<Box<Release>>,
 }

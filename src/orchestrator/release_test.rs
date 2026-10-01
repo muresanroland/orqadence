@@ -5,6 +5,7 @@ use super::app::{set_switch, RELEASE_ON};
 use super::judgment::Action;
 use super::limit_test::{at, hits, now, CLAUDE};
 use super::question_test::ASKS;
+use super::release::RELEASE_LABEL;
 use super::scheduler_test::run_epic;
 use super::stage::{Answer, Ask, Orchestrator};
 use super::state::{
@@ -20,6 +21,11 @@ use std::time::Duration;
 
 /// The Release's result: the new version and the version PR.
 const RELEASED: &str = "STATUS: done\nVERSION: v1.5.0\nPR: https://example.test/pr/version\n";
+
+/// The Release label, as bd lists it on an issue.
+fn label() -> Vec<String> {
+    vec![RELEASE_LABEL.to_string()]
+}
 
 /// Every Stage succeeds; the Release writes RELEASED.
 fn release_done(p: &Prompt) -> (String, String) {
@@ -50,7 +56,7 @@ fn run_level(w: &World, text: &str) -> bool {
 #[test]
 fn an_epic_carrying_orqa_release_ends_in_a_release_with_bump_minor_and_each_prs_url() {
     let (w, o) = releasing(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
-    w.lock().epic_labels = vec!["orqa:release".to_string()];
+    w.lock().epic_labels = label();
     let o = Arc::new(o);
 
     run_epic(&o);
@@ -123,20 +129,20 @@ fn run_tickets(w: &World, o: &Arc<Orchestrator>, tickets: &[&str]) {
 
 #[test]
 fn a_ticket_run_whose_queued_ticket_carries_orqa_release_gets_bump_patch() {
-    let (w, o) = releasing(vec![
+    let (w, mut o) = releasing(vec![
         BdTicket::new("hx-1"),
         BdTicket {
-            labels: vec!["orqa:release".to_string()],
+            labels: label(),
             ..BdTicket::new("hx-2")
         },
     ]);
+    set_clock(&mut o.cfg, now());
     let o = Arc::new(o);
 
     run_tickets(&w, &o, &["hx-1", "hx-2"]);
 
     let id = o.state.lock().unwrap().release.clone().unwrap().id;
-    let today = chrono::Local::now().format("%Y-%m-%d");
-    assert_eq!(id, format!("release-{today}"));
+    assert_eq!(id, "release-2026-09-25-140000", "its date and time");
     let prompt = w.prompt(&format!("{id}/release.md"));
     for want in [
         "- Bump: patch\n",
@@ -166,7 +172,6 @@ fn no_release(w: &World, o: &Orchestrator) {
 #[test]
 fn with_the_switch_off_or_the_label_on_the_epics_tickets_alone_the_run_ends_as_today() {
     // (the switch, the Epic's labels, its Ticket's)
-    let label = || vec!["orqa:release".to_string()];
     for (on, epic, ticket) in [(false, label(), vec![]), (true, vec![], label())] {
         let (w, o) = releasing(vec![BdTicket {
             labels: ticket,
@@ -186,7 +191,7 @@ fn with_the_switch_off_or_the_label_on_the_epics_tickets_alone_the_run_ends_as_t
 #[test]
 fn a_run_where_no_ticket_merged_a_pr_gets_no_release() {
     let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
-    w.lock().epic_labels = vec!["orqa:release".to_string()];
+    w.lock().epic_labels = label();
     w.lock().tickets[0].status = "closed".to_string(); // closed by hand
     let o = Arc::new(o);
 
@@ -199,7 +204,7 @@ fn a_run_where_no_ticket_merged_a_pr_gets_no_release() {
 #[test]
 fn orqa_release_on_a_ticket_raises_no_label_question() {
     let (w, o) = new_world(vec![BdTicket {
-        labels: vec!["orqa:release".to_string()],
+        labels: label(),
         ..BdTicket::new("hx-1")
     }]);
     w.lock().merged = true;
@@ -216,11 +221,6 @@ fn orqa_release_on_a_ticket_raises_no_label_question() {
         .collect();
     assert!(asked.is_empty(), "label Questions: {asked:?}");
     assert!(w.called("bd label remove").is_empty());
-}
-
-/// orqa:release, as bd lists it on an issue.
-fn label() -> Vec<String> {
-    vec!["orqa:release".to_string()]
 }
 
 #[test]
@@ -431,11 +431,15 @@ fn a_wake_on_the_release_settled_as_park_stops_the_run_and_continue_starts_it_ag
     w.await_line("release-hx parked: release went idle without a result");
     assert_eq!(o.ticket("release-hx").status, STATUS_PARKED);
 
-    write_file(&o.run_dir("release-hx").join("release.md"), RELEASED);
+    // /continue: its live session watched again, not started anew
+    let before = w.calls().len();
     let again = restarted(&w, &o);
     let mut run = spawn_epic(again.clone(), "hx");
+    w.await_nth("stuck in release: went idle without a result", 2);
+    write_file(&o.run_dir("release-hx").join("release.md"), RELEASED);
     run.wait();
     w.await_line("release done: v1.5.0");
+    assert!(w.since(before, "herdr agent start ").is_empty());
 }
 
 #[test]

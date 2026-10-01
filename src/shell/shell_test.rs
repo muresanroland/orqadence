@@ -13,8 +13,8 @@ use crate::orchestrator::question_test::ASKS;
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::{Ask, Config, Event, Orchestrator};
 use crate::orchestrator::state::{
-    acquire_lock, load_state, Review, Session, State, TicketState, STATUS_MERGED, STATUS_PARKED,
-    STATUS_PR_OPEN, STATUS_RUNNING,
+    acquire_lock, load_state, Release, Review, Session, State, TicketState, STATUS_MERGED,
+    STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING,
 };
 use crate::orchestrator::trust::claude_slug;
 use crate::orchestrator::world::{new_world, set_clock, succeed, wait_until, BdTicket, World};
@@ -2611,6 +2611,46 @@ fn start_epic_asks_over_a_saved_queued_or_removed_ticket_not_the_epics() {
     assert_eq!(question(&s), "discard the saved run on lx?");
     s.command("n");
     assert_eq!(load_state(&w.repo).unwrap(), saved);
+}
+
+/// A saved run stopped in its Release, every Ticket merged: an Epic run
+/// over it, or a Ticket joining it, asks before discarding it, so the
+/// Release never goes on in another run nor misses a Ticket it never listed.
+#[test]
+fn a_saved_release_asks_before_another_run_or_a_ticket_takes_it_up() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
+    let merged = TicketState {
+        status: STATUS_MERGED.to_string(),
+        ..Default::default()
+    };
+    let release = Release {
+        id: "release-2026-10-01-120000".to_string(),
+        ts: TicketState {
+            status: STATUS_RUNNING.to_string(),
+            stage: "release".to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let saved = State {
+        queue: vec!["lx".to_string()],
+        tickets: [("lx".to_string(), merged)].into(),
+        release: Some(Box::new(release)),
+        ..Default::default()
+    };
+    saved.save(&w.repo).unwrap();
+    let mut s = shell(&w);
+    for command in ["/start-epic hx", "/start-ticket hx-1"] {
+        s.command(command);
+        assert_eq!(
+            question(&s),
+            "discard the saved run on release-2026-10-01-120000?",
+            "{command}"
+        );
+        s.command("n");
+        assert!(s.run.is_none(), "{command}");
+        assert_eq!(load_state(&w.repo).unwrap(), saved, "{command}");
+    }
 }
 
 /// A Ticket that waits on an open one outside the run would never start:

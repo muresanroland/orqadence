@@ -324,7 +324,6 @@ impl Orchestrator {
                 Some(children)
                     if children.iter().all(|c| c.status == "closed") && self.finish(&queued) =>
                 {
-                    // read at this moment, so a label added mid-run counts;
                     // bd failing is tried again next pass, never no Release
                     match self.release_due(epic, &children) {
                         Err(err) => self.report("", &format!("bd show failed: {err}")),

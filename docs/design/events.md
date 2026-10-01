@@ -12,7 +12,7 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 ## What shows
 
 - Every Ticket event shows on the panel, except `prompted` (log only).
-- Run-level errors show: state not saved, bd list failed, bd ready failed, Epic done, Ticket run done, stopped.
+- Run-level errors show: state not saved, bd list failed, bd ready failed, bd show failed, Epic done, Ticket run done, stopped.
 - Housekeeping stays in the log only: dropped a leftover pane, merged but not closed (will retry), scratch left in the run directory, prompted, waiting for the result file, an answer that came after its session moved on (dropped your park: that session has moved on), a Stage that could not be resumed (not resumed: `err`, starting it fresh), a Judgment that could not be had (no Judgment: `err`, the key never in it), a bd comment that could not be added for a question asked while Away (no bd comment: `err`).
 - A Judgment below the floor logs its judged line only: its scores show in the Wake's Question, and a panel line would close that Question.
 
@@ -62,7 +62,7 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 | Epic done | *(orqadence)* Epic done, every Ticket closed |
 | Ticket run done | *(orqadence)* Ticket run done, every Ticket closed · Ticket run done, no Ticket left in it |
 | stopped | *(orqadence)* stopped, panes left running, /continue resumes *(once every Ticket thread has left; the status row reads STOPPING until then)* |
-| errors | *(orqadence)* state not saved: `err` · bd list failed: `err` · bd ready failed: `err` |
+| errors | *(orqadence)* state not saved: `err` · bd list failed: `err` · bd ready failed: `err` · bd show failed: `err` *(the Epic's labels, at a run's end)* |
 
 ## Limited
 
@@ -82,7 +82,7 @@ Decided on the map tickets "Limited" (harness-0sx.8) and "Apps per Stage" (harne
 
 ## Release
 
-Decided on 'Version bump label' (harness-bsg.22). A run carrying orqa:release, with release_on set, ends in the Release once every Ticket is closed and one at least merged its PR: an Epic's own label, or any queued Ticket's in a Ticket run, read at that moment. The Release belongs to the run, not to a Ticket: its lines below are run-level. Its other lines (holds, stuck, a question, waiting at a prompt, parked) are a Stage's as above, named by the Release's id, `release-<epic>` or `release-<date>` in a Ticket run, as RECENT names a Ticket, so its Questions are answered as a Ticket's are.
+Decided on the map ticket for the Release label (harness-bsg.22). A run carrying orqa:release, with release_on set, ends in the Release once every Ticket is closed and one at least merged its PR: an Epic's own label, or any queued Ticket's in a Ticket run, read at that moment. The Release belongs to the run, not to a Ticket: its lines below are run-level. Its other lines (holds, stuck, a question, waiting at a prompt, parked) are a Stage's as above, named by the Release's id, `release-<epic>` or `release-<date>-<time>` in a Ticket run, as RECENT names a Ticket, so its Questions are answered as a Ticket's are.
 
 | Moment | Wording |
 |---|---|
