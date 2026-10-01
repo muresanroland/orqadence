@@ -32,6 +32,13 @@ pub(crate) struct TicketState {
     pub(crate) sessions: BTreeMap<String, Session>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) pr: String,
+    /// Its PR is human-merge, as its labels said when it opened: the
+    /// Orchestrator never merges it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) human_merge: bool,
+    /// Its PR is a No-review pull request and carries orqa:no-review.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) no_review: bool,
     /// Why it is Parked.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) reason: String,
