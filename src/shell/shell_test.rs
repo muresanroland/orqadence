@@ -10,6 +10,7 @@ use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
 use crate::orchestrator::limit_test::{hits, CODEX};
 use crate::orchestrator::plan_test::{at_dialog, nouls};
 use crate::orchestrator::question_test::ASKS;
+use crate::orchestrator::release_test::{label, releasing, VERSION_PR};
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::{Ask, Config, Event, Orchestrator};
 use crate::orchestrator::state::{
@@ -2651,6 +2652,58 @@ fn a_saved_release_asks_before_another_run_or_a_ticket_takes_it_up() {
         assert!(s.run.is_none(), "{command}");
         assert_eq!(load_state(&w.repo).unwrap(), saved, "{command}");
     }
+}
+
+/// After the version PR merges, the tag Question: yes tags and pushes it;
+/// no leaves a Notice, never closing by itself, with the commands that do.
+/// Either ends the run.
+#[test]
+fn the_tag_question_offers_yes_and_no_and_either_answer_ends_the_run() {
+    for (n, line) in [(1, "tagged v1.5.0 and pushed"), (2, "v1.5.0 not tagged: ")] {
+        let (w, _) = releasing(vec![BdTicket::new("hx-1")]);
+        w.lock().epic_labels = label();
+        let mut s = shell(&w);
+        s.command("/start-epic hx");
+        await_questions(&mut s, 1);
+        s.summary = None; // opened by itself once every Ticket had its PR
+        assert_eq!(question(&s), "Tag v1.5.0 and push it?");
+        assert_eq!(s.options(), ["yes", "no"]);
+
+        pick(&mut s, n);
+
+        await_line(&mut s, line);
+        await_end(&mut s);
+        let notices: Vec<&str> = s.notices.iter().map(|n| n.text.as_str()).collect();
+        if n == 1 {
+            assert!(notices.is_empty(), "{notices:?}");
+            assert_eq!(w.called("git tag"), ["git tag v1.5.0 m3rg3d"]);
+            continue;
+        }
+        assert!(w.called("git tag").is_empty());
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        for command in ["git tag v1.5.0 m3rg3d", "git push origin v1.5.0"] {
+            assert!(notices[0].contains(command), "{notices:?}");
+        }
+        assert!(matches!(s.notices[0].kind, NoticeKind::Info));
+        assert_eq!(s.notices[0].closes, None, "it closes by itself");
+    }
+}
+
+#[test]
+fn start_epic_while_the_version_pr_waits_is_refused() {
+    let (w, _) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    let open = r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#.to_string();
+    w.lock().prs.insert(VERSION_PR.to_string(), open);
+    let mut s = shell(&w);
+    s.command("/start-epic hx");
+    await_line(&mut s, "version PR #version opened");
+
+    s.command("/start-epic hx");
+
+    assert_eq!(notice(&s), "refused: a run is live, /stop-work first");
+    s.command("/stop-work");
+    await_end(&mut s);
 }
 
 /// A Ticket that waits on an open one outside the run would never start:

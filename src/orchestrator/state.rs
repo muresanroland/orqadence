@@ -95,6 +95,15 @@ pub(crate) struct Release {
     /// The new version its result names: v1.5.0.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) version: String,
+    /// Its version PR merged, and the commit the merge made, which the tag
+    /// goes on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) merged: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) commit: String,
+    /// The tag Question was answered yes and the tag pushed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) tagged: bool,
 }
 
 /// A Stage's session: the App it runs on, and the id herdr's integration

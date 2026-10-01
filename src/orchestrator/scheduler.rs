@@ -498,22 +498,7 @@ impl Orchestrator {
                     );
                     continue;
                 }
-                // The work is on main now, so bd's cleanliness and containment
-                // checks (which a squash merge fails) no longer protect anything.
-                let worktree = self.worktree(&ticket).display().to_string();
-                if let Err(err) =
-                    tools.run(repo, &["bd", "worktree", "remove", &worktree, "--force"])
-                {
-                    self.log(
-                        &ticket,
-                        &format!("could not remove the worktree, remove it by hand: {err}"),
-                    );
-                } else if let Err(err) = tools.run(repo, &["git", "branch", "-D", &ticket]) {
-                    self.log(
-                        &ticket,
-                        &format!("worktree removed, could not delete the branch: {err}"),
-                    );
-                }
+                self.remove_worktree(&ticket);
                 self.update(&ticket, |ts| ts.status = STATUS_MERGED.to_string());
                 self.report(&ticket, "merged, Ticket closed");
             } else if pr.state == "CLOSED" {
@@ -596,8 +581,29 @@ impl Orchestrator {
         quiet
     }
 
+    /// Removes the worktree, then the branch, of a Ticket whose PR merged,
+    /// or of the Release once its version PR is done with: forced, since
+    /// the work is on main now, so bd's cleanliness and containment checks
+    /// (which a squash merge fails) no longer protect anything. A failure
+    /// is logged.
+    pub(super) fn remove_worktree(&self, ticket: &str) {
+        let (tools, repo) = (&self.cfg.tools, &self.cfg.repo);
+        let worktree = self.worktree(ticket).display().to_string();
+        if let Err(err) = tools.run(repo, &["bd", "worktree", "remove", &worktree, "--force"]) {
+            self.log(
+                ticket,
+                &format!("could not remove the worktree, remove it by hand: {err}"),
+            );
+        } else if let Err(err) = tools.run(repo, &["git", "branch", "-D", ticket]) {
+            self.log(
+                ticket,
+                &format!("worktree removed, could not delete the branch: {err}"),
+            );
+        }
+    }
+
     /// The PR at `url`, one GraphQL query.
-    fn pr(&self, url: &str) -> Result<Pr, String> {
+    pub(super) fn pr(&self, url: &str) -> Result<Pr, String> {
         let (query, url) = (format!("query={}", pr::QUERY), format!("url={url}"));
         let argv = ["gh", "api", "graphql", "-f", &query, "-f", &url];
         let out = self.cfg.tools.run(&self.cfg.repo, &argv);

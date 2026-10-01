@@ -52,7 +52,7 @@ mod pr_test;
 #[cfg(test)]
 pub(crate) mod question_test;
 #[cfg(test)]
-mod release_test;
+pub(crate) mod release_test;
 #[cfg(test)]
 mod reliability_test;
 #[cfg(test)]

@@ -812,6 +812,8 @@ impl Screen {
             Ask::StageQuestion { .. } => "Stage question",
             Ask::TicketStart { .. } => "Start question",
             Ask::Labels { .. } => "Label question",
+            Ask::Tag { .. } => "Tag question",
+            Ask::ReleaseAgain { .. } => "Release question",
         };
         let mut message = format!("{id} · {kind}");
         if let Some(title) = self.title(id) {
@@ -909,7 +911,9 @@ impl Screen {
             | Ask::Limited { .. }
             | Ask::StageQuestion { .. }
             | Ask::TicketStart { .. }
-            | Ask::Labels { .. } => text.as_str(),
+            | Ask::Labels { .. }
+            | Ask::Tag { .. }
+            | Ask::ReleaseAgain { .. } => text.as_str(),
         };
         let asking = format!("asking you: {short}");
         // /continue @ticket's goes after a confirmation, and the Question
@@ -1098,7 +1102,12 @@ impl Screen {
                 .cloned()
                 .chain(["an answer of your own", "open the pane", "park"].map(str::to_string))
                 .collect(),
-            About::Asked(Ask::TicketStart { options } | Ask::Labels { options }) => options.clone(),
+            About::Asked(
+                Ask::TicketStart { options }
+                | Ask::Labels { options }
+                | Ask::Tag { options, .. }
+                | Ask::ReleaseAgain { options },
+            ) => options.clone(),
             About::Confirm(_) => ["yes", "no"].map(str::to_string).to_vec(),
             About::Continue { rows } => rows
                 .iter()
@@ -1550,9 +1559,26 @@ impl Screen {
                 }
             }
             // its options alone, the one picked sent word for word
-            (About::Asked(Ask::TicketStart { options } | Ask::Labels { options }), n) => {
+            (
+                About::Asked(
+                    Ask::TicketStart { options }
+                    | Ask::Labels { options }
+                    | Ask::ReleaseAgain { options },
+                ),
+                n,
+            ) => {
                 if let Some(option) = options.get(n).cloned() {
                     self.reply(&option.clone(), Answer::Prompt(option));
+                }
+            }
+            // yes or no, sent word for word; no's Notice says how to tag it
+            (About::Asked(Ask::Tag { options, notice }), n) => {
+                let notice = (n == 1).then(|| notice.clone());
+                if let Some(option) = options.get(n).cloned() {
+                    self.reply(&option.clone(), Answer::Prompt(option));
+                }
+                if let Some(text) = notice {
+                    self.notify(NoticeKind::Info, &text, None);
                 }
             }
             // answered even when what it confirms asks again
@@ -1665,8 +1691,13 @@ impl Screen {
                 | Ask::PlanFailed { pane, .. }
                 | Ask::StageQuestion { pane, .. },
             ) => pane.as_str(),
-            // no session: the Ticket's own
-            About::Asked(Ask::TicketStart { .. } | Ask::Labels { .. }) => "",
+            // no session: the Ticket's own, or the Release's
+            About::Asked(
+                Ask::TicketStart { .. }
+                | Ask::Labels { .. }
+                | Ask::Tag { .. }
+                | Ask::ReleaseAgain { .. },
+            ) => "",
             _ => return,
         };
         if let Some(run) = &self.run {
