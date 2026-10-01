@@ -2258,6 +2258,8 @@ fn retry_and_park_reach_the_ticket_and_refusals_are_logged() {
     // The Ticket's Question holds it: the commands are refused until answered.
     s.command("/park @hx-1"); // a leading @ is stripped
     assert_eq!(notice(&s), "refused: Ticket hx-1 has a Question waiting");
+    s.command("/rebase hx-1");
+    assert_eq!(notice(&s), "refused: Ticket hx-1 has a Question waiting");
     s.command("/retry hx-1");
     assert!(
         log(&w).contains(" refused: Ticket hx-1 has a Question waiting\n"),

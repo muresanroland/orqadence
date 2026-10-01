@@ -1798,9 +1798,10 @@ impl Screen {
                     None => {
                         self.refuse("refused: no run is live, /start-epic or /continue starts one")
                     }
-                    Some(_) if matches!(name, "/retry" | "/park") && waiting => self.refuse(
-                        &format!("refused: Ticket {} has a Question waiting", suffix(query)),
-                    ),
+                    Some(_) if waiting => self.refuse(&format!(
+                        "refused: Ticket {} has a Question waiting",
+                        suffix(query)
+                    )),
                     Some(o) => o.command(&format!("{}-{query}", &name[1..])),
                 }
             }
