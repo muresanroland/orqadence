@@ -1,6 +1,6 @@
 use super::manifest::{
-    add, link, list, parse_source, placeholder, remove, renamed, update, update_all, Added,
-    Installed, Manifest, Source, JOBS, NONE,
+    add, job_row, link, list, parse_source, placeholder, remove, renamed, update, update_all,
+    Added, Installed, Manifest, Source, JOBS, NONE,
 };
 use crate::orchestrator::write_file;
 use crate::tempdir::TempDir;
@@ -285,10 +285,11 @@ fn each_job_takes_its_default_until_a_pick_is_recorded() {
         ("review", NONE),
         ("audit", "orqa-ponytail-review"),
         ("merge-conflicts", "orqa-resolving-merge-conflicts"),
+        ("pr-comments", "orqa-address-pr-comments"),
     ] {
         assert_eq!(manifest.pick(job), default, "{job}");
     }
-    assert_eq!(JOBS.len(), 7, "a job without a default here");
+    assert_eq!(JOBS.len(), 8, "a job without a default here");
     manifest
         .picks
         .insert("test-first".into(), "test-driven-development".into());
@@ -705,6 +706,7 @@ fn the_shipped_stage_skills_hold_every_jobs_placeholder_and_no_slash_call() {
         ("review", "orqa-stage-review"),
         ("audit", "orqa-stage-moderate"),
         ("merge-conflicts", "orqa-stage-rebase"),
+        ("pr-comments", "orqa-stage-address-pr-comments"),
     ];
     assert_eq!(want.len(), JOBS.len());
     let slash = regex::Regex::new(r"(?m)(^|[\s`(])/[a-z]").unwrap();
@@ -725,6 +727,34 @@ fn the_shipped_stage_skills_hold_every_jobs_placeholder_and_no_slash_call() {
                 .map(|m| &body[m.start()..(m.end() + 20).min(body.len())])
         );
     }
+}
+
+/// The PR comments job runs on the Address PR comments row, its default the
+/// Shipped address-pr-comments: nothing to fetch. Picked none, the Stage
+/// skill's own steps stand alone.
+#[test]
+fn the_pr_comments_job_takes_the_shipped_skill_or_none() {
+    assert_eq!(job_row("pr-comments"), "address_pr_comments");
+    let (_, suggestions) = JOBS.iter().find(|(job, _)| *job == "pr-comments").unwrap();
+    assert_eq!(suggestions[0], ("orqa-address-pr-comments", ""));
+
+    let stage = crate::skills::SKILLS
+        .iter()
+        .find(|(name, _)| *name == "orqa-stage-address-pr-comments")
+        .unwrap()
+        .1;
+    let have = ["orqa-address-pr-comments".to_string()];
+    let (picked, lacking) = Manifest::default().fill_jobs(stage, &have, &[], "");
+    assert!(lacking.is_empty(), "{lacking:?}");
+    assert!(
+        picked.contains("   Use the orqa-address-pr-comments skill for steps 2 to 5"),
+        "{picked}"
+    );
+    let mut manifest = Manifest::default();
+    manifest.picks.insert("pr-comments".into(), NONE.into());
+    let (own, _) = manifest.fill_jobs(stage, &have, &[], "");
+    assert!(!own.contains("{{") && !own.contains("Use the "), "{own}");
+    assert!(own.contains("2. Read the feedback."), "{own}");
 }
 
 /// The name line in the frontmatter alone takes the new name.

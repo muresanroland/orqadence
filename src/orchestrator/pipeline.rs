@@ -286,21 +286,15 @@ impl Orchestrator {
     }
 
     /// The remote's default branch as the Ticket's worktree names it,
-    /// "origin/main". With origin/HEAD unset (a repo not made by git
-    /// clone), asks the remote for it (a network call) and reads it again;
-    /// None when git still cannot tell.
-    pub(super) fn origin_head(&self, ticket: &str) -> Option<String> {
-        let (tools, worktree) = (&self.cfg.tools, self.worktree(ticket));
+    /// "origin/main"; origin/main when origin/HEAD is unset.
+    pub(super) fn origin_head(&self, ticket: &str) -> String {
         let origin = ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"];
-        let read = || {
-            let head = tools.run(&worktree, &origin).ok()?;
-            Some(head.trim().to_string()).filter(|head| !head.is_empty())
-        };
-        read().or_else(|| {
-            let set = ["git", "remote", "set-head", "origin", "--auto"];
-            tools.run(&worktree, &set).ok()?;
-            read()
-        })
+        let worktree = self.worktree(ticket);
+        let head = self.cfg.tools.run(&worktree, &origin).unwrap_or_default();
+        match head.trim() {
+            "" => "origin/main".into(),
+            h => h.into(),
+        }
     }
 
     /// Runs an Extra review skill's fetch.sh `script` with network, before
@@ -321,8 +315,7 @@ impl Orchestrator {
         cache: &Path,
     ) -> Result<Option<String>, StageError> {
         let (tools, worktree) = (&self.cfg.tools, self.worktree(ticket));
-        let base = self.origin_head(ticket);
-        let base = base.as_deref().unwrap_or("origin/main");
+        let base = &self.origin_head(ticket);
         let argv = [
             "env",
             &format!("ORQA_CACHE={}", cache.display()),

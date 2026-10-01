@@ -33,8 +33,8 @@ pub(crate) const NONE: &str = "none";
 
 /// Each job a Delegate skill can do, with its suggestions, the default first:
 /// (skill name, source). A skill from a source is named as installed, with
-/// PREFIX; an empty source is built into an App (its built_in): nothing to
-/// install.
+/// PREFIX; an empty source is built into an App (its built_in) or a Shipped
+/// skill: nothing to fetch.
 pub(crate) const JOBS: &[(&str, &[(&str, &str)])] = &[
     (
         "test-first",
@@ -114,6 +114,7 @@ pub(crate) const JOBS: &[(&str, &[(&str, &str)])] = &[
             ),
         ],
     ),
+    ("pr-comments", &[("orqa-address-pr-comments", "")]),
 ];
 
 /// A job's placeholder in a Stage skill: {{job}}, alone on the line that uses
@@ -134,6 +135,7 @@ pub(crate) fn job_row(job: &str) -> &'static str {
         "review" => "review",
         "audit" => "side_a",
         "merge-conflicts" => "rebase",
+        "pr-comments" => "address_pr_comments",
         _ => "implement",
     }
 }

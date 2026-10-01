@@ -20,11 +20,11 @@ A skill owned and shipped by Orqadence that holds the instructions for one kind 
 _Avoid_: Wayfinder, brainstorming skill
 
 **Delegate skill**:
-A third-party skill a Stage skill or Brainstorm skill runs for one job (test-first implementing, self review, the over-engineering audit, merge conflicts, how it writes...), chosen per job by the user: one Orqadence installed, the repo's own, one built into an App, or, once the user turns their personal skills on, one of their own at home or from a Claude Code plugin. A Stage can have several. The skill that runs it still owns its result; with no Delegate skill for a job it follows its own instructions. The Brainstorm's own jobs, grilling, domain modeling, research and prototyping, never take one.
+A skill, third-party or Shipped, a Stage skill or Brainstorm skill runs for one job (test-first implementing, self review, the over-engineering audit, merge conflicts, PR comments, how it writes...), chosen per job by the user: one Orqadence installed, the repo's own, one built into an App, or, once the user turns their personal skills on, one of their own at home or from a Claude Code plugin. A Stage can have several. The skill that runs it still owns its result; with no Delegate skill for a job it follows its own instructions. The Brainstorm's own jobs, grilling, domain modeling, research and prototyping, never take one.
 _Avoid_: Override, replacement, work skill
 
 **Shipped skill**:
-Any skill Orqadence ships and installs for a Target repo, committed with the repo's Orqadence settings: the Stage skills, the Brainstorm skills, plus orqa-create-pr, which the Fix Stage runs, and orqa-infra-review, orqa:infra's Extra review skill. Like every skill Orqadence installs, fetched Delegate skills too, its name starts with orqa-, so none shares a name with a skill of the repo's or the user's own.
+Any skill Orqadence ships and installs for a Target repo, committed with the repo's Orqadence settings: the Stage skills, the Brainstorm skills, plus orqa-create-pr, which the Fix Stage runs, orqa-infra-review, orqa:infra's Extra review skill, and orqa-address-pr-comments, the Address PR comments Stage's default Delegate skill. Like every skill Orqadence installs, fetched Delegate skills too, its name starts with orqa-, so none shares a name with a skill of the repo's or the user's own.
 
 **Personal override**:
 One setting of the Target repo's Orqadence settings that one person keeps for themselves, read over the repo's committed value on their machine only. It never leaves the machine and is never reviewed, so it covers the settings that change how a run is scheduled and which App, model or effort a Stage uses, never a skill or a Delegate pick.

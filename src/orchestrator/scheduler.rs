@@ -510,8 +510,7 @@ impl Orchestrator {
             return self.report(ticket, &text);
         }
         let base = self.origin_head(ticket);
-        let base = base.as_deref().unwrap_or("origin/main");
-        let inputs = [("PR", ts.pr.as_str()), ("Default branch", base)];
+        let inputs = [("PR", ts.pr.as_str()), ("Default branch", base.as_str())];
         self.on_pr(ticket, &REBASE, &inputs, "rebased");
     }
 

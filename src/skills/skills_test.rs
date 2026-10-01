@@ -244,6 +244,112 @@ fn stage_address_pr_comments_holds_no_rebase() {
     assert!(!comments.contains("{{merge-conflicts}}"));
 }
 
+/// address-pr-comments knows the approved and won't-fix lists, the
+/// won't-fix reply, and a Ticket's worktree already on the PR's branch.
+#[test]
+fn address_pr_comments_knows_the_lists() {
+    let skill = skill("orqa-address-pr-comments");
+    for text in [
+        "name: orqa-address-pr-comments",
+        "**approved list**",
+        "**won't-fix list**",
+        "`Won't fix: not approved for this PR.`",
+        "<!-- address-pr-comments -->",
+        "When HEAD is already the PR's head branch",
+    ] {
+        assert!(skill.contains(text), "address-pr-comments lacks {text:?}");
+    }
+}
+
+/// threads.sh run with a stub gh first on PATH: gh's --jq filter applied
+/// by jq to `reply`, a GraphQL reply. The real bash runs.
+fn threads(reply: &serde_json::Value) -> Option<serde_json::Value> {
+    for tool in ["bash", "jq"] {
+        if Command::new(tool).arg("--version").output().is_err() {
+            eprintln!("skipped: threads.sh's test needs {tool}");
+            return None;
+        }
+    }
+    let stubs = TempDir::new();
+    let fixture = stubs.path().join("reply.json");
+    write_file(&fixture, &reply.to_string());
+    let gh = stubs.path().join("gh");
+    write_file(
+        &gh,
+        "#!/bin/sh\nwhile [ $# -gt 0 ] && [ \"$1\" != --jq ]; do shift; done\n\
+         exec jq \"$2\" \"$FIXTURE\"\n",
+    );
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        stubs.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("skills/orqa-address-pr-comments/scripts/threads.sh");
+    let out = Command::new("bash")
+        .arg(script)
+        .arg("7")
+        .current_dir(stubs.path())
+        .env("PATH", path)
+        .env("FIXTURE", &fixture)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "threads.sh: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Some(serde_json::from_slice(&out.stdout).unwrap())
+}
+
+/// CodeRabbit's review body yields only the entries with a severity header,
+/// not its 🔇 LGTM ones, and its logins count with [bot] or without. A
+/// deleted account's review, its author null, is no bot's.
+#[test]
+fn threads_sh_keeps_coderabbits_rated_entries_and_its_thread() {
+    let bot = serde_json::json!({"login": "coderabbitai[bot]", "__typename": "Bot"});
+    let body = "**Actionable comments posted: 0**\n\n<details>\n\
+        <summary>🧹 Nitpick comments (1)</summary><blockquote>\n\n<details>\n\
+        <summary>src/a.rs (1)</summary><blockquote>\n\n\
+        `10-12`: _🎯 Functional Correctness_ | _🟠 Major_ | _⚡ Quick win_\n\n\
+        **Guard the empty list.**\n\nThe loop indexes [0] unchecked.\n\n\
+        <!-- cr-comment:v1:abc123 -->\n\n</blockquote></details>\n\n</blockquote></details>\n\
+        <details>\n<summary>🔇 Additional comments (1)</summary><blockquote>\n\n<details>\n\
+        <summary>src/b.rs (1)</summary><blockquote>\n\n`3-3`: LGTM!\n\n\
+        <!-- cr-comment:v1:def456 -->\n\n</blockquote></details>\n\n</blockquote></details>";
+    let reply = serde_json::json!({"data": {"repository": {"pullRequest": {
+        "reviewThreads": {"nodes": [{
+            "id": "T1", "isResolved": false, "isOutdated": false, "path": "src/a.rs", "line": 5,
+            "comments": {"nodes": [{"databaseId": 11, "author": bot,
+                "body": "_🎯 Functional Correctness_ | _🟡 Minor_ | _⚡ Quick win_\n\n**Rename x.**"}]},
+        }]},
+        "reviews": {"nodes": [
+            {"databaseId": 21, "url": "https://x/r21", "author": bot, "body": body},
+            {"databaseId": 22, "url": "https://x/r22", "author": null, "body": ""},
+        ]},
+        "comments": {"nodes": []},
+    }}}});
+    let Some(found) = threads(&reply) else {
+        return;
+    };
+    let got: Vec<(&str, &str)> = found
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| (c["kind"].as_str().unwrap(), c["title"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("thread", "Rename x."),
+            ("outside", "Guard the empty list.")
+        ]
+    );
+    assert_eq!(found[0]["thread_id"], "T1");
+    assert_eq!(found[1]["path"], "src/a.rs");
+}
+
 /// create-pr fills a template it is given before any it finds itself, and
 /// replaces each section's comment with content.
 #[test]
