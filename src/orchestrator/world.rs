@@ -150,17 +150,24 @@ pub(crate) fn working(_: &Prompt) -> (String, String) {
     (String::new(), "working".to_string())
 }
 
-/// The default session: every Stage is done, Verdicts are clean, and the last
-/// Fix opens a PR.
+/// The default session: every Stage is done, the Review finds one low
+/// Finding, so the Debate runs, its Verdict skips it, and the last Fix opens
+/// a PR.
 pub(crate) fn succeed(p: &Prompt) -> (String, String) {
-    if p.open_pr {
-        return (
-            format!("STATUS: done\nPR: https://example.test/pr/{}\n", p.ticket),
-            "idle".to_string(),
-        );
-    }
-    ("STATUS: done\n".to_string(), "idle".to_string())
+    let body = match p.stage.as_str() {
+        _ if p.open_pr => format!("STATUS: done\nPR: https://example.test/pr/{}\n", p.ticket),
+        "review" => format!("STATUS: done\n{NIT}\n"),
+        "verdict" => format!(
+            "STATUS: done\n- [skip] {} | reason: a nit | settled: consensus\n",
+            &NIT[2..]
+        ),
+        _ => "STATUS: done\n".to_string(),
+    };
+    (body, "idle".to_string())
 }
+
+/// The default Review's one Finding.
+const NIT: &str = "- (low) a.rs:1 — a nit";
 
 /// What the world's lock guards, the port of world's mu-guarded fields.
 #[derive(Default)]

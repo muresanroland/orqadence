@@ -455,7 +455,9 @@ impl Orchestrator {
     }
 
     /// A Debate over `findings` Findings, reported as settled; its Verdict
-    /// file joins the history and its fix items are returned.
+    /// file joins the history and its fix items are returned. With no
+    /// Findings it does not run: an empty Verdict is written in its place,
+    /// so the Round still counts.
     fn debate(
         &self,
         ticket: &str,
@@ -464,6 +466,18 @@ impl Orchestrator {
         findings: usize,
         verdicts: &mut Vec<String>,
     ) -> Result<Vec<String>, StageError> {
+        let label = stage_label(&DEBATE, round);
+        let file = self.run_dir(ticket).join(result_name(&DEBATE, round));
+        if findings == 0 {
+            let empty =
+                "STATUS: done\n\n## Verdict\n\n## Notes\n\nNo Findings: the Debate did not run.\n";
+            fs::write(&file, empty).map_err(|err| {
+                StageError::Parked(format!("{label}: empty Verdict not written: {err}"))
+            })?;
+            self.report(ticket, &format!("{label} skipped: no findings"));
+            verdicts.push(file.display().to_string());
+            return Ok(Vec::new());
+        }
         let verdict = self.run_read_only(
             ticket,
             &DEBATE,
@@ -477,13 +491,11 @@ impl Orchestrator {
         self.report(
             ticket,
             &format!(
-                "{} settled: {} to fix, {} skipped",
-                stage_label(&DEBATE, round),
+                "{label} settled: {} to fix, {} skipped",
                 verdict.fixes.len(),
                 verdict.skips.len()
             ),
         );
-        let file = self.run_dir(ticket).join(result_name(&DEBATE, round));
         verdicts.push(file.display().to_string());
         Ok(verdict.fixes)
     }

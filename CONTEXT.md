@@ -98,7 +98,7 @@ A second review an Area label adds to its Tickets, with its own skill, App, mode
 _Avoid_: Extra Stage, label Stage, security Stage
 
 **Round**:
-One pass of Review, Debate and Fix over a Ticket, with any Extra review beside the Review. Rounds repeat until a Verdict has no fix items or the cap is reached, after which the pull request opens with any leftover Findings listed.
+One pass of Review, Debate and Fix over a Ticket, with any Extra review beside the Review. With no Findings to argue the Debate does not run, and an empty Verdict stands in its place. Rounds repeat until a Verdict has no fix items or the cap is reached, after which the pull request opens with any leftover Findings listed.
 _Avoid_: Iteration, loop, cycle
 
 **Stage**:

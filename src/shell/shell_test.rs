@@ -4060,7 +4060,7 @@ fn only_a_trust_dialog_waiting_line_blocks_a_ticket() {
 fn a_blocked_question_closes_itself_when_the_session_carries_on() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
     w.lock().merged = true;
-    w.session(|_| ("STATUS: done\n".to_string(), "blocked".to_string()));
+    w.session(|p| (succeed(p).0, "blocked".to_string()));
     let unblock = |w: &World| {
         for status in w.lock().agents.values_mut() {
             *status = "idle".to_string();
@@ -5833,6 +5833,11 @@ fn the_close_confirmation_on_the_last_merge_runs_bd_close_on_yes_and_nothing_on_
     for (answer, want) in [('y', 1), ('n', 0)] {
         let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
         w.lock().merged = true;
+        // A clean Review: the Debate's empty Verdict still counts the Round.
+        w.session(|p| match p.stage.as_str() {
+            "review" => ("STATUS: done\n".to_string(), "idle".to_string()),
+            _ => succeed(p),
+        });
         let mut s = shell(&w);
         s.command("/start-epic hx");
         await_line(&mut s, "Epic done, every Ticket closed");

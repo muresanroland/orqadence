@@ -1,4 +1,5 @@
 use super::herdr::PaneInfo;
+use super::result::{read_stage_result, ResultRequirements};
 use super::stage::{Answer, Ask, Orchestrator};
 use super::state::{STATUS_PARKED, STATUS_PR_OPEN};
 use super::world::{new_world, spawn_ticket, succeed, BdTicket, Prompt, World};
@@ -73,21 +74,33 @@ fn implement_stage_runs_in_a_ticket_tab_and_reports_to_main() {
     );
 }
 
+/// A Review with no Findings leaves the Debate nothing to argue: it does not
+/// run, an empty Verdict stands in its place for the Round and the PR's
+/// Verdict history, and the Fix opens the PR.
 #[test]
-fn clean_first_verdict_opens_pr_after_one_round() {
+fn a_clean_review_skips_the_debate_and_opens_the_pr_after_one_round() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.session(|p| match p.stage.as_str() {
+        "review" => ("STATUS: done\n".to_string(), "idle".to_string()),
+        _ => succeed(p),
+    });
 
     o.run_ticket("hx-1");
 
-    assert_eq!(stages_run(&w), ["implement", "review", "debate", "fix"]);
+    assert_eq!(stages_run(&w), ["implement", "review", "fix"]);
     let ts = o.ticket("hx-1");
     assert!(
         ts.status == STATUS_PR_OPEN && ts.pr == "https://example.test/pr/hx-1",
         "state = {ts:?}"
     );
     w.await_line("hx-1 review 1 found 0 findings");
-    w.await_line("hx-1 debate 1 settled: 0 to fix, 0 skipped");
+    w.await_line("hx-1 debate 1 skipped: no findings");
     w.await_line("hx-1 fix 1 done");
+    let verdict = o.run_dir("hx-1").join("verdict-1.md");
+    let (read, why) = read_stage_result(&verdict, ResultRequirements::default());
+    assert!(why.is_empty() && read.fixes.is_empty() && read.skips.is_empty());
+    let fix = w.prompt("fix-1.md");
+    assert!(fix.contains(&verdict.display().to_string()), "{fix}");
     assert_eq!(
         w.await_line("hx-1 PR #hx-1 opened"),
         "hx-1 PR #hx-1 opened after 1 round",
