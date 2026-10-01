@@ -28,6 +28,8 @@ pub(crate) struct ResultRequirements {
     pub(crate) review_findings: usize,
     /// The final Fix must identify its opened PR.
     pub(crate) require_pr: bool,
+    /// The Release must name its new version.
+    pub(crate) require_version: bool,
 }
 
 /// The Wake reasons a result file gives (docs/design/events.md).
@@ -103,6 +105,9 @@ pub(crate) fn read_stage_result(path: &Path, want: ResultRequirements) -> (Stage
     }
     if want.require_pr && result.pr.is_empty() {
         return rejected("finished without a PR link");
+    }
+    if want.require_version && result.version.is_empty() {
+        return rejected("finished without a VERSION line");
     }
     (result, String::new())
 }

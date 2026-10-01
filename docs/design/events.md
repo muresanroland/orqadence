@@ -82,7 +82,7 @@ Decided on the map tickets "Limited" (harness-0sx.8) and "Apps per Stage" (harne
 
 ## Release
 
-Decided on the map ticket for the Release label (harness-bsg.22). A run carrying orqa:release, with release_on set, ends in the Release once every Ticket is closed and one at least merged its PR: an Epic's own label, or any queued Ticket's in a Ticket run, read at that moment. The Release belongs to the run, not to a Ticket: its lines below are run-level. Its other lines (holds, stuck, a question, waiting at a prompt, parked) are a Stage's as above, named by the Release's id, `release-<epic>` (`release-<epic>-<date>-<time>` when an earlier Release's worktree has that name) or `release-<date>-<time>` in a Ticket run, as RECENT names a Ticket, so its Questions are answered as a Ticket's are.
+Decided on the map ticket for the Release label (harness-bsg.22). A run carrying orqa:release, with release_on set, ends in the Release once every Ticket is closed and one at least merged its PR: an Epic's own label, or any queued Ticket's in a Ticket run, read at that moment. The Release belongs to the run, not to a Ticket: its lines below are run-level. Its other lines (holds, stuck, a question, waiting at a prompt, parked) are a Stage's as above, named by the Release's id, `release-<epic>` (`release-<epic>-<date>-<time>` when an earlier Release's worktree has that name) or `release-<date>-<time>` in a Ticket run, as RECENT names a Ticket, so its Questions are answered as a Ticket's are. The run stays live after its result, its version PR polled on the PRs' interval (never by the Ticket poll, so no Rebase or Address PR comments), until the tag Question is answered: either answer ends the run.
 
 | Moment | Wording |
 |---|---|
@@ -90,13 +90,19 @@ Decided on the map ticket for the Release label (harness-bsg.22). A run carrying
 | resumed | *(orqadence)* release resumed: claude (pane 3-1) *(/continue on a saved run whose Tickets are all merged)* |
 | done | *(orqadence)* release done: v1.5.0 |
 | version PR | *(orqadence)* version PR #12 opened *(log line adds the url; none in a repo that keeps its version only in tags)* |
+| version PR merged | *(orqadence)* version PR #12 merged *(its worktree and branch removed, as a Ticket's)* |
+| tag Question | *asking you:* Tag v1.5.0 and push it? *(yes, no; right after release done in a repo that keeps its version only in tags)* |
+| tagged | *(orqadence)* tagged v1.5.0 and pushed *(yes: git fetch origin HEAD, git tag v1.5.0 on the merge commit, or FETCH_HEAD with no version PR, git push origin v1.5.0; never a GitHub Release)* |
+| not tagged | *(orqadence)* v1.5.0 not tagged: git fetch origin HEAD && git tag v1.5.0 `commit` && git push origin v1.5.0 *(no; an info Notice, which never closes by itself, gives the same commands)* |
+| tag failed | *(orqadence)* tag v1.5.0 failed: `err` *(the tag Question again)* |
+| version PR closed | *(orqadence)* version PR #12 closed without merging *(then asking you: version PR #12 closed without merging: run the Release again? — run the Release again, its worktree and branch removed, in a fresh session; or end without a Release, the run ends untagged)* |
 | bd cannot show the Epic | *(orqadence)* bd show failed: `err` *(tried again on the next pass, never read as no Release)* |
 | parked | release-hx parked: `reason` *(a Wake settled as park, or its worktree not made: the run stops, the Release saved, as on /stop-work; /continue starts it again)* |
-| asked while Away | *nothing:* question in release (pane 3-1) *(no Ticket to park: it waits as a Question, no bd comment)* |
+| asked while Away | *nothing:* question in release (pane 3-1) *(no Ticket to park: it waits as a Question, no bd comment; the tag Question and the closed version PR's too)* |
 
 ## Wake reasons
 
-session reported failure · went idle without a result · wrote a result file whose first line is not STATUS: · timed out after 30m · session died · finished without a PR link · never took the Stage skill · never took the nudge · never took the continue · never took your answer · wrote STATUS: plan and no plan.md · has no plan hook · never took the answer to its plan · left plan mode before your feedback · feedback not sent: `why` · the cursor never reached Yes, clear context · changed the worktree before its plan was approved
+session reported failure · went idle without a result · wrote a result file whose first line is not STATUS: · timed out after 30m · session died · finished without a PR link · finished without a VERSION line · never took the Stage skill · never took the nudge · never took the continue · never took your answer · wrote STATUS: plan and no plan.md · has no plan hook · never took the answer to its plan · left plan mode before your feedback · feedback not sent: `why` · the cursor never reached Yes, clear context · changed the worktree before its plan was approved
 
 The last six are plan failures: a Question for the user, no Judgment asked.
 

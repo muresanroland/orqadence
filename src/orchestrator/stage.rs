@@ -171,6 +171,17 @@ pub(crate) enum Ask {
     /// to keep one of, or the one to remove, then park; the one picked is
     /// answered word for word, for no pane ("").
     Labels { options: Vec<String> },
+    /// The Release's tag, once its version PR merged, or at once in a repo
+    /// that keeps its version only in tags (release.rs): yes or no, answered
+    /// word for word for no pane (""); no raises an info Notice of
+    /// `notice`, how to tag it by hand.
+    Tag {
+        options: Vec<String>,
+        notice: String,
+    },
+    /// The Release's version PR closed unmerged: run the Release again, or
+    /// end without one, answered word for word for no pane ("").
+    ReleaseAgain { options: Vec<String> },
 }
 
 /// The user's answer to a Question, for the session (pane) it was about.
@@ -1486,21 +1497,23 @@ impl Orchestrator {
     }
 
     /// A Question with no pane and no session, at the Ticket's start, over
-    /// its labels or on a failed fetch.sh, so its answer is for pane "".
-    /// Away, the Ticket parks with a bd comment, as for a Stage's own
-    /// question, and /continue @ticket asks again; turning Away on while it
-    /// waits does the same. `ask` makes the Ask from `options`. The place in `options`
-    /// of the one picked; /park parks.
+    /// its labels or on a failed fetch.sh, or the Release's after its
+    /// result, so its answer is for pane "". Away, the Ticket parks with a
+    /// bd comment, as for a Stage's own question, and /continue @ticket
+    /// asks again; turning Away on while it waits does the same. The
+    /// Release's, no Ticket to park, waits all the same. `ask` makes the Ask
+    /// from `options`. The place in `options` of the one picked; /park
+    /// parks.
     pub(super) fn ask_at_start(
         &self,
         ticket: &str,
         text: &str,
         options: Vec<String>,
-        ask: fn(Vec<String>) -> Ask,
+        ask: impl Fn(Vec<String>) -> Ask,
     ) -> Result<usize, StageError> {
         let mut raised = false;
         loop {
-            if self.cfg.away.load(Ordering::SeqCst) {
+            if self.cfg.away.load(Ordering::SeqCst) && !self.is_release(ticket) {
                 let lead = format!(
                     "{ticket} asked a question while you were away and needs a manual resume: \
                      /continue @{ticket} in the Orqadence Shell asks it again."

@@ -12,18 +12,22 @@ use super::state::{
     Release, Session, TicketState, STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING,
 };
 use super::world::{
-    new_world, restarted, set_clock, spawn_epic, succeed, working, BdTicket, Prompt, World,
+    new_world, restarted, set_clock, spawn_epic, succeed, wait_until, working, BdTicket, Prompt,
+    Running, World,
 };
 use super::write_file;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// The version PR the Release opens.
+pub(crate) const VERSION_PR: &str = "https://example.test/pr/version";
+
 /// The Release's result: the new version and the version PR.
 const RELEASED: &str = "STATUS: done\nVERSION: v1.5.0\nPR: https://example.test/pr/version\n";
 
 /// The Release label, as bd lists it on an issue.
-fn label() -> Vec<String> {
+pub(crate) fn label() -> Vec<String> {
     vec![RELEASE_LABEL.to_string()]
 }
 
@@ -36,7 +40,7 @@ fn release_done(p: &Prompt) -> (String, String) {
 }
 
 /// A world with releases on, every PR merged as soon as gh is asked.
-fn releasing(tickets: Vec<BdTicket>) -> (Arc<World>, Orchestrator) {
+pub(crate) fn releasing(tickets: Vec<BdTicket>) -> (Arc<World>, Orchestrator) {
     let (w, o) = new_world(tickets);
     set_switch(&w.repo, &RELEASE_ON, true).unwrap();
     w.lock().merged = true;
@@ -53,13 +57,168 @@ fn run_level(w: &World, text: &str) -> bool {
     })
 }
 
+/// Answers the tag Question `answer` once it is put, then waits for the
+/// run to end.
+fn tag(w: &World, o: &Orchestrator, run: &mut Running, answer: &str) {
+    let asked = w.await_event(" and push it?");
+    let id = asked.ticket.unwrap();
+    o.answer(&id, "", Answer::Prompt(answer.to_string()));
+    run.wait();
+}
+
+/// An Epic run to its end, the tag Question answered no.
+fn run_tagged(w: &World, o: &Arc<Orchestrator>) {
+    let mut run = spawn_epic(o.clone(), "hx");
+    tag(w, o, &mut run, "no");
+    o.wait_in_flight();
+}
+
+#[test]
+fn the_version_prs_merge_puts_the_tag_question_and_yes_tags_the_merge_commit_and_pushes_it() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    let o = Arc::new(o);
+
+    let mut run = spawn_epic(o.clone(), "hx");
+
+    let asked = w.await_event("Tag v1.5.0 and push it?");
+    let Some(Ask::Tag { options, .. }) = &asked.ask else {
+        panic!("no tag Question: {asked:?}");
+    };
+    assert_eq!(options, &["yes", "no"]);
+    assert_eq!(asked.ticket.as_deref(), Some("release-hx"));
+    w.await_line("version PR #version merged");
+    let worktree = o.worktree("release-hx").display().to_string();
+    let removed = format!("bd worktree remove {worktree} --force");
+    assert_eq!(w.called(&removed).len(), 1, "the Release's worktree stayed");
+    assert_eq!(w.called("git branch -D release-hx").len(), 1);
+    assert!(
+        !run.finished_within(Duration::from_millis(30)),
+        "the run ended before the tag Question was answered"
+    );
+
+    let before = w.calls().len();
+    tag(&w, &o, &mut run, "yes");
+
+    assert_eq!(
+        w.since(before, "git "),
+        [
+            "git fetch origin HEAD",
+            "git tag v1.5.0 m3rg3d",
+            "git push origin v1.5.0"
+        ]
+    );
+    assert!(w.called("gh release").is_empty(), "a GitHub Release made");
+    assert!(run_level(&w, "tagged v1.5.0 and pushed"));
+    let release = o.state.lock().unwrap().release.clone().unwrap();
+    assert!(release.tagged, "{release:?}");
+    assert_eq!(release.commit, "m3rg3d");
+}
+
+#[test]
+fn no_to_the_tag_question_tags_nothing_says_how_and_ends_the_run() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+
+    w.await_event("Tag v1.5.0 and push it?");
+    tag(&w, &o, &mut run, "no");
+
+    assert!(w.called("git tag").is_empty() && w.called("git push").is_empty());
+    let how = "git fetch origin HEAD && git tag v1.5.0 m3rg3d && git push origin v1.5.0";
+    assert!(run_level(&w, &format!("v1.5.0 not tagged: {how}")));
+    assert!(!o.state.lock().unwrap().release.clone().unwrap().tagged);
+}
+
+#[test]
+fn a_repo_that_keeps_its_version_in_tags_alone_gets_the_tag_question_at_once() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    w.session(|p| match p.stage == "release" {
+        true => (
+            "STATUS: done\nVERSION: v1.5.0\n".to_string(),
+            "idle".to_string(),
+        ),
+        false => succeed(p),
+    });
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+
+    w.await_event("Tag v1.5.0 and push it?");
+    let calls = w.calls();
+    let prompted = calls
+        .iter()
+        .position(|c| c.starts_with("herdr agent prompt") && c.contains("release.md"))
+        .unwrap();
+    let polled: Vec<&String> = calls[prompted..]
+        .iter()
+        .filter(|c| c.starts_with("gh "))
+        .collect();
+    assert!(polled.is_empty(), "polled with no version PR: {polled:?}");
+
+    tag(&w, &o, &mut run, "yes");
+    assert_eq!(
+        w.called("git tag"),
+        ["git tag v1.5.0 FETCH_HEAD"],
+        "origin's default branch head as fetched"
+    );
+}
+
+#[test]
+fn a_version_pr_closed_unmerged_asks_and_run_again_starts_a_fresh_release() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    {
+        let mut world = w.lock();
+        world.epic_labels = label();
+        world.integration = true; // a session id, which a resume would use
+        let closed = r#"{"state":"CLOSED","mergeable":"UNKNOWN"}"#.to_string();
+        world.prs.insert(VERSION_PR.to_string(), closed);
+    }
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+
+    let asked = w.await_event("version PR #version closed without merging: run the Release again?");
+    let Some(Ask::ReleaseAgain { options }) = &asked.ask else {
+        panic!("no Question: {asked:?}");
+    };
+    assert_eq!(options, &["run the Release again", "end without a Release"]);
+    assert!(run_level(&w, "version PR #version closed without merging"));
+    let worktree = o.worktree("release-hx").display().to_string();
+    let removed = format!("bd worktree remove {worktree} --force");
+    assert!(w.called(&removed).is_empty(), "removed before the answer");
+
+    o.answer("release-hx", "", Answer::Prompt(options[0].clone()));
+
+    w.await_nth("run the Release again?", 2);
+    assert_eq!(w.called(&removed).len(), 1);
+    assert_eq!(w.called("git branch -D release-hx").len(), 1);
+    let starts = w.called("herdr agent start h-release-hx-release ");
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert!(
+        !starts[1].contains("--resume"),
+        "not a fresh session: {starts:?}"
+    );
+    let create = format!("bd worktree create {worktree} --branch release-hx");
+    assert_eq!(w.called(&create).len(), 2, "a fresh worktree");
+
+    o.answer(
+        "release-hx",
+        "",
+        Answer::Prompt("end without a Release".to_string()),
+    );
+    run.wait();
+    assert!(!o.stopping(), "the run stopped rather than ended");
+    assert!(w.called("git tag").is_empty());
+}
+
 #[test]
 fn an_epic_carrying_orqa_release_ends_in_a_release_with_bump_minor_and_each_prs_url() {
     let (w, o) = releasing(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
     w.lock().epic_labels = label();
     let o = Arc::new(o);
 
-    run_epic(&o);
+    run_tagged(&w, &o);
 
     let prompt = w.prompt("release-hx/release.md");
     for want in [
@@ -125,7 +284,7 @@ fn an_earlier_releases_worktree_gives_a_new_epic_release_an_id_of_its_own() {
     std::fs::create_dir_all(o.worktree("release-hx")).unwrap(); // its record discarded
     let o = Arc::new(o);
 
-    run_epic(&o);
+    run_tagged(&w, &o);
 
     w.await_line("release done: v1.5.0");
     let id = o.state.lock().unwrap().release.clone().unwrap().id;
@@ -140,7 +299,7 @@ fn run_tickets(w: &World, o: &Arc<Orchestrator>, tickets: &[&str]) {
     let ids: Vec<String> = tickets.iter().map(|t| t.to_string()).collect();
     assert!(o.enqueue(&ids));
     let mut run = spawn_epic(o.clone(), "");
-    run.wait();
+    tag(w, o, &mut run, "no");
     o.wait_in_flight();
     w.await_line("Ticket run done, every Ticket closed");
 }
@@ -353,6 +512,7 @@ fn stopped_in_release(w: &World, o: &Orchestrator) {
 fn continue_on_a_saved_run_resumes_its_release_by_its_session_id() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
     stopped_in_release(&w, &o);
+    w.lock().merged = true;
     let file = o.run_dir("release-hx").join("release.md");
     w.session(move |p| match p.text == "continue" {
         true => {
@@ -363,7 +523,7 @@ fn continue_on_a_saved_run_resumes_its_release_by_its_session_id() {
     });
     let o = Arc::new(o);
 
-    run_epic(&o);
+    run_tagged(&w, &o);
 
     let starts = w.called("herdr agent start h-release-hx-release ");
     assert!(
@@ -397,10 +557,15 @@ fn a_short_usage_limit_on_the_release_holds_it_and_it_carries_on_at_the_reset() 
         "the Release did not hold"
     );
     assert_eq!(o.ticket("release-hx").limited, "claude");
+    let file = o.run_dir("release-hx").join("release.md");
+    w.session(move |_| {
+        write_file(&file, RELEASED); // the continue
+        (String::new(), "idle".to_string())
+    });
     *clock.lock().unwrap() = at(25, 15, 47);
-    run.wait();
+    tag(&w, &o, &mut run, "no");
     w.await_line("release-hx claude session limit over: release carries on (pane");
-    w.await_line("release done");
+    w.await_line("release done: v1.5.0");
 }
 
 #[test]
@@ -455,7 +620,7 @@ fn a_wake_on_the_release_settled_as_park_stops_the_run_and_continue_starts_it_ag
     let mut run = spawn_epic(again.clone(), "hx");
     w.await_nth("stuck in release: went idle without a result", 2);
     write_file(&o.run_dir("release-hx").join("release.md"), RELEASED);
-    run.wait();
+    tag(&w, &again, &mut run, "no");
     w.await_line("release done: v1.5.0");
     assert!(w.since(before, "herdr agent start ").is_empty());
 }
@@ -483,4 +648,130 @@ fn a_long_usage_limit_on_the_release_ends_the_run_with_its_session_saved() {
         ts.tab.is_empty() && ts.panes.is_empty() && !ts.sessions["release"].id.is_empty(),
         "{ts:?}"
     );
+}
+
+#[test]
+fn the_tag_question_while_away_waits_unparked_with_no_bd_comment() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    o.cfg.away.store(true, Ordering::SeqCst);
+    let o = Arc::new(o);
+
+    let mut run = spawn_epic(o.clone(), "hx");
+
+    w.await_event("Tag v1.5.0 and push it?");
+    assert!(
+        !run.finished_within(Duration::from_millis(30)),
+        "the run did not wait on the tag Question"
+    );
+    assert!(w.called("bd comments add").is_empty());
+    assert_ne!(o.ticket("release-hx").status, STATUS_PARKED);
+    tag(&w, &o, &mut run, "no");
+}
+
+#[test]
+fn continue_on_a_saved_run_whose_version_pr_is_open_polls_it_again() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    stopped_in_release(&w, &o);
+    {
+        let mut state = o.state.lock().unwrap();
+        let release = state.release.as_mut().unwrap();
+        release.version = "v1.5.0".to_string();
+        release.ts.pr = VERSION_PR.to_string();
+        release.ts.sessions.clear();
+    }
+    let open = r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#.to_string();
+    w.lock().prs.insert(VERSION_PR.to_string(), open);
+    let o = Arc::new(o);
+
+    let mut run = spawn_epic(o.clone(), "hx");
+
+    let poll = format!("url={VERSION_PR}");
+    wait_until("the version PR polled", || {
+        w.called("gh api graphql")
+            .iter()
+            .any(|c| c.ends_with(&poll))
+    });
+    assert!(
+        w.called("herdr agent start").is_empty(),
+        "the Release's Stage ran again"
+    );
+    w.lock().prs.remove(VERSION_PR); // merged
+    w.lock().merged = true;
+    tag(&w, &o, &mut run, "no");
+    w.await_line("version PR #version merged");
+}
+
+#[test]
+fn continue_on_a_saved_run_whose_release_is_tagged_asks_no_tag_question() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    stopped_in_release(&w, &o);
+    {
+        let mut state = o.state.lock().unwrap();
+        let release = state.release.as_mut().unwrap();
+        release.version = "v1.5.0".to_string();
+        release.ts.pr = VERSION_PR.to_string();
+        release.ts.sessions.clear();
+        release.commit = "m3rg3d".to_string();
+        release.tagged = true;
+    }
+    let o = Arc::new(o);
+
+    spawn_epic(o.clone(), "hx").wait();
+
+    assert!(
+        w.events().iter().all(|e| e.ask.is_none()),
+        "{:?}",
+        w.events()
+    );
+    assert!(w.called("git tag").is_empty());
+}
+
+#[test]
+fn a_release_result_without_its_version_wakes() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    w.session(|p| match p.stage == "release" {
+        true => (
+            format!("STATUS: done\nPR: {VERSION_PR}\n"),
+            "idle".to_string(),
+        ),
+        false => succeed(p),
+    });
+    let o = Arc::new(o);
+
+    let _run = spawn_epic(o.clone(), "hx");
+
+    let stuck = w.await_event("stuck in release: finished without a VERSION line");
+    assert!(matches!(stuck.ask, Some(Ask::Wake { .. })), "{stuck:?}");
+}
+
+#[test]
+fn a_tag_that_fails_says_so_and_asks_again() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    w.fail_once("git push origin v1.5.0", "rejected");
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+    w.await_event("Tag v1.5.0 and push it?");
+
+    o.answer("release-hx", "", Answer::Prompt("yes".to_string()));
+
+    w.await_nth("Tag v1.5.0 and push it?", 2);
+    assert!(run_level(&w, "tag v1.5.0 failed: "));
+    assert!(!o.state.lock().unwrap().release.clone().unwrap().tagged);
+    // the tag the failed push left goes, or every git tag after it fails
+    assert_eq!(w.called("git tag -d"), ["git tag -d v1.5.0"]);
+
+    let before = w.calls().len();
+    tag(&w, &o, &mut run, "yes");
+    assert_eq!(
+        w.since(before, "git "),
+        [
+            "git fetch origin HEAD",
+            "git tag v1.5.0 m3rg3d",
+            "git push origin v1.5.0"
+        ]
+    );
+    assert!(o.state.lock().unwrap().release.clone().unwrap().tagged);
 }

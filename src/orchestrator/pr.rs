@@ -9,7 +9,7 @@ use serde::Deserialize;
 /// reads for its marker rule. It costs 1 point: GitHub counts connections,
 /// not their size.
 pub(crate) const QUERY: &str = "query($url:URI!){resource(url:$url){...on PullRequest{
-  state mergeable headRefOid
+  state mergeable headRefOid mergeCommit{oid}
   statusCheckRollup{commit{oid} state contexts(first:100){nodes{
     ...on CheckRun{name status conclusion startedAt
       checkSuite{app{slug} workflowRun{event workflow{name}}}}
@@ -26,6 +26,7 @@ pub(crate) struct Pr {
     pub(crate) state: String,
     pub(crate) mergeable: String,
     pub(crate) head_ref_oid: String,
+    merge_commit: Option<Commit>,
     status_check_rollup: Option<Rollup>,
     review_threads: Nodes<Thread>,
     reviews: Nodes<Post>,
@@ -123,6 +124,11 @@ pub(crate) fn parse(reply: &str) -> Result<Pr, String> {
 }
 
 impl Pr {
+    /// The commit its merge made; empty until it merges.
+    pub(crate) fn merge_commit(&self) -> &str {
+        self.merge_commit.as_ref().map_or("", |c| c.oid.as_str())
+    }
+
     /// The rollup's contexts if they are the head's: a rollup of another
     /// commit holds nothing, nor does a bot seen only on an earlier one.
     /// Like gh, only the newest run of a check counts; a queued run, not

@@ -587,7 +587,10 @@ impl World {
         // the PR at a url, as the poll's GraphQL query shapes it
         let pr = |url: &str| match (w.prs.get(url), w.merged) {
             (Some(pr), _) => pr.clone(),
-            (None, true) => r#"{"state":"MERGED","mergeable":"UNKNOWN"}"#.to_string(),
+            (None, true) => {
+                r#"{"state":"MERGED","mergeable":"UNKNOWN","mergeCommit":{"oid":"m3rg3d"}}"#
+                    .to_string()
+            }
             (None, false) => r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#.to_string(),
         };
         if cmd.starts_with("gh api graphql") {

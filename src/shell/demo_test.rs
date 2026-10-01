@@ -52,6 +52,7 @@ fn the_demo_plays_a_run_asks_and_puts_the_shell_back() {
             Ask::TicketStart { .. } | Ask::Labels { .. } => {
                 panic!("the demo asks nothing at a Ticket's start")
             }
+            Ask::Tag { .. } | Ask::ReleaseAgain { .. } => panic!("the demo has no Release"),
         };
         asked.push(kind);
         pick(&mut s, option);
