@@ -1,5 +1,8 @@
 {
   "skills": {
+    "orqa-address-pr-comments": {
+      "shipped": true
+    },
     "orqa-caveman": {
       "repo": "https://github.com/JuliusBrussee/caveman",
       "path": "skills/caveman",
@@ -9,6 +12,12 @@
       "repo": "https://github.com/mattpocock/skills",
       "path": "skills/engineering/code-review",
       "commit": "d81f3a183412e71a5b1e84ca21bc1a35eea03a60"
+    },
+    "orqa-create-pr": {
+      "shipped": true
+    },
+    "orqa-infra-review": {
+      "shipped": true
     },
     "orqa-ponytail": {
       "repo": "https://github.com/DietrichGebert/ponytail",
@@ -28,6 +37,9 @@
     "orqa-stage-address": {
       "shipped": true
     },
+    "orqa-stage-address-pr-comments": {
+      "shipped": true
+    },
     "orqa-stage-fix": {
       "shipped": true
     },
@@ -35,6 +47,9 @@
       "shipped": true
     },
     "orqa-stage-moderate": {
+      "shipped": true
+    },
+    "orqa-stage-rebase": {
       "shipped": true
     },
     "orqa-stage-review": {
