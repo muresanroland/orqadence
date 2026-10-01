@@ -25,7 +25,7 @@ A side is **limited** when Inputs say so (`Side A: limited until <t>` or `Side B
 
 ## 1. Gather the Findings
 
-- Take every Finding from the **Review file**.
+- Take every Finding from the **Review file**, and from the **Extra review file** when Inputs carry one: an Area label's Extra review, whose Findings are settled with the Review's.
 - Save `git diff <base>...HEAD` (base: `git symbolic-ref --short refs/remotes/origin/HEAD`, fall back to `main`) to `<Run directory>/diff-<Round>.patch`.
 - Add over-engineering Findings with the audit on the line below. With no such line there is no audit: write "no over-engineering audit (none picked)" under the Verdict's Notes, or, when **Not installed** under Inputs names the audit, that its skill is not installed.
   Run `<Side A command> "Use the {{audit}} skill on the diff in <that file>. Output one line per finding: - (severity) path:line — what to cut and what replaces it. Output nothing else. Nobody can answer questions: decide and note."` and add each line it returns as a Finding. If that command fails, continue with the Review's Findings and say so in the Verdict.
@@ -57,7 +57,7 @@ curl -sS --max-time 60 https://api.typesafe.ai/v1/systemone \
   -d @<Run directory>/typesafe-F<n>.json
 ```
 
-The body is a `noul` question, "Should this finding be fixed before the change merges?", over `{diff, finding, argument_for, argument_against}`, where `argument_for` is the fix side's latest argument and `argument_against` the skip side's. Build the JSON file with `jq -n --rawfile` or a short script so quoting cannot break it. If you do not know the exact request shape, load the typesafe-ai skill if it is installed, or read the TypeSafe docs, before the first call rather than guessing.
+The body is a `noul` question, "Should this finding be fixed before the change merges?", over `{diff, finding, argument_for, argument_against}`, where `argument_for` is the fix side's latest argument and `argument_against` the skip side's. Build the JSON file with `jq -n --rawfile` or a short script so quoting cannot break it. If you do not know the exact request shape, load the orqa-typesafe-ai skill if it is installed, or read the TypeSafe docs, before the first call rather than guessing.
 
 A score of 0.5 or more is **fix**, below is **skip**, settled `typesafe <score>`. If `TYPESAFE_API_KEY` is empty, or the call fails or times out twice, the Finding is **skip**, settled `flagged: TypeSafe unreachable`.
 
