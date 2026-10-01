@@ -2694,7 +2694,8 @@ fn the_tag_question_offers_yes_and_no_and_either_answer_ends_the_run() {
 /// A run carrying orqa:release keeps its summary back while every PR is
 /// open: it opens once the tag Question ends the run, its Version line
 /// naming the version, its PR and the tag. The Epic's close names it too,
-/// and /summary shows it while the run's State is kept.
+/// and /summary, alone or naming the Epic, shows it while the run's State
+/// is kept.
 #[test]
 fn a_releasing_runs_summary_opens_after_its_release_naming_the_version() {
     for (n, tagged) in [(1, "tagged"), (2, "not tagged")] {
@@ -2729,6 +2730,8 @@ fn a_releasing_runs_summary_opens_after_its_release_naming_the_version() {
             "{closed:?}"
         );
         s.command("/summary");
+        assert_eq!(version(&s), Some(released.clone()));
+        s.command("/summary hx");
         assert_eq!(version(&s), Some(released));
     }
 }

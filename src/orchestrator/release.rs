@@ -46,14 +46,13 @@ impl Orchestrator {
         {
             return Ok(None);
         }
-        let carries = |issue: &BdIssue| carries(&issue.labels);
         if epic.is_empty() {
-            let due = saved || children.iter().any(carries);
+            let due = saved || children.iter().any(|c| carries(&c.labels));
             return Ok(due.then(|| "none".to_string()));
         }
         let shown = self.bd_all(&["show", epic, "--json"])?;
         let shown = shown.into_iter().next().unwrap_or_default();
-        Ok((saved || carries(&shown)).then(|| format!("{epic} {}", shown.title)))
+        Ok((saved || carries(&shown.labels)).then(|| format!("{epic} {}", shown.title)))
     }
 
     /// Runs the run's Release on the scheduler's thread, to the run's end:

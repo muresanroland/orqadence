@@ -1896,7 +1896,12 @@ impl Screen {
             "/summary" => {
                 let ran = |state: &State| !state.epic.is_empty() || !state.queue.is_empty();
                 let (state, epic) = if !query.is_empty() {
-                    (self.state.clone(), query.to_string())
+                    // the last run's State when it is that Epic's: its Release
+                    let state = match self.state.epic != query && self.last.epic == query {
+                        true => &self.last,
+                        false => &self.state,
+                    };
+                    (state.clone(), query.to_string())
                 } else if ran(&self.state) {
                     (self.state.clone(), self.state.epic.clone())
                 } else if ran(&self.last) {
