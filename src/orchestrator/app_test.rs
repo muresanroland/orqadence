@@ -3,9 +3,10 @@
 
 use super::app::{
     app, canonical, checks, clash, count, count_in, debate_inputs, extra_review, fallback_row,
-    floor_in, labels, review_bots_in, row, runs_on, set_switch, switch, Clash, ExtraReview, Floor,
-    Label, ADDRESS_PR_COMMENTS_AUTO, ADDRESS_PR_COMMENTS_COUNTDOWN, ADDRESS_PR_COMMENTS_RUNS,
-    AGENT_MERGE, BOT_WAIT, IF_LIMITED, MAX_PR_SESSIONS, MAX_TICKETS, REBASE_AUTO, RELEASE_ON,
+    floor_in, human_merge, labels, review_bots_in, row, runs_on, set_switch, switch, Clash,
+    ExtraReview, Floor, Label, ADDRESS_PR_COMMENTS_AUTO, ADDRESS_PR_COMMENTS_COUNTDOWN,
+    ADDRESS_PR_COMMENTS_RUNS, AGENT_MERGE, BOT_WAIT, IF_LIMITED, MAX_PR_SESSIONS, MAX_TICKETS,
+    REBASE_AUTO, RELEASE_ON,
 };
 use super::stage::{Answer, Ask, Orchestrator, AWAY};
 use super::state::STATUS_PARKED;
@@ -711,6 +712,7 @@ fn a_labels_object_parses_and_an_entry_needs_only_kind() {
             "pr_template": "be.md",
             "extra_review": {"skill": "security-review", "position": "first",
                 "app": "codex", "model": "gpt-6-sol", "effort": "high"},
+            "human_merge": true,
         },
         "codex-review": {"kind": "modifier"},
         "loose": {"skills": []},
@@ -740,6 +742,7 @@ fn a_labels_object_parses_and_an_entry_needs_only_kind() {
             effort: "high".to_string(),
             ..Default::default()
         },
+        human_merge: true,
     };
     assert_eq!(labels["be"], Ok(be));
     let modifier = Label {
@@ -898,6 +901,44 @@ fn labels_that_clash_or_have_no_entry_refuse_the_row() {
         Some(Clash::Unknown("orqa:typo".to_string()))
     );
     assert_eq!(clash(&doc, &names(&["codex-review", "be", "fast"])), None);
+}
+
+/// A Ticket is human-merge by a label whose entry says human_merge, or by
+/// the built-in orqa:human-merge beside any label.
+#[test]
+fn a_ticket_is_human_merge_by_a_label_entry_or_the_built_in_label() {
+    let doc = json!({"labels": {
+        "security": {"kind": "area", "human_merge": true},
+        "be": {"kind": "area"},
+    }});
+    assert!(human_merge(&doc, &names(&["security"])));
+    assert!(!human_merge(&doc, &names(&["be"])));
+    assert!(human_merge(&doc, &names(&["be", "human-merge"])));
+    assert!(!human_merge(&doc, &[]));
+}
+
+/// orqa:human-merge is built in: with no entry in config.json's labels it
+/// is no unknown label, alone or beside an Area label, whose row it leaves
+/// as it is. A typo beside it is still unknown, and an entry under its name
+/// is not read.
+#[test]
+fn orqa_human_merge_is_known_with_no_entry_and_combines_with_an_area() {
+    let doc = json!({"labels": {
+        "be": {"kind": "area", "rows": {"review": {"app": "claude", "model": "opus"}}},
+    }});
+    assert_eq!(clash(&doc, &names(&["human-merge"])), None);
+    assert_eq!(clash(&doc, &names(&["be", "human-merge"])), None);
+    assert_eq!(
+        clash(&doc, &names(&["human-merge", "typo"])),
+        Some(Clash::Unknown("orqa:typo".to_string()))
+    );
+    let repo = repo_with(&doc);
+    let said = row(repo.path(), "review", &names(&["be", "human-merge"])).map(|r| r.said());
+    assert_eq!(said, Ok("claude opus".to_string()));
+
+    // the name is the built-in's: an entry under it changes nothing
+    let doc = json!({"labels": {"be": {"kind": "area"}, "human-merge": {"kind": "area"}}});
+    assert_eq!(clash(&doc, &names(&["be", "human-merge"])), None);
 }
 
 /// A label's rows keep the Debate's rule: a label pinning side_b to side

@@ -731,6 +731,8 @@ pub(crate) struct ShippedLabel {
     pub(crate) name: &'static str,
     /// "area" or "modifier".
     pub(crate) kind: &'static str,
+    /// A human merges its Tickets' PRs.
+    pub(crate) human_merge: bool,
     /// (installed name, manifest source), installed as the jobs' defaults are.
     pub(crate) skills: &'static [(&'static str, &'static str)],
     /// The line the code-editing Stages get as Label guidance.
@@ -758,11 +760,14 @@ impl ShippedLabel {
         self.skills.iter().copied().chain(review)
     }
 
-    /// The entry as config.json's labels holds it: rows and extra_review
-    /// only where set.
+    /// The entry as config.json's labels holds it: human_merge, rows and
+    /// extra_review only where set.
     fn entry(&self) -> Value {
         let skills: Vec<&str> = self.skills.iter().map(|(name, _)| *name).collect();
         let mut entry = json!({"kind": self.kind, "skills": skills, "guidance": self.guidance});
+        if self.human_merge {
+            entry["human_merge"] = json!(true);
+        }
         for (row, field, value) in self.rows {
             entry["rows"][row][field] = json!(value);
         }
@@ -774,12 +779,13 @@ impl ShippedLabel {
 }
 
 /// The shipped Ticket labels (harness-bsg.7, .8 and .21), in the order
-/// init lists them. The human_merge of security, db and infra is the
-/// Agent merge Epic's (harness-72t.2).
+/// init lists them. A human merges the PRs of db, security and infra
+/// Tickets (harness-72t.2).
 pub(crate) const LABELS: [ShippedLabel; 7] = [
     ShippedLabel {
         name: "fe",
         kind: "area",
+        human_merge: false,
         skills: &[("orqa-frontend-design", "anthropics/skills/skills/frontend-design")],
         guidance: "Front-end work: the pull request carries screenshots of every changed screen.",
         review: None,
@@ -789,6 +795,7 @@ pub(crate) const LABELS: [ShippedLabel; 7] = [
     ShippedLabel {
         name: "be",
         kind: "area",
+        human_merge: false,
         skills: &[("orqa-api-and-interface-design", "addyosmani/agent-skills/skills/api-and-interface-design")],
         guidance: "Keep the contract explicit: requests, responses, status codes, compatibility.",
         review: None,
@@ -798,6 +805,7 @@ pub(crate) const LABELS: [ShippedLabel; 7] = [
     ShippedLabel {
         name: "db",
         kind: "area",
+        human_merge: true,
         skills: &[
             ("orqa-supabase-postgres-best-practices", "supabase/agent-skills/skills/supabase-postgres-best-practices"),
             ("orqa-deprecation-and-migration", "addyosmani/agent-skills/skills/deprecation-and-migration"),
@@ -810,6 +818,7 @@ pub(crate) const LABELS: [ShippedLabel; 7] = [
     ShippedLabel {
         name: "security",
         kind: "area",
+        human_merge: true,
         skills: &[("orqa-security-and-hardening", "addyosmani/agent-skills/skills/security-and-hardening")],
         guidance: "An item of security-and-hardening's Ask First tier (a new auth flow, a new PII category, CORS, upload handlers, rate limits) goes in the Plan under Open question.",
         review: Some(("orqa-security-review", "getsentry/skills/skills/security-review", true)),
@@ -819,6 +828,7 @@ pub(crate) const LABELS: [ShippedLabel; 7] = [
     ShippedLabel {
         name: "architecture",
         kind: "area",
+        human_merge: false,
         skills: &[
             ("orqa-codebase-design", "mattpocock/skills/skills/engineering/codebase-design"),
             ("orqa-domain-modeling", "mattpocock/skills/skills/engineering/domain-modeling"),
@@ -831,6 +841,7 @@ pub(crate) const LABELS: [ShippedLabel; 7] = [
     ShippedLabel {
         name: "infra",
         kind: "area",
+        human_merge: true,
         skills: &[
             ("orqa-terraform-style-guide", "hashicorp/agent-skills/plugins/terraform/skills/terraform-style-guide"),
             ("orqa-terraform-test", "hashicorp/agent-skills/plugins/terraform/skills/terraform-test"),
@@ -847,6 +858,7 @@ pub(crate) const LABELS: [ShippedLabel; 7] = [
     ShippedLabel {
         name: "codex-review",
         kind: "modifier",
+        human_merge: false,
         skills: &[],
         guidance: "",
         review: None,

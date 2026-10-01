@@ -295,10 +295,10 @@ fn labels_page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
     (lines, at)
 }
 
-/// A label's own page: area or modifier, its skills, guidance and PR
-/// template; an Area label's Extra review; the Stage rows it overrides, and
-/// the rules those keep, above them. One that cannot be read shows why
-/// instead.
+/// A label's own page: area or modifier, its skills, guidance, PR template
+/// and whether a human merges; an Area label's Extra review; the Stage rows
+/// it overrides, and the rules those keep, above them. One that cannot be
+/// read shows why instead.
 fn label_page(st: &Settings, name: &str, width: usize) -> (Vec<Line<'static>>, usize) {
     let mut lines = vec![Line::from(Span::styled(format!("orqa:{name}"), bold(CYAN)))];
     let label = match st.label_of(name) {
@@ -356,6 +356,12 @@ fn label_page(st: &Settings, name: &str, width: usize) -> (Vec<Line<'static>>, u
                     ],
                 },
             ),
+            LabelItem::HumanMerge => {
+                let tick = if label.human_merge { 'x' } else { ' ' };
+                let text = format!("[{tick}] A human merges these Tickets' PRs");
+                switch_item(&mut lines, &mut at, i == st.setting, text, width);
+                continue;
+            }
             LabelItem::ExtraSkill => (
                 "skill".to_string(),
                 or_none(label.extra_review.skill.clone()),

@@ -292,6 +292,7 @@ pub(crate) enum LabelItem {
     Skills,
     Guidance,
     Template,
+    HumanMerge,
     ExtraSkill,
     Position,
     Debate,
@@ -1260,6 +1261,7 @@ impl Settings {
             Some(LabelItem::Kind) => "area: the one type of work a Ticket does, one per Ticket; modifier: only changes rows, and combines with an area. Enter or Space toggles.".to_string(),
             Some(LabelItem::Skills) => "The skills its code-editing Stages load, from the ones installed: Enter picks them, or types a source to install one first.".to_string(),
             Some(LabelItem::Template) => "The PR template Fix writes from: default, a file of .github/PULL_REQUEST_TEMPLATE, or new, a copy of the default with a section for this label.".to_string(),
+            Some(LabelItem::HumanMerge) => "on: the Orchestrator never merges the PR of a Ticket with this label, even under Agent merge; a human does. Enter or Space toggles.".to_string(),
             Some(LabelItem::ExtraSkill) => "The review skill of this label's Extra review, from the ones installed; none: no Extra review. It runs the Review's Stage skill with it.".to_string(),
             Some(LabelItem::Position) => "When the Extra review runs: every Round, after the Review; the first Round only; or before the PR, after the last Round. Enter or Space cycles.".to_string(),
             Some(LabelItem::Debate) => "on: its Findings join the Debate; off: they go straight to the Fix as fix items, not debated. Enter or Space toggles.".to_string(),
@@ -1269,19 +1271,19 @@ impl Settings {
         }
     }
 
-    /// The open label's page, row by row: kind, skills, guidance and PR
-    /// template; an Area label's Extra review; then the Stage rows it
-    /// overrides, all but the Release's. A label that cannot be read has the
-    /// first three only.
+    /// The open label's page, row by row: kind, skills, guidance, PR
+    /// template and whether a human merges; an Area label's Extra review;
+    /// then the Stage rows it overrides, all but the Release's. A label that
+    /// cannot be read has the first three only.
     pub(crate) fn label_items(&self) -> Vec<LabelItem> {
         use LabelItem::{
-            Debate, Extra, ExtraSkill, Guidance, Kind, Position, Row, Skills, Template,
+            Debate, Extra, ExtraSkill, Guidance, HumanMerge, Kind, Position, Row, Skills, Template,
         };
         let mut items = vec![Kind, Skills, Guidance];
         let Some(Ok(label)) = self.label.as_deref().map(|name| self.label_of(name)) else {
             return items;
         };
-        items.push(Template);
+        items.extend([Template, HumanMerge]);
         if label.kind == "area" {
             items.extend([ExtraSkill, Position, Debate]);
             items.extend(FIELDS.map(Extra));
@@ -1292,7 +1294,8 @@ impl Settings {
     }
 
     /// A label name as typed, as bd takes a label: not empty, no whitespace,
-    /// no comma (bd's list separator), and not one config.json has.
+    /// no comma (bd's list separator), not the built-in orqa:human-merge's,
+    /// and not one config.json has.
     fn valid_label(&self, typed: &str) -> Result<String, String> {
         let name = label_name(typed);
         if name.is_empty() {
@@ -1301,6 +1304,11 @@ impl Settings {
         if name.chars().any(|c| c.is_whitespace() || c == ',') {
             return Err(format!(
                 "Refused: '{name}' is not a bd label: no spaces or commas. Nothing changed."
+            ));
+        }
+        if name == app::HUMAN_MERGE {
+            return Err(format!(
+                "Refused: orqa:{name} is built in. Nothing changed."
             ));
         }
         if self.doc["labels"].get(name).is_some() {
@@ -2940,6 +2948,25 @@ impl Screen {
         );
     }
 
+    /// Enter or Space on "A human merges these Tickets' PRs": on and off.
+    fn toggle_human_merge(&mut self, name: &str) {
+        let st = self.settings.as_ref().unwrap();
+        let on = !st.label_of(name).is_ok_and(|l| l.human_merge);
+        let who = if on {
+            "a human merges"
+        } else {
+            "the Orchestrator may merge"
+        };
+        let label = name.to_string();
+        self.save_label(
+            move |labels| {
+                label_entry(labels, &label)?["human_merge"] = json!(on);
+                Ok(())
+            },
+            format!("{who} orqa:{name} Tickets' PRs"),
+        );
+    }
+
     /// A skill picked on the open label's list: on the label, or off it
     /// again; the list stays open.
     fn toggle_skill(&mut self, pick: Pick, skill: &str) {
@@ -3039,6 +3066,7 @@ impl Screen {
         let st = self.settings.as_mut().unwrap();
         let (scope, row, field) = match item {
             LabelItem::Kind => return self.toggle_kind(name),
+            LabelItem::HumanMerge => return self.toggle_human_merge(name),
             LabelItem::Position => return self.cycle_position(name),
             LabelItem::Debate => return self.toggle_debate(name),
             // the rest are Enter's alone
