@@ -518,6 +518,36 @@ fn address_pr_comments_command_starts_it_with_the_pr_and_the_gh_json() {
     );
 }
 
+/// While Address PR comments runs, its Ticket says which run of the cap it
+/// is, for TICKETS; once it is done, nothing.
+#[test]
+fn address_pr_comments_says_its_run_of_the_cap_while_it_runs() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.lock().prs.insert(
+        "https://example.test/pr/hx-1".to_string(),
+        r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#.to_string(),
+    );
+    let o = Arc::new(o);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (orq, saw) = (Arc::downgrade(&o), seen.clone());
+    w.session(move |p| {
+        if let (Some(o), "address-pr-comments") = (orq.upgrade(), p.stage.as_str()) {
+            saw.lock().unwrap().push(o.ticket("hx-1").pr_work);
+        }
+        succeed(p)
+    });
+    let mut run = spawn_epic(o.clone(), "hx");
+    w.await_line("hx-1 PR #hx-1 opened");
+
+    o.command("address-pr-comments-hx-1");
+    w.await_line("hx-1 addressed PR #hx-1");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+    assert_eq!(*seen.lock().unwrap(), ["comments 1/3"]);
+    assert_eq!(o.ticket("hx-1").pr_work, "");
+}
+
 #[test]
 fn epic_without_tickets_is_an_error_not_a_done_epic() {
     let (w, o) = new_world(vec![]); // a mistyped Epic id: bd lists no children

@@ -84,6 +84,11 @@ pub(crate) struct TicketState {
     /// its dependents wait on its merge alone. Live only, never saved.
     #[serde(skip)]
     pub(crate) settled: bool,
+    /// What its PR Stage does while it runs, as TICKETS shows it: "rebase",
+    /// or "comments 2/3", its Address PR comments run of the cap. Live
+    /// only, never saved.
+    #[serde(skip)]
+    pub(crate) pr_work: String,
 }
 
 /// A Stage's session: the App it runs on, and the id herdr's integration

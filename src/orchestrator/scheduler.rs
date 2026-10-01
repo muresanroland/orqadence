@@ -792,6 +792,7 @@ impl Orchestrator {
         if let Some(template) = &template {
             inputs.push(("PR template", template));
         }
+        let cap = app::count(&self.cfg.repo, &app::ADDRESS_PR_COMMENTS_RUNS);
         // the poll may have merged or closed it while the input was fetched:
         // checked under the lock, before the stage it reads is cleared
         let mut live = false;
@@ -808,6 +809,11 @@ impl Orchestrator {
             if lists.is_some() {
                 ts.address_runs += 1;
             }
+            ts.pr_work = match (rebase, ts.address_runs) {
+                (true, _) => REBASE.name.to_string(),
+                (false, n) if n > cap => format!("comments {n}"), // by hand past the cap
+                (false, n) => format!("comments {n}/{cap}"),
+            };
             ts.status = STATUS_PR_OPEN.to_string();
             ts.settled = false;
             ts.reason.clear();
@@ -819,6 +825,7 @@ impl Orchestrator {
             let _ = fs::remove_file(self.run_dir(ticket).join(result_name(st, 0)));
         }
         let result = self.run_stage(ticket, st, 0, &inputs, ResultRequirements::default());
+        self.update(ticket, |ts| ts.pr_work.clear());
         match result {
             // a long usage limit ended the run: running, as every Stage
             Err(StageError::Stopped) if self.closed() => {

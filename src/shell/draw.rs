@@ -115,7 +115,7 @@ pub(crate) fn draw(f: &mut Frame, s: &Screen) {
 fn shell(f: &mut Frame, area: Rect, s: &Screen) -> u16 {
     let tree = sections(s, area.width.saturating_sub(2) as usize);
     let head_h = header_height(area);
-    let unblock = unblock_lines(s);
+    let unblock = unblock_lines(s, area.width.saturating_sub(4) as usize);
     let limited = limited_lines(s);
     let boxed_h = |lines: &[Line]| match lines.len() {
         0 => 0,
@@ -333,7 +333,14 @@ pub(super) fn header(f: &mut Frame, area: Rect, s: &Screen, folder: bool) {
 /// saved run), then what bd says. Needs you and waiting are a live run's;
 /// live, only the run's State says a Ticket is working.
 fn status(s: &Screen, t: &BdIssue) -> Status {
-    match s.state.tickets.get(&t.id).map(|ts| ts.status.as_str()) {
+    let ts = s.state.tickets.get(&t.id);
+    // a PR Stage at work on its open PR is working, or needs you
+    let pr_work = ts.is_some_and(|ts| !ts.pr_work.is_empty());
+    let st = match ts.map(|ts| ts.status.as_str()) {
+        Some(STATUS_PR_OPEN) if pr_work => Some(STATUS_RUNNING),
+        st => st,
+    };
+    match st {
         Some(STATUS_PARKED) => Status::Parked,
         Some(STATUS_RUNNING) if s.running && s.blocked(&t.id) => Status::NeedsYou,
         Some(STATUS_RUNNING) => Status::Working,
@@ -346,46 +353,49 @@ fn status(s: &Screen, t: &BdIssue) -> Status {
     }
 }
 
-/// The open PRs a Ticket waits on: its bd blocks dependencies on Tickets
-/// whose PR is open (ADR 0002) and settled, its Rebase and PR comments
-/// done, none waiting in an approval modal.
-fn waits_on<'a>(s: &'a Screen, t: &'a BdIssue) -> impl Iterator<Item = &'a str> {
+/// The Tickets a Ticket waits on, each with its PR: its bd blocks
+/// dependencies on Tickets whose PR is open (ADR 0002) and settled, its
+/// Rebase and PR comments done, none waiting in an approval modal.
+fn waits_on<'a>(s: &'a Screen, t: &'a BdIssue) -> impl Iterator<Item = (&'a str, &'a str)> {
     t.blockers()
         .filter(|id| !s.approvals.iter().any(|a| a.ticket == *id))
-        .filter_map(|id| s.state.tickets.get(id))
-        .filter(|ts| ts.status == STATUS_PR_OPEN && ts.settled)
-        .map(|ts| ts.pr.as_str())
+        .filter_map(|id| Some((id, s.state.tickets.get(id)?)))
+        .filter(|(_, ts)| ts.status == STATUS_PR_OPEN && ts.settled)
+        .map(|(id, ts)| (id, ts.pr.as_str()))
 }
 
-/// MERGE TO UNBLOCK: each open PR a waiting Ticket depends on, and every
-/// waiting Ticket's suffix.
-pub(super) fn to_unblock(s: &Screen) -> Vec<(&str, Vec<&str>)> {
-    let mut prs: Vec<(&str, Vec<&str>)> = Vec::new();
+/// MERGE TO UNBLOCK: each Ticket whose open PR a waiting Ticket depends on,
+/// its PR, and every waiting Ticket's suffix.
+pub(super) fn to_unblock(s: &Screen) -> Vec<(&str, &str, Vec<&str>)> {
+    let mut prs: Vec<(&str, &str, Vec<&str>)> = Vec::new();
     for t in listed(s).flat_map(|(_, tickets)| tickets) {
         if status(s, t) != Status::Waiting {
             continue;
         }
-        for pr in waits_on(s, t) {
-            match prs.iter_mut().find(|(p, _)| *p == pr) {
-                Some((_, waiting)) => waiting.push(suffix(&t.id)),
-                None => prs.push((pr, vec![suffix(&t.id)])),
+        for (id, pr) in waits_on(s, t) {
+            match prs.iter_mut().find(|(i, _, _)| *i == id) {
+                Some((_, _, waiting)) => waiting.push(suffix(&t.id)),
+                None => prs.push((id, pr, vec![suffix(&t.id)])),
             }
         }
     }
     prs
 }
 
-/// MERGE TO UNBLOCK's lines, 'merge to unblock 5, 11: <url>'.
-fn unblock_lines(s: &Screen) -> Vec<Line<'static>> {
+/// MERGE TO UNBLOCK's lines, 'merge to unblock 5, 11: <url>', or with no
+/// room for the url in `width`, 'merge to unblock 5, 11: Ticket 3'.
+fn unblock_lines(s: &Screen, width: usize) -> Vec<Line<'static>> {
     to_unblock(s)
         .into_iter()
-        .map(|(pr, waiting)| {
+        .map(|(id, pr, waiting)| {
+            let head = format!("merge to unblock {}: ", waiting.join(", "));
+            let tail = match head.chars().count() + pr.chars().count() {
+                n if n <= width => pr.to_string(),
+                _ => format!("Ticket {}", suffix(id)),
+            };
             Line::from(vec![
-                Span::styled(
-                    format!("merge to unblock {}: ", waiting.join(", ")),
-                    bold(RED),
-                ),
-                Span::styled(pr.to_string(), fg(RED)),
+                Span::styled(head, bold(RED)),
+                Span::styled(tail, fg(RED)),
             ])
         })
         .collect()
@@ -710,11 +720,12 @@ fn sections(s: &Screen, width: usize) -> Vec<Line<'static>> {
                 (Status::Waiting, _) => {
                     format!(
                         "waits on {}",
-                        pr_ref(waits_on(s, t).next().unwrap_or_default())
+                        pr_ref(waits_on(s, t).next().unwrap_or_default().1)
                     )
                 }
                 (Status::ToMerge, Some(ts)) => pr_ref(&ts.pr),
                 (Status::Merged, Some(ts)) => format!("{} merged", pr_ref(&ts.pr)),
+                (_, Some(ts)) if !ts.pr_work.is_empty() => ts.pr_work.clone(),
                 (_, Some(ts)) if ts.fetching => "fetching".to_string(),
                 (_, Some(ts)) if ts.round > 0 => format!("{} {}", ts.stage, ts.round),
                 (_, Some(ts)) => ts.stage.clone(),

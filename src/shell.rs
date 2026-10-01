@@ -823,10 +823,10 @@ impl Screen {
         self.ring(message);
     }
 
-    /// The PRs MERGE TO UNBLOCK lists.
+    /// The Tickets whose PR MERGE TO UNBLOCK lists.
     fn to_unblock(&self) -> Vec<String> {
         let prs = draw::to_unblock(self).into_iter();
-        prs.map(|(pr, _)| pr.to_string()).collect()
+        prs.map(|(id, _, _)| id.to_string()).collect()
     }
 
     /// While On call, pushes each PR MERGE TO UNBLOCK lists but `before`
@@ -836,11 +836,8 @@ impl Screen {
             return;
         }
         let new: Vec<(String, String)> = (draw::to_unblock(self).into_iter())
-            .filter(|(pr, _)| !before.iter().any(|b| b == pr))
-            .filter_map(|(pr, waiting)| {
-                let (id, _) = self.state.tickets.iter().find(|(_, ts)| ts.pr == pr)?;
-                Some((id.clone(), waiting.join(", ")))
-            })
+            .filter(|(id, _, _)| !before.iter().any(|b| b == id))
+            .map(|(id, _, waiting)| (id.to_string(), waiting.join(", ")))
             .collect();
         for (id, waiting) in new {
             let mut message = format!("{id} · Merge to unblock {waiting}");

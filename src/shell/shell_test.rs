@@ -1889,6 +1889,61 @@ fn merge_to_unblock_lists_each_pr_a_waiting_ticket_depends_on() {
     );
 }
 
+/// A PR Stage at work on a Ticket's open PR: WORKING with what it does,
+/// "comments 2/3", or NEEDS YOU while it asks; done, TO MERGE again.
+#[test]
+fn a_pr_stage_at_work_reads_working_with_its_run_of_the_cap() {
+    let mut s = sections_screen(true);
+    let ts = s.state.tickets.get_mut("harness-a.3").unwrap();
+    ts.pr_work = "comments 2/3".to_string();
+    let buf = render(&s, 120, 40);
+    assert!(
+        row_of(&buf, "3 Status counts").ends_with("comments 2/3  WORKING"),
+        "{:#?}",
+        rows(&buf)
+    );
+
+    s.push(asking(
+        "harness-a.3",
+        "question in address-pr-comments (pane 1-2)",
+        Ask::StageQuestion {
+            pane: "w1:p9".to_string(),
+            question: "which way?".to_string(),
+            options: vec!["left".to_string()],
+        },
+    ));
+    let buf = render(&s, 120, 40);
+    assert!(row_of(&buf, "3 Status counts").ends_with("comments 2/3  NEEDS YOU"));
+
+    s.state
+        .tickets
+        .get_mut("harness-a.3")
+        .unwrap()
+        .pr_work
+        .clear();
+    let buf = render(&s, 120, 40);
+    assert!(row_of(&buf, "3 Status counts").ends_with("PR #31  TO MERGE"));
+}
+
+/// MERGE TO UNBLOCK names the PR's Ticket in place of its url when the
+/// line would not fit the box.
+#[test]
+fn merge_to_unblock_names_the_ticket_when_the_url_does_not_fit() {
+    let s = sections_screen(true);
+    // "merge to unblock 5: https://github.com/o/r/pull/31" is 50 wide, the
+    // box's border and padding 4
+    let line = |width| {
+        let buf = render(&s, width, 40);
+        let (_, y) = find(&buf, "merge to unblock").unwrap();
+        row(&buf, y).trim_matches(['│', ' ']).to_string()
+    };
+    assert_eq!(
+        line(54),
+        "merge to unblock 5: https://github.com/o/r/pull/31"
+    );
+    assert_eq!(line(53), "merge to unblock 5: Ticket 3");
+}
+
 #[test]
 fn a_parked_ticket_of_the_saved_run_reads_parked() {
     let mut s = screen();
