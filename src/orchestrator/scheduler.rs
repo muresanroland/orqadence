@@ -613,45 +613,59 @@ impl Orchestrator {
     fn on_pr(&self, ticket: &str, st: &Stage, resumed: bool) {
         let pr = self.ticket(ticket).pr;
         let rebase = st.name == REBASE.name;
-        let input = match rebase {
-            true => Ok(("Default branch", self.origin_head(ticket))),
-            false => {
-                let fields = "reviews,comments,statusCheckRollup";
-                let argv = ["gh", "pr", "view", &pr, "--json", fields];
-                match self.cfg.tools.run(&self.cfg.repo, &argv) {
-                    Ok(json) => Ok(("PR metadata (gh JSON)", json.trim().to_string())),
-                    Err(err) => Err(format!("address pr comments failed: {err}")),
+        let (name, value) = if rebase {
+            ("Default branch", self.origin_head(ticket))
+        } else {
+            let fields = "reviews,comments,statusCheckRollup";
+            let argv = ["gh", "pr", "view", &pr, "--json", fields];
+            match self.cfg.tools.run(&self.cfg.repo, &argv) {
+                Ok(json) => ("PR metadata (gh JSON)", json.trim().to_string()),
+                Err(err) => {
+                    let text = format!("address pr comments failed: {err}");
+                    // taken back, it stays Parked for the next /continue
+                    return match resumed {
+                        true => self.park(ticket, &text),
+                        false => self.report(ticket, &text),
+                    };
                 }
             }
         };
-        let (name, value) = match input {
-            Ok(input) => input,
-            // taken back, it stays Parked for the next /continue
-            Err(text) if resumed => return self.park(ticket, &text),
-            Err(text) => return self.report(ticket, &text),
-        };
         let inputs = [("PR", pr.as_str()), (name, value.as_str())];
-        if !resumed {
-            let _ = fs::remove_file(self.run_dir(ticket).join(result_name(st, 0)));
-            // a new Stage to run_stage: an earlier session, a parked one's
-            // pane still open, is dropped, not watched
-            self.update(ticket, |ts| ts.stage.clear());
-        }
+        // the poll may have merged or closed it while the input was fetched:
+        // checked under the lock, before the stage it reads is cleared
+        let mut live = false;
         self.update(ticket, |ts| {
+            live = ts.status == STATUS_PR_OPEN || pr_stage(ts).is_some();
+            if !live {
+                return;
+            }
+            if !resumed {
+                // a new Stage to run_stage: an earlier session, a parked
+                // one's pane still open, is dropped, not watched
+                ts.stage.clear();
+            }
             ts.status = STATUS_PR_OPEN.to_string();
             ts.reason.clear();
         });
+        if !live {
+            return;
+        }
+        if !resumed {
+            let _ = fs::remove_file(self.run_dir(ticket).join(result_name(st, 0)));
+        }
         let result = self.run_stage(ticket, st, 0, &inputs, ResultRequirements::default());
-        // ponytail: read, then written below, not under one lock; the poll
+        // ponytail: read, then parked below, not under one lock; the poll
         // that may merge or close it meanwhile comes every 30s
         let open = self.ticket(ticket).status == STATUS_PR_OPEN;
         match result {
             // a long usage limit ended the run: running, as every Stage
             Err(StageError::Stopped) if self.closed() => {
                 self.close_on_limit(ticket);
-                if open {
-                    self.update(ticket, |ts| ts.status = STATUS_RUNNING.to_string());
-                }
+                self.update(ticket, |ts| {
+                    if ts.status == STATUS_PR_OPEN {
+                        ts.status = STATUS_RUNNING.to_string();
+                    }
+                });
             }
             _ if self.stopping() => {}
             Ok(_) => {
