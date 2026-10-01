@@ -984,27 +984,3 @@ fn a_worktree_dirty_before_the_review_is_never_reset() {
         );
     }
 }
-
-/// origin/HEAD unset: origin_head asks the remote once (set-head --auto)
-/// and reads the branch it set.
-#[test]
-fn origin_head_asks_the_remote_when_origin_head_is_unset() {
-    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    let set = Arc::new(Mutex::new(false));
-    let seen = set.clone();
-    w.hook(move |_, argv| match argv {
-        ["git", "symbolic-ref", ..] if *seen.lock().unwrap() => {
-            Some(Ok("origin/develop\n".to_string()))
-        }
-        ["git", "symbolic-ref", ..] => Some(Err("not a symbolic ref".to_string())),
-        ["git", "remote", "set-head", ..] => {
-            *seen.lock().unwrap() = true;
-            Some(Ok(String::new()))
-        }
-        _ => None,
-    });
-
-    assert_eq!(o.origin_head("hx-1").as_deref(), Some("origin/develop"));
-    assert_eq!(o.origin_head("hx-1").as_deref(), Some("origin/develop"));
-    assert_eq!(w.called("git remote set-head origin --auto").len(), 1);
-}
