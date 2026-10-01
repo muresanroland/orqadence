@@ -2,10 +2,10 @@
 //! effort, read when the Stage starts.
 
 use super::app::{
-    app, canonical, checks, clash, count, debate_inputs, extra_review, fallback_row, floor_in,
-    labels, row, runs_on, switch, Clash, ExtraReview, Floor, Label, ADDRESS_PR_COMMENTS_AUTO,
-    ADDRESS_PR_COMMENTS_COUNTDOWN, ADDRESS_PR_COMMENTS_RUNS, IF_LIMITED, MAX_PR_SESSIONS,
-    MAX_TICKETS, REBASE_AUTO, RELEASE_ON,
+    app, canonical, checks, clash, count, count_in, debate_inputs, extra_review, fallback_row,
+    floor_in, labels, review_bots_in, row, runs_on, set_switch, switch, Clash, ExtraReview, Floor,
+    Label, ADDRESS_PR_COMMENTS_AUTO, ADDRESS_PR_COMMENTS_COUNTDOWN, ADDRESS_PR_COMMENTS_RUNS,
+    AGENT_MERGE, BOT_WAIT, IF_LIMITED, MAX_PR_SESSIONS, MAX_TICKETS, REBASE_AUTO, RELEASE_ON,
 };
 use super::stage::{Answer, Ask, Orchestrator, AWAY};
 use super::state::STATUS_PARKED;
@@ -1292,4 +1292,71 @@ fn each_reader_is_its_default_on_an_empty_config_json() {
         assert_eq!(count(repo.path(), &ADDRESS_PR_COMMENTS_RUNS), 3, "{body:?}");
         assert_eq!(count(repo.path(), &MAX_TICKETS), 3, "{body:?}");
     }
+}
+
+/// Agent merge's settings: a config.json without them, or none at all, is
+/// off, no review bot and 30 minutes, so a repo initialised earlier stays
+/// off. A list of the known bots reads back; anything else is refused, as
+/// is a bot_wait under 1.
+#[test]
+fn agent_merge_is_off_with_no_review_bots_and_30_minutes_unless_set() {
+    let repo = TempDir::new();
+    for body in [None, Some("{}")] {
+        if let Some(body) = body {
+            write_file(&repo.path().join(".orqadence/config.json"), body);
+        }
+        assert!(!switch(repo.path(), &AGENT_MERGE), "{body:?}");
+        assert_eq!(count(repo.path(), &BOT_WAIT), 30, "{body:?}");
+    }
+    assert_eq!(review_bots_in(&Value::Null), Ok(vec![]));
+    assert_eq!(review_bots_in(&json!({})), Ok(vec![]));
+    assert_eq!(
+        review_bots_in(&json!({"review_bots": ["greptile", "coderabbit"]})),
+        Ok(vec!["greptile", "coderabbit"])
+    );
+    for bad in [json!(["codrabbit"]), json!("coderabbit"), json!([1])] {
+        assert_eq!(
+            review_bots_in(&json!({"review_bots": bad})),
+            Err("review_bots is not a list of coderabbit, greptile".to_string()),
+            "{bad}"
+        );
+    }
+    assert_eq!(count_in(&json!({"bot_wait": 45}), &BOT_WAIT), Ok(45));
+    assert_eq!(
+        count_in(&json!({"bot_wait": 0}), &BOT_WAIT),
+        Err("bot_wait is not a whole number of at least 1".to_string())
+    );
+}
+
+/// Agent merge only with automatic Address PR comments on: turning it on is
+/// refused otherwise, config.json as it was; turning Address PR comments'
+/// switch off turns it off too; and one written on by hand alone reads off.
+#[test]
+fn agent_merge_is_on_only_with_automatic_address_pr_comments() {
+    let repo = TempDir::new();
+    let path = repo.path().join(".orqadence/config.json");
+    let doc = || -> Value { serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap() };
+    assert_eq!(
+        set_switch(repo.path(), &AGENT_MERGE, true),
+        Err("Agent merge off: it needs PR comments and failing checks opened for approval by themselves (address_pr_comments_auto)".to_string())
+    );
+    assert!(!path.exists());
+    set_switch(repo.path(), &AGENT_MERGE, false).unwrap();
+    assert_eq!(doc(), json!({"agent_merge": false}));
+
+    set_switch(repo.path(), &ADDRESS_PR_COMMENTS_AUTO, true).unwrap();
+    set_switch(repo.path(), &AGENT_MERGE, true).unwrap();
+    assert!(switch(repo.path(), &AGENT_MERGE));
+
+    set_switch(repo.path(), &ADDRESS_PR_COMMENTS_AUTO, false).unwrap();
+    assert_eq!(
+        doc(),
+        json!({"agent_merge": false, "address_pr_comments_auto": false})
+    );
+
+    write_file(&path, r#"{"agent_merge": true}"#);
+    assert!(!switch(repo.path(), &AGENT_MERGE));
+    // Nor does turning Address PR comments' switch on then turn it on.
+    set_switch(repo.path(), &ADDRESS_PR_COMMENTS_AUTO, true).unwrap();
+    assert!(!switch(repo.path(), &AGENT_MERGE));
 }

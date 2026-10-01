@@ -382,7 +382,7 @@ pub(crate) fn set_up(
 /// Rebase and Address PR comments by themselves, each a yes/no kept in
 /// config.json, its default the switch as it is: off on a first init, so
 /// enter alone is no, and a re-run keeps a switch already set. Nobody
-/// answering keeps it too.
+/// answering keeps it too. Then Agent merge (ask_agent_merge).
 fn ask_switches(
     repo: &Path,
     out: &mut dyn Write,
@@ -395,7 +395,49 @@ fn ask_switches(
         let on = yes(out, input, tty, switch.question, on)?.unwrap_or(on);
         app::set_switch(repo, switch, on).map_err(io::Error::other)?;
     }
-    Ok(())
+    ask_agent_merge(repo, out, input, tty)
+}
+
+/// Agent merge, asked only with automatic Address PR comments on, its
+/// default the switch as it is, as ask_switches' are; without it init says
+/// why it is off, set_switch having turned off one kept on. Yes asks which
+/// review bots the repo has, ticked as config.json lists them, kept when
+/// the ticks change; bot_wait keeps its default.
+fn ask_agent_merge(
+    repo: &Path,
+    out: &mut dyn Write,
+    input: &mut dyn Read,
+    tty: bool,
+) -> io::Result<()> {
+    let (_, doc) = app::read(repo).map_err(io::Error::other)?;
+    if !app::switch_in(&doc, &app::ADDRESS_PR_COMMENTS_AUTO) {
+        return note(out, app::AGENT_MERGE_NEEDS);
+    }
+    let on = app::switch_in(&doc, &app::AGENT_MERGE);
+    let question = format!(
+        "{} (security, db and infra Tickets still wait for you)",
+        app::AGENT_MERGE.question
+    );
+    let on = yes(out, input, tty, &question, on)?.unwrap_or(on);
+    app::set_switch(repo, &app::AGENT_MERGE, on).map_err(io::Error::other)?;
+    if !on {
+        return Ok(());
+    }
+    let kept = app::review_bots_in(&doc).unwrap_or_default();
+    let rows = app::REVIEW_BOTS.map(|bot| (bot, String::new()));
+    let ticked = app::REVIEW_BOTS.map(|bot| kept.contains(&bot));
+    let question = "Which review bots does this repo have?";
+    let ticked = raw(tty, || checklist(out, input, question, &rows, &ticked))?;
+    let bots: Vec<&str> = app::REVIEW_BOTS
+        .into_iter()
+        .zip(ticked)
+        .filter_map(|(bot, on)| on.then_some(bot))
+        .collect();
+    // Unchanged, a list that cannot be read stays for /config to flag.
+    if bots == kept {
+        return Ok(());
+    }
+    app::set_review_bots(repo, &bots).map_err(io::Error::other)
 }
 
 /// Releases (the orqa:release label), a yes/no kept in config.json, default
@@ -974,7 +1016,8 @@ fn ask_labels(
         })
         .collect();
     let question = "Which Ticket labels will this repo use?";
-    let checked = raw(tty, || checklist(out, input, question, &rows))?;
+    let all = vec![true; rows.len()];
+    let checked = raw(tty, || checklist(out, input, question, &rows, &all))?;
     let (path, mut doc) = app::read_object(repo).map_err(io::Error::other)?;
     if !matches!(doc["labels"], Value::Null | Value::Object(_)) {
         return Err(io::Error::other("config.json's labels is not an object"));
@@ -1373,17 +1416,18 @@ fn next_key(input: &mut dyn Read) -> Option<u8> {
     })
 }
 
-/// Puts `question` over a checklist of (name, detail) options, every one
-/// checked: the arrow keys (or j/k) move the cursor, space toggles its
-/// option, a digit toggles the nth, and enter submits. Ctrl-C, Ctrl-D or q
-/// keep the default, every option checked, as does the input ending before
-/// any key; a key and then the end submits what is checked. Answered, the
-/// list folds into a line naming the checked options.
+/// Puts `question` over a checklist of (name, detail) options, checked as
+/// `default` says: the arrow keys (or j/k) move the cursor, space toggles
+/// its option, a digit toggles the nth, and enter submits. Ctrl-C, Ctrl-D
+/// or q keep the default, as does the input ending before any key; a key
+/// and then the end submits what is checked. Answered, the list folds into
+/// a line naming the checked options.
 fn checklist(
     out: &mut dyn Write,
     input: &mut dyn Read,
     question: &str,
     options: &[(&str, String)],
+    default: &[bool],
 ) -> io::Result<Vec<bool>> {
     write!(
         out,
@@ -1424,7 +1468,7 @@ fn checklist(
         )?;
         out.flush()
     };
-    let (mut sel, mut on) = (0, vec![true; options.len()]);
+    let (mut sel, mut on) = (0, default.to_vec());
     // Auto-wrap off, so a row wider than the terminal stays one row and the
     // moves up count right; fold turns it back on.
     write!(out, "\x1b[?7l")?;
@@ -1435,7 +1479,7 @@ fn checklist(
             0xc2 | 0xc3 | b'j' => sel = (sel + 1).min(options.len() - 1), // down, right
             b'\r' | b'\n' => break,
             3 | 4 | b'q' => {
-                on = vec![true; options.len()];
+                on = default.to_vec();
                 break;
             }
             b' ' => on[sel] = !on[sel],

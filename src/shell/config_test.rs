@@ -1477,7 +1477,7 @@ fn the_comments_page_lists_the_pr_comments_job_at_the_shipped_skill() {
     let text =
         |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
     let buf = render(&s, 160, 45);
-    let right: Vec<String> = (1..20).map(|y| text(&buf, y, 99, 158)).collect();
+    let right: Vec<String> = (1..30).map(|y| text(&buf, y, 99, 158)).collect();
     let at = right.iter().position(|l| l == "DELEGATE SKILLS");
     let job = at.and_then(|at| right.get(at + 1));
     assert_eq!(
@@ -1487,7 +1487,7 @@ fn the_comments_page_lists_the_pr_comments_job_at_the_shipped_skill() {
     );
 
     s.key(key(KeyCode::Enter));
-    keys(&mut s, &[KeyCode::Down; 6]);
+    keys(&mut s, &[KeyCode::Down; 10]);
     s.key(key(KeyCode::Enter));
     let buf = render(&s, 160, 45);
     let right: Vec<String> = (1..5).map(|y| text(&buf, y, 99, 158)).collect();
@@ -1919,6 +1919,159 @@ fn the_rebase_and_address_pr_comments_pages_render_their_row_switch_and_numbers(
             "",
         ],
         "{right:#?}"
+    );
+}
+
+/// Agent merge's settings on the Address PR comments page, under their own
+/// heading: the switch off, no review bot ticked and bot_wait at 30.
+#[test]
+fn the_address_pr_comments_page_renders_agent_merge_under_its_heading() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, ADDRESS_PR_COMMENTS_PAGE);
+    let buf = render(&s, 160, 45);
+    let right: Vec<String> = (1..30)
+        .map(|y| cols(&buf, y, 99, 158).trim_end().to_string())
+        .collect();
+    let at = right
+        .iter()
+        .position(|l| l.starts_with("  runs per PR"))
+        .unwrap_or_else(|| panic!("{right:#?}"));
+    assert_eq!(
+        right[at + 1..at + 7],
+        [
+            "",
+            "AGENT MERGE",
+            "  [ ] Merge Ticket PRs by themselves",
+            "  [ ] review bot: coderabbit",
+            "  [ ] review bot: greptile",
+            "  bot wait minutes      30  default",
+        ],
+        "{right:#?}"
+    );
+}
+
+/// Agent merge turns on only with automatic Address PR comments on: off,
+/// /config refuses and says why; and turning that off turns Agent merge off
+/// with a RECENT line.
+#[test]
+fn agent_merge_is_refused_without_automatic_address_pr_comments_and_goes_off_with_it() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, ADDRESS_PR_COMMENTS_PAGE);
+    keys(&mut s, &[KeyCode::Down; 6]);
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        note(&s),
+        "Agent merge off: it needs PR comments and failing checks opened for approval by themselves (address_pr_comments_auto). Nothing changed."
+    );
+    assert!(!repo.path().join(".orqadence/config.json").exists());
+
+    keys(&mut s, &[KeyCode::Up, KeyCode::Up, KeyCode::Up]);
+    s.key(key(KeyCode::Enter));
+    keys(&mut s, &[KeyCode::Down; 3]);
+    s.key(key(KeyCode::Char(' ')));
+    assert_eq!(
+        config_json(repo.path()),
+        json!({"address_pr_comments_auto": true, "agent_merge": true})
+    );
+    assert_eq!(
+        note(&s),
+        "Merge Ticket PRs by themselves: on, saved uncommitted in .orqadence/config.json"
+    );
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "▸ [x] Merge Ticket PRs by themselves").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+
+    keys(&mut s, &[KeyCode::Up, KeyCode::Up, KeyCode::Up]);
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        config_json(repo.path()),
+        json!({"address_pr_comments_auto": false, "agent_merge": false})
+    );
+    await_line(
+        &mut s,
+        "config: Merge Ticket PRs by themselves: off, as PR comments no longer open by themselves",
+    );
+}
+
+/// Space or Enter on a review bot ticks it, saved at once in review_bots,
+/// and again unticks it; bot_wait refuses 0 and keeps a whole number.
+#[test]
+fn ticking_a_review_bot_saves_review_bots_and_bot_wait_refuses_0() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, ADDRESS_PR_COMMENTS_PAGE);
+    keys(&mut s, &[KeyCode::Down; 8]);
+    s.key(key(KeyCode::Char(' ')));
+    assert_eq!(
+        config_json(repo.path()),
+        json!({"review_bots": ["greptile"]})
+    );
+    assert_eq!(
+        note(&s),
+        "review bots: greptile, saved uncommitted in .orqadence/config.json"
+    );
+    s.key(key(KeyCode::Up));
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        config_json(repo.path()),
+        json!({"review_bots": ["coderabbit", "greptile"]})
+    );
+    let buf = render(&s, 160, 45);
+    for line in ["▸ [x] review bot: coderabbit", "  [x] review bot: greptile"] {
+        assert!(find(&buf, line).is_some(), "{line:?}: {:#?}", rows(&buf));
+    }
+    s.key(key(KeyCode::Char(' ')));
+    keys(&mut s, &[KeyCode::Down, KeyCode::Enter]);
+    assert_eq!(config_json(repo.path()), json!({"review_bots": []}));
+    assert_eq!(
+        note(&s),
+        "review bots: none, saved uncommitted in .orqadence/config.json"
+    );
+
+    keys(&mut s, &[KeyCode::Down, KeyCode::Enter]);
+    type_in(&mut s, "0");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        note(&s),
+        "Refused: 0 is not a whole number of at least 1. Nothing changed."
+    );
+    s.key(key(KeyCode::Esc));
+    s.key(key(KeyCode::Enter));
+    type_in(&mut s, "45");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        config_json(repo.path()),
+        json!({"review_bots": [], "bot_wait": 45})
+    );
+}
+
+/// A review_bots that is not a list of the known bots is flagged on the
+/// Address PR comments page, and ticking a bot writes the list anew.
+#[test]
+fn a_review_bots_that_cannot_be_read_is_flagged_and_a_tick_mends_it() {
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"review_bots": ["codrabbit"]}"#,
+    );
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, ADDRESS_PR_COMMENTS_PAGE);
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "✗ review_bots is not a list of coderabbit, greptile").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    keys(&mut s, &[KeyCode::Down; 7]);
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        config_json(repo.path()),
+        json!({"review_bots": ["coderabbit"]})
     );
 }
 

@@ -1096,6 +1096,94 @@ fn a_committed_checkout_is_not_asked_the_switches() {
     assert_eq!(read(repo.path(), ".orqadence/config.json"), config);
 }
 
+const AGENT_MERGE_QUESTION: &str =
+    "Merge Ticket PRs by themselves? (security, db and infra Tickets still wait for you)";
+const REVIEW_BOTS_QUESTION: &str = "Which review bots does this repo have?";
+
+/// With PR comments opened by themselves init asks Agent merge, enter alone
+/// no; yes asks the repo's review bots, none ticked, and writes no bot_wait:
+/// its default stands.
+#[test]
+fn init_asks_agent_merge_after_address_pr_comments_and_yes_asks_the_review_bots() {
+    // (the answers after the docs/agents setup, TypeSafe no and the labels:
+    // Rebase no, Address PR comments yes)
+    let before = ["\n", "n\n", "\n", "\n", "y\n"];
+    let (repo, home) = (bare_repo(), TempDir::new());
+    let keys: Vec<&str> = before.iter().chain(&["\n"]).copied().collect();
+    let (code, out) = init_keys(repo.path(), home.path(), &keys);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains(AGENT_MERGE_QUESTION), "{out}");
+    assert!(!out.contains(REVIEW_BOTS_QUESTION), "{out}");
+    assert!(!app::switch(repo.path(), &app::AGENT_MERGE), "{out}");
+
+    let (repo, home) = (bare_repo(), TempDir::new());
+    let keys: Vec<&str> = before.iter().chain(&["y\n", " ", "\n"]).copied().collect();
+    let (code, out) = init_keys(repo.path(), home.path(), &keys);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains(REVIEW_BOTS_QUESTION), "{out}");
+    assert!(out.contains("[ ] 2. greptile"), "{out}");
+    let (_, doc) = app::read(repo.path()).unwrap();
+    assert!(app::switch_in(&doc, &app::AGENT_MERGE), "{out}");
+    assert_eq!(
+        doc["review_bots"],
+        serde_json::json!(["coderabbit"]),
+        "{out}"
+    );
+    assert!(doc.get("bot_wait").is_none(), "{out}");
+}
+
+/// With PR comments not opened by themselves Agent merge is not asked: init
+/// says why, and one kept on by an earlier init goes off.
+#[test]
+fn init_does_not_ask_agent_merge_without_address_pr_comments_and_says_why() {
+    let (repo, home) = (bare_repo(), TempDir::new());
+    app::set_switch(repo.path(), &app::ADDRESS_PR_COMMENTS_AUTO, true).unwrap();
+    app::set_switch(repo.path(), &app::AGENT_MERGE, true).unwrap();
+    let keys = ["\n", "n\n", "\n", "\n", "n\n"];
+    let (code, out) = init_keys(repo.path(), home.path(), &keys);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains(AGENT_MERGE_QUESTION), "{out}");
+    assert!(
+        out.contains("Agent merge off: it needs PR comments and failing checks opened for approval by themselves"),
+        "{out}"
+    );
+    let (_, doc) = app::read(repo.path()).unwrap();
+    assert_eq!(doc["agent_merge"], false, "{out}");
+}
+
+/// Nobody answering leaves Agent merge off and writes neither review_bots
+/// nor bot_wait; on a re-run it keeps Agent merge on and the bots ticked.
+/// A checkout whose settings are committed is not asked.
+#[test]
+fn a_silent_or_committed_init_asks_no_agent_merge_and_a_rerun_keeps_it() {
+    let repo = bare_repo();
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "{out}");
+    let (_, doc) = app::read(repo.path()).unwrap();
+    assert!(!app::switch_in(&doc, &app::AGENT_MERGE), "{out}");
+    assert!(doc.get("review_bots").is_none() && doc.get("bot_wait").is_none());
+
+    app::set_switch(repo.path(), &app::ADDRESS_PR_COMMENTS_AUTO, true).unwrap();
+    app::set_switch(repo.path(), &app::AGENT_MERGE, true).unwrap();
+    app::set_review_bots(repo.path(), &["greptile"]).unwrap();
+    // The gate, then nobody answering.
+    let (code, out) = init_keys(repo.path(), TempDir::new().path(), &["2"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("[x] 2. greptile"), "{out}");
+    let (_, doc) = app::read(repo.path()).unwrap();
+    assert!(app::switch_in(&doc, &app::AGENT_MERGE), "{out}");
+    assert_eq!(doc["review_bots"], serde_json::json!(["greptile"]), "{out}");
+    assert!(doc.get("bot_wait").is_none(), "{out}");
+
+    let (repo, home) = (prepared_repo(), TempDir::new());
+    let config = r#"{"address_pr_comments_auto": true}"#;
+    write_file(&repo.path().join(".orqadence/config.json"), config);
+    let (_, out) = init_with(repo.path(), home.path(), committed_tools(), &["\n"], "");
+    assert!(out.contains(COMMITTED), "{out}");
+    assert!(!out.contains(AGENT_MERGE_QUESTION), "{out}");
+    assert_eq!(read(repo.path(), ".orqadence/config.json"), config);
+}
+
 /// config.json's labels, each entry read as the Orchestrator reads it.
 fn labels_in(repo: &Path) -> BTreeMap<String, Label> {
     let (_, doc) = app::read(repo).unwrap();

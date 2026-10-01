@@ -661,6 +661,12 @@ pub(crate) const ADDRESS_PR_COMMENTS_RUNS: Count = Count {
     default: 3,
     least: 1,
 };
+/// Minutes Agent merge waits for a listed review bot's review.
+pub(crate) const BOT_WAIT: Count = Count {
+    key: "bot_wait",
+    default: 30,
+    least: 1,
+};
 
 /// A count in doc: missing or empty is its default; anything but a whole
 /// number of at least its least is refused.
@@ -715,11 +721,47 @@ pub(crate) const RELEASE_ON: Switch = Switch {
     key: "release_on",
     question: "Turn on releases (the orqa:release label)?",
 };
+/// Agent merge: the Orchestrator merges a Ticket's PR once Address PR
+/// comments' flow has finished on a quiet head (ADR 0007).
+pub(crate) const AGENT_MERGE: Switch = Switch {
+    key: "agent_merge",
+    question: "Merge Ticket PRs by themselves?",
+};
+
+/// The review bots a repo can list in review_bots, and that key.
+pub(crate) const REVIEW_BOTS: [&str; 2] = ["coderabbit", "greptile"];
+pub(crate) const REVIEW_BOTS_KEY: &str = "review_bots";
+
+/// The review bots Agent merge waits for, as doc lists them: missing is
+/// none; anything but a list of REVIEW_BOTS is refused, so a misspelt bot
+/// is never read as no bot.
+pub(crate) fn review_bots_in(doc: &Value) -> Result<Vec<&'static str>, String> {
+    let known = |bot: &Value| REVIEW_BOTS.into_iter().find(|name| bot == name);
+    match doc.get(REVIEW_BOTS_KEY) {
+        None => Ok(Vec::new()),
+        Some(bots) => bots
+            .as_array()
+            .and_then(|bots| bots.iter().map(known).collect())
+            .ok_or(format!(
+                "{REVIEW_BOTS_KEY} is not a list of {}",
+                REVIEW_BOTS.join(", ")
+            )),
+    }
+}
+
+/// Keeps the review bots in config.json, the rest as it was.
+pub(crate) fn set_review_bots(repo: &Path, bots: &[&str]) -> Result<(), String> {
+    set_top(repo, REVIEW_BOTS_KEY, Some(json!(bots)))
+}
+
+/// Why Agent merge is off, as /config's refusal and init say it.
+pub(crate) const AGENT_MERGE_NEEDS: &str = "Agent merge off: it needs PR comments and failing checks opened for approval by themselves (address_pr_comments_auto)";
 
 /// Whether a switch is on in doc: true alone is on, so a repo initialised
-/// before it is off.
+/// before it is off. Agent merge is on only with automatic Address PR
+/// comments on too, whatever a config.json edited by hand says.
 pub(crate) fn switch_in(doc: &Value, switch: &Switch) -> bool {
-    doc[switch.key] == true
+    doc[switch.key] == true && (*switch != AGENT_MERGE || doc[ADDRESS_PR_COMMENTS_AUTO.key] == true)
 }
 
 /// Whether a switch is on, read as each poll runs; a config.json that
@@ -728,9 +770,22 @@ pub(crate) fn switch(repo: &Path, switch: &Switch) -> bool {
     read(repo).is_ok_and(|(_, doc)| switch_in(&doc, switch))
 }
 
-/// Keeps a switch on or off in config.json, the rest as it was.
+/// Keeps a switch on or off in config.json, the rest as it was. Agent merge
+/// on is refused while automatic Address PR comments is off, and turning
+/// that off turns Agent merge off with it; one written on by hand while it
+/// was off goes off too, so turning it on never turns Agent merge on.
 pub(crate) fn set_switch(repo: &Path, switch: &Switch, on: bool) -> Result<(), String> {
-    set_top(repo, switch.key, Some(Value::Bool(on)))
+    let (path, mut doc) = read_object(repo)?;
+    if *switch == AGENT_MERGE && on && !switch_in(&doc, &ADDRESS_PR_COMMENTS_AUTO) {
+        return Err(AGENT_MERGE_NEEDS.to_string());
+    }
+    if *switch == ADDRESS_PR_COMMENTS_AUTO && doc[AGENT_MERGE.key] == true {
+        // Read before the switch is written: Agent merge stays on only
+        // where it was on in effect and Address PR comments' stays on.
+        doc[AGENT_MERGE.key] = Value::Bool(on && switch_in(&doc, &AGENT_MERGE));
+    }
+    doc[switch.key] = Value::Bool(on);
+    write(&path, &doc)
 }
 
 /// The key of every row of config.json; static, so a label's Check can
