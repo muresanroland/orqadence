@@ -268,6 +268,49 @@ fn address_pr_comments_writes_the_reply_marker() {
     assert!(skill("orqa-address-pr-comments").contains("<!-- address-pr-comments -->"));
 }
 
+/// A PR comment asking for work another open Ticket does is answered as
+/// covered by it, with the marker, and nothing is changed: the Stage hands
+/// the Tickets on and says it for its own steps, the shipped skill for its.
+#[test]
+fn a_pr_comment_another_open_ticket_covers_is_answered_not_fixed() {
+    let stage = skill("orqa-stage-address-pr-comments");
+    let shipped = skill("orqa-address-pr-comments");
+    for text in [
+        "the **Other open Tickets**, and each failing check",
+        "`Covered by <id>: <title>. <!-- address-pr-comments -->`",
+        "resolveReviewThread",
+        "Never delete or revert what an open Ticket there depends on",
+    ] {
+        assert!(
+            stage.contains(text),
+            "stage-address-pr-comments lacks {text:?}"
+        );
+    }
+    for text in [
+        "**other open Tickets**",
+        "| covered by another open Ticket | `Covered by <id>: <title>.` | yes |",
+        "Never delete or revert what one of these open Tickets depends on",
+    ] {
+        assert!(shipped.contains(text), "address-pr-comments lacks {text:?}");
+    }
+}
+
+/// threads.sh leaves out PR #78's two threads answered Covered by
+/// harness-we9.3, resolved or not, as pr.rs's items do.
+#[test]
+fn threads_sh_leaves_out_a_thread_answered_as_covered() {
+    let mut pr: serde_json::Value =
+        serde_json::from_str(include_str!("../orchestrator/testdata/pr/78.json")).unwrap();
+    for thread in pr["reviewThreads"]["nodes"].as_array_mut().unwrap() {
+        thread["isResolved"] = serde_json::json!(false);
+    }
+    let reply = serde_json::json!({"data": {"repository": {"pullRequest": pr}}});
+    let Some(found) = threads(&reply) else {
+        return;
+    };
+    assert_eq!(found, serde_json::json!([]));
+}
+
 /// threads.sh run with a stub gh first on PATH: gh's --jq filter applied
 /// by jq to `reply`, a GraphQL reply. The real bash runs.
 fn threads(reply: &serde_json::Value) -> Option<serde_json::Value> {

@@ -148,18 +148,51 @@ impl Orchestrator {
         (!queue.is_empty()).then(|| ["--id".to_string(), queue])
     }
 
+    /// The Tickets bd lists under a scope, every status.
+    fn bd_list(&self, [by, value]: &[String; 2]) -> Result<Vec<BdIssue>, String> {
+        self.bd_issues(&["list", by, value, "--all", "--limit", "0", "--json"])
+    }
+
     /// The run's Tickets, every status; None says "bd list failed".
     fn children(&self, epic: &str) -> Option<Vec<BdIssue>> {
-        let Some([by, value]) = self.scope(epic) else {
+        let Some(scope) = self.scope(epic) else {
             return Some(Vec::new());
         };
-        match self.bd_issues(&["list", &by, &value, "--all", "--limit", "0", "--json"]) {
+        match self.bd_list(&scope) {
             Ok(children) => Some(children),
             Err(err) => {
                 self.report("", &format!("bd list failed: {err}"));
                 None
             }
         }
+    }
+
+    /// The other open Tickets as an Input, for a PR comment that asks for
+    /// the work one of them does: the run's and, in a Ticket run, the
+    /// children of the Ticket's own Epic, but the closed ones and the Ticket
+    /// itself. "none", or one per line, its id and title.
+    fn other_open(&self, ticket: &str) -> Result<String, String> {
+        let epic = self.state.lock().unwrap().epic.clone();
+        let mut tickets = match self.scope(&epic) {
+            Some(scope) => self.bd_list(&scope)?,
+            None => Vec::new(),
+        };
+        let parent = (tickets.iter().find(|t| t.id == ticket))
+            .map(|t| t.parent.clone())
+            .unwrap_or_default();
+        if epic.is_empty() && !parent.is_empty() {
+            for child in self.bd_list(&["--parent".to_string(), parent])? {
+                if !tickets.iter().any(|t| t.id == child.id) {
+                    tickets.push(child);
+                }
+            }
+        }
+        let lines: Vec<String> = tickets
+            .iter()
+            .filter(|t| t.id != ticket && t.status != "closed")
+            .map(|t| format!("{}: {}", t.id, t.title))
+            .collect();
+        Ok(bulleted(&lines))
     }
 
     /// The run's Tickets bd has ready: open, every blocker closed; a Ticket
@@ -779,22 +812,29 @@ impl Orchestrator {
 
     /// Runs a PR Stage in the kept worktree: a fresh session, or `resumed`,
     /// the one /continue takes back. Address PR comments is fed gh's view
-    /// of the PR's reviews, comments and checks, the PR template the last
-    /// Fix had, for the body's sections, and a fresh run's `lists`, its
-    /// approved and won't-fix items, which count it toward the cap. Its tab
+    /// of the PR's reviews, comments and checks, the other open Tickets, the
+    /// PR template the last Fix had, for the body's sections, and a fresh
+    /// run's `lists`, its approved and won't-fix items, which count it
+    /// toward the cap; without gh's view or bd's list it does not run. Its tab
     /// closes once it is done, said as "<rebased|addressed> PR #n". Away,
     /// its question parks the Ticket; a long usage limit leaves it running
     /// for /continue.
     fn on_pr(&self, ticket: &str, st: &Stage, resumed: bool, lists: Option<(&[Item], &[Item])>) {
         let pr = self.ticket(ticket).pr;
         let rebase = st.name == REBASE.name;
-        let (name, value) = if rebase {
-            ("Default branch", self.origin_head(ticket))
+        let (name, value, others) = if rebase {
+            ("Default branch", self.origin_head(ticket), None)
         } else {
             let fields = "reviews,comments,statusCheckRollup";
             let argv = ["gh", "pr", "view", &pr, "--json", fields];
-            match self.cfg.tools.run(&self.cfg.repo, &argv) {
-                Ok(json) => ("PR metadata (gh JSON)", json.trim().to_string()),
+            let view = self.cfg.tools.run(&self.cfg.repo, &argv);
+            let view = view.map_err(|err| err.to_string());
+            match view.and_then(|json| Ok((json, self.other_open(ticket)?))) {
+                Ok((json, others)) => (
+                    "PR metadata (gh JSON)",
+                    json.trim().to_string(),
+                    Some(others),
+                ),
                 Err(err) => {
                     // no run took the lists: the poll offers their items again
                     if let Some((fix, skip)) = lists {
@@ -818,6 +858,9 @@ impl Orchestrator {
         let mut inputs = vec![("PR", pr.as_str())];
         if let Some((fix, skip)) = &lists_s {
             inputs.extend([("Approved", fix.as_str()), ("Won't fix", skip.as_str())]);
+        }
+        if let Some(others) = &others {
+            inputs.push(("Other open Tickets", others));
         }
         inputs.push((name, value.as_str()));
         if let Some(template) = &template {
@@ -921,15 +964,19 @@ impl Orchestrator {
 /// Items as an Input: "none", or one per line as the skill matches them,
 /// by title, author and place.
 fn listed(items: &[Item]) -> String {
-    if items.is_empty() {
-        return "none".to_string();
-    }
     let line = |i: &Item| match i.place.as_str() {
         "" => format!("{} by {} — {}", i.kind, i.author, i.summary),
         at => format!("{} by {} at {at} — {}", i.kind, i.author, i.summary),
     };
-    let lines: Vec<String> = items.iter().map(line).collect();
-    format!("\n  - {}", lines.join("\n  - "))
+    bulleted(&items.iter().map(line).collect::<Vec<_>>())
+}
+
+/// Lines as an Input: "none", or one under the other.
+fn bulleted(lines: &[String]) -> String {
+    match lines.is_empty() {
+        true => "none".to_string(),
+        false => format!("\n  - {}", lines.join("\n  - ")),
+    }
 }
 
 /// A Ticket's place in the Pipeline, or its PR session's, given back when

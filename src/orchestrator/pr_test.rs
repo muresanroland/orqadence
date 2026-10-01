@@ -28,6 +28,10 @@ const PR37: &str = include_str!("testdata/pr/37.json");
 const PR52: &str = include_str!("testdata/pr/52.json");
 /// CodeRabbit: one resolved Minor thread, its status context.
 const PR65: &str = include_str!("testdata/pr/65.json");
+/// CodeRabbit: two Minor threads asking to delete the Moshi docs that
+/// harness-we9.3 builds. Each thread's reply is not on the real PR: it is
+/// the answer address-pr-comments gives a comment another Ticket covers.
+const PR78: &str = include_str!("testdata/pr/78.json");
 
 fn fixture(raw: &str) -> Value {
     serde_json::from_str(raw).unwrap()
@@ -124,6 +128,45 @@ fn an_item_answered_with_the_marker_is_absent_and_back_after_a_human_reply() {
             "src/orchestrator/cost.rs:153",
             "Bound session discovery on the shell thread."
         )]
+    );
+}
+
+/// Answered `Covered by <id>: <title>.` with the marker, a PR comment is
+/// not open, its thread resolved or not: what the merge reads.
+#[test]
+fn a_thread_answered_as_covered_by_another_ticket_is_absent() {
+    let mut pr = fixture(PR78);
+    for i in 0..2 {
+        let answer = thread(&mut pr, i)["comments"]["nodes"][1]["body"].clone();
+        let answer = answer.as_str().unwrap();
+        assert!(answer.starts_with("Covered by harness-we9.3: "), "{answer}");
+    }
+    assert_eq!(items(&pr), [], "answered and resolved");
+
+    for i in 0..2 {
+        thread(&mut pr, i)["isResolved"] = json!(false);
+    }
+    assert_eq!(items(&pr), [], "the marker alone answers them");
+
+    for i in 0..2 {
+        comments(thread(&mut pr, i)).truncate(1);
+    }
+    assert_eq!(
+        rows(&items(&pr)),
+        [
+            (
+                "thread",
+                "Minor",
+                "docs/on-call.md:22",
+                "Remove the unsupported Moshi notification claims."
+            ),
+            (
+                "thread",
+                "Minor",
+                "docs/on-call.md:35",
+                "Remove the Moshi setup instructions until the feature exists."
+            ),
+        ]
     );
 }
 

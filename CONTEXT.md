@@ -129,7 +129,7 @@ The Stage that brings a Ticket's open pull request back onto the default branch 
 _Avoid_: Address, conflict fix, merge
 
 **Address PR comments**:
-The Stage that acts on a Ticket's open pull request once its checks and bots are done: it fixes the PR comments and failing checks the user approved, answers the others as won't fix, and pushes to the same pull request. It runs outside the Pipeline, after the user approves or a countdown or Away approves for them.
+The Stage that acts on a Ticket's open pull request once its checks and bots are done: it fixes the PR comments and failing checks the user approved, answers one that asks for the work of another open Ticket of the run or its Epic as covered by that Ticket, answers the others as won't fix, and pushes to the same pull request. It runs outside the Pipeline, after the user approves or a countdown or Away approves for them.
 _Avoid_: Address (alone), Fix (that is the Pipeline's), review response
 
 **Agent merge**:
