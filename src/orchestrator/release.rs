@@ -166,7 +166,7 @@ impl Orchestrator {
     fn version_pr(&self, id: &str) -> Result<bool, StageError> {
         let release = self.release_record();
         let url = &release.ts.pr;
-        if !url.is_empty() && !release.merged && !self.poll_version_pr(id, url)? {
+        if !url.is_empty() && release.commit.is_empty() && !self.poll_version_pr(id, url)? {
             let text = format!(
                 "version {} closed without merging: run the Release again?",
                 pr_ref(url)
@@ -202,7 +202,6 @@ impl Orchestrator {
                         let commit = pr.merge_commit().to_string();
                         self.change_state(|state| {
                             if let Some(release) = &mut state.release {
-                                release.merged = true;
                                 release.commit = commit;
                             }
                         });

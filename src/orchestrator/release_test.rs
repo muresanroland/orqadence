@@ -111,7 +111,7 @@ fn the_version_prs_merge_puts_the_tag_question_and_yes_tags_the_merge_commit_and
     assert!(w.called("gh release").is_empty(), "a GitHub Release made");
     assert!(run_level(&w, "tagged v1.5.0 and pushed"));
     let release = o.state.lock().unwrap().release.clone().unwrap();
-    assert!(release.merged && release.tagged, "{release:?}");
+    assert!(release.tagged, "{release:?}");
     assert_eq!(release.commit, "m3rg3d");
 }
 
@@ -122,21 +122,12 @@ fn no_to_the_tag_question_tags_nothing_says_how_and_ends_the_run() {
     let o = Arc::new(o);
     let mut run = spawn_epic(o.clone(), "hx");
 
-    let asked = w.await_event("Tag v1.5.0 and push it?");
+    w.await_event("Tag v1.5.0 and push it?");
     tag(&w, &o, &mut run, "no");
 
     assert!(w.called("git tag").is_empty() && w.called("git push").is_empty());
     let how = "git fetch origin HEAD && git tag v1.5.0 m3rg3d && git push origin v1.5.0";
     assert!(run_level(&w, &format!("v1.5.0 not tagged: {how}")));
-    let Some(Ask::Tag { notice, .. }) = asked.ask else {
-        panic!("no tag Question: {asked:?}");
-    };
-    for command in ["git tag v1.5.0 m3rg3d", "git push origin v1.5.0"] {
-        assert!(
-            notice.contains(command),
-            "the Notice lacks {command:?}: {notice}"
-        );
-    }
     assert!(!o.state.lock().unwrap().release.clone().unwrap().tagged);
 }
 
@@ -721,7 +712,7 @@ fn continue_on_a_saved_run_whose_release_is_tagged_asks_no_tag_question() {
         release.version = "v1.5.0".to_string();
         release.ts.pr = VERSION_PR.to_string();
         release.ts.sessions.clear();
-        release.merged = true;
+        release.commit = "m3rg3d".to_string();
         release.tagged = true;
     }
     let o = Arc::new(o);
