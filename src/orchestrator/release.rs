@@ -32,8 +32,9 @@ impl Orchestrator {
     ) -> Result<Option<String>, String> {
         let saved = self.state.lock().unwrap().release.is_some();
         let merged = || {
-            let merged = |c: &BdIssue| self.ticket(&c.id).status == STATUS_MERGED;
-            children.iter().any(merged)
+            children
+                .iter()
+                .any(|c| self.ticket(&c.id).status == STATUS_MERGED)
         };
         if !saved && !(app::switch(&self.cfg.repo, &RELEASE_ON) && merged()) {
             return Ok(None);
