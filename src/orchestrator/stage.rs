@@ -254,8 +254,9 @@ pub(crate) struct Config {
     pub(crate) wait: Option<Duration>,
 }
 
-/// A PR's approved items and its won't-fix ones.
-pub(crate) type Lists = (Vec<Item>, Vec<Item>);
+/// A PR's approved items, its won't-fix ones, and whether a modal opened
+/// by hand approved any, which the runs cap does not hold.
+pub(crate) type Lists = (Vec<Item>, Vec<Item>, bool);
 
 /// Owns Ticket state, pane placement and Stage transitions. It composes no
 /// text: what it cannot advance by rule becomes a Wake, which a Judgment or

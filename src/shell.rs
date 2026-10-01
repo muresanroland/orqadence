@@ -226,6 +226,8 @@ pub(crate) struct Approval {
     /// When it approves the rows as they stand: set as it shows, cleared
     /// for good by any key.
     pub(crate) approves: Option<chrono::DateTime<chrono::Local>>,
+    /// /address-pr-comments opened it: the runs cap does not hold its run.
+    by_hand: bool,
 }
 
 /// What the screen shows, with no terminal in it.
@@ -552,7 +554,9 @@ impl Screen {
     /// lock with it, and then the release that waited on it installs (/exit
     /// and Ctrl-C twice, with no re-exec). Another process's lock drops it.
     pub(crate) fn close(&mut self) {
-        drop(self.run.take());
+        if let Some(run) = self.run.take() {
+            self.withdraw(&run);
+        }
         self.install(false);
         if let Some(ready) = self.update.take() {
             ready.discard();
@@ -639,8 +643,7 @@ impl Screen {
         }
         self.running = false;
         self.questions.retain(|q| q.ticket.is_none()); // never saved: derived again on resume
-        let items = |a: Approval| (a.ticket, a.rows.into_iter().map(|(i, _)| i).collect());
-        run.o.withdraw(self.approvals.drain(..).map(items)); // the next run's poll offers them
+        self.withdraw(&run);
         self.composing = false;
         self.first = None;
         if run.o.stopping() {
@@ -672,6 +675,13 @@ impl Screen {
         self.reload_epics();
         drop(run); // the lock goes
         self.install(false); // the last act of /stop-work
+    }
+
+    /// The run's end: its unanswered approval modals go, withdrawn from
+    /// offered, so the next run's poll offers them again.
+    fn withdraw(&mut self, run: &Run) {
+        let items = |a: Approval| (a.ticket, a.rows.into_iter().map(|(i, _)| i).collect());
+        run.o.withdraw(self.approvals.drain(..).map(items));
     }
 
     /// Whether every Ticket of the run (its Epic's on the bd tree, or the
@@ -839,7 +849,7 @@ impl Screen {
             let minutes = app::count(&self.cfg.repo, &ADDRESS_PR_COMMENTS_COUNTDOWN) as u64;
             let countdown = (minutes > 0).then(|| Duration::from_secs(60 * minutes));
             let ticket = event.ticket.unwrap_or_default();
-            return self.offer(ticket, event.offer, countdown);
+            return self.offer(ticket, event.offer, countdown, false);
         }
         if !event.panel && event.ask.is_none() {
             return;
@@ -1216,7 +1226,6 @@ impl Screen {
         if let Some(a) = self.approvals.first_mut() {
             a.approves = None;
             match key.code {
-                _ if ctrl_c => {}
                 KeyCode::Up => a.cursor = a.cursor.saturating_sub(1),
                 KeyCode::Down => a.cursor = (a.cursor + 1).min(a.rows.len() - 1),
                 KeyCode::Char(' ') => a.rows[a.cursor].1 ^= true,
@@ -1866,7 +1875,7 @@ impl Screen {
                         Ok(items) if items.is_empty() => {
                             self.refuse(&format!("refused: {query} has no open PR comments"))
                         }
-                        Ok(items) => self.offer(query.to_string(), items, None),
+                        Ok(items) => self.offer(query.to_string(), items, None, true),
                         Err(err) => self.refuse(&err),
                     },
                     Some(o) => o.command(&format!("{}-{query}", &name[1..])),
@@ -2244,7 +2253,13 @@ impl Screen {
 
     /// Raises the approval modal for a Ticket's PR comments, every row
     /// checked; one raised while another shows waits behind it.
-    fn offer(&mut self, ticket: String, items: Vec<Item>, countdown: Option<Duration>) {
+    fn offer(
+        &mut self,
+        ticket: String,
+        items: Vec<Item>,
+        countdown: Option<Duration>,
+        by_hand: bool,
+    ) {
         let pr = self.state.tickets.get(&ticket).map(|ts| pr_ref(&ts.pr));
         self.approvals.push(Approval {
             ticket,
@@ -2253,6 +2268,7 @@ impl Screen {
             cursor: 0,
             countdown,
             approves: None,
+            by_hand,
         });
         if self.approvals.len() == 1 {
             self.show_approval();
@@ -2280,7 +2296,8 @@ impl Screen {
             self.tell(Some(&a.ticket), &text);
             let items = |rows: Vec<(Item, bool)>| rows.into_iter().map(|(item, _)| item).collect();
             if let Some(run) = &self.run {
-                run.o.approve_comments(&a.ticket, items(on), items(off));
+                run.o
+                    .approve_comments(&a.ticket, items(on), items(off), a.by_hand);
             }
         } else {
             let text = format!("{who} cancelled {n}, /address-pr-comments opens them");

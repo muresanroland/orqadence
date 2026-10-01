@@ -11,7 +11,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::brand::{GREEN, PURPLE, RED};
-use super::shell_test::{await_line, find, key, line, render, row, rows, screen_at, shell};
+use super::shell_test::{
+    await_end, await_line, find, key, line, render, row, rows, screen_at, shell,
+};
 use super::{Approval, Screen};
 use crate::orchestrator::app::{set_switch, ADDRESS_PR_COMMENTS_AUTO};
 use crate::orchestrator::pr::Item;
@@ -288,6 +290,47 @@ fn past_the_runs_cap_new_items_get_a_line_and_the_command_still_opens_them() {
     assert_eq!(s.approvals.len(), 1, "{:?}", s.notice);
 }
 
+/// The cap holds when the run starts, not only when the modal is offered:
+/// a modal approved after another run reached the cap starts nothing. One
+/// opened by hand still runs.
+#[test]
+fn a_modal_approved_past_the_runs_cap_starts_nothing_but_one_by_hand_runs() {
+    let (w, mut s, clock) = polled(&["hx-1"], &commented("a"), true);
+    run(&s).update("hx-1", |ts| ts.address_runs = 2);
+    later(&clock, 60);
+    await_approvals(&mut s, 1);
+    run(&s).update("hx-1", |ts| ts.address_runs = 3);
+    s.key(key(KeyCode::Enter));
+    await_line(
+        &mut s,
+        "hx-1 PR #hx-1: past the cap of 3 Address PR comments runs, \
+         /address-pr-comments opens them",
+    );
+    assert!(!addressing(&w, "hx-1"));
+    s.command("/address-pr-comments hx-1");
+    s.key(key(KeyCode::Enter));
+    await_line(&mut s, "hx-1 addressed PR #hx-1");
+    assert_eq!(run(&s).ticket("hx-1").address_runs, 4);
+}
+
+/// Exiting with a modal unanswered, by Ctrl-C twice as /exit does, withdraws
+/// its items from offered, so the next run's poll opens them again.
+#[test]
+fn a_modal_left_at_exit_is_withdrawn() {
+    let (_w, mut s, clock) = polled(&["hx-1"], &commented("a"), true);
+    later(&clock, 60);
+    await_approvals(&mut s, 1);
+    let o = run(&s);
+    assert!(!o.ticket("hx-1").offered.is_empty());
+    let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    s.key(ctrl_c);
+    s.key(ctrl_c);
+    assert!(s.quit);
+    s.close();
+    assert!(s.approvals.is_empty());
+    assert!(o.ticket("hx-1").offered.is_empty());
+}
+
 /// Two PRs with new items: one modal shows, the other waits its turn, its
 /// countdown not running until it shows.
 #[test]
@@ -350,8 +393,8 @@ fn modal_screen() -> Screen {
         item("t", "thread", "Guard the empty list", "Major", "src/a.rs:3"),
     ];
     let five = Some(Duration::from_secs(300));
-    s.offer("harness-kqe.9".to_string(), items.clone(), five);
-    s.offer("harness-kqe.10".to_string(), items, five);
+    s.offer("harness-kqe.9".to_string(), items.clone(), five, false);
+    s.offer("harness-kqe.10".to_string(), items, five, false);
     s
 }
 
@@ -411,12 +454,7 @@ fn a_modal_left_at_stop_work_opens_again_on_continue() {
     later(&clock, 60);
     await_approvals(&mut s, 1);
     s.command("/stop-work");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while s.run.is_some() {
-        assert!(Instant::now() < deadline, "the run never ended");
-        s.poll();
-        thread::sleep(Duration::from_millis(1));
-    }
+    await_end(&mut s);
     assert!(s.approvals.is_empty());
     s.command("/continue");
     await_approvals(&mut s, 1);

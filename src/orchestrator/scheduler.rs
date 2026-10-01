@@ -567,7 +567,7 @@ impl Orchestrator {
             self.report(ticket, &text);
         } else if self.cfg.away.load(Ordering::SeqCst) {
             self.report(ticket, &format!("{n} approved while away"));
-            self.approve_comments(ticket, items, Vec::new());
+            self.approve_comments(ticket, items, Vec::new(), false);
         } else {
             self.offers(ticket, &format!("{n} to approve"), items);
         }
@@ -575,13 +575,21 @@ impl Orchestrator {
 
     /// Adds `fix` to the Ticket's approved list and `skip` to its won't-fix
     /// list, and queues Address PR comments for them: lists already waiting
-    /// have their run queued or starting, which takes these too.
-    pub(crate) fn approve_comments(&self, ticket: &str, fix: Vec<Item>, skip: Vec<Item>) {
+    /// have their run queued or starting, which takes these too. `by_hand`:
+    /// approved in a modal /address-pr-comments opened.
+    pub(crate) fn approve_comments(
+        &self,
+        ticket: &str,
+        fix: Vec<Item>,
+        skip: Vec<Item>,
+        by_hand: bool,
+    ) {
         let mut approved = self.approved.lock().unwrap();
         let waiting = approved.contains_key(ticket);
         let lists = approved.entry(ticket.to_string()).or_default();
         lists.0.extend(fix);
         lists.1.extend(skip);
+        lists.2 |= by_hand;
         drop(approved);
         if !waiting {
             self.command(&format!("address-pr-comments-{ticket}"));
@@ -595,7 +603,7 @@ impl Orchestrator {
         let approved = std::mem::take(&mut *self.approved.lock().unwrap());
         let lists = approved
             .into_iter()
-            .map(|(t, (fix, skip))| (t, [fix, skip].concat()));
+            .map(|(t, (fix, skip, _))| (t, [fix, skip].concat()));
         for (ticket, items) in open.chain(lists) {
             self.update(&ticket, |ts| {
                 for item in &items {
@@ -640,14 +648,24 @@ impl Orchestrator {
     /// Runs Address PR comments for a Ticket with an open PR, once its
     /// items are approved, fed its approved and won't-fix lists and gh's
     /// view of the PR's reviews, comments and checks; each run counts
-    /// toward the cap.
+    /// toward the cap, which holds back a run no modal opened by hand
+    /// approved: the count may have reached it since the modal was offered.
     fn address_pr_comments(&self, ticket: &str) {
         let ts = self.ticket(ticket);
-        let (fix, skip) = (self.approved.lock().unwrap())
+        let (fix, skip, by_hand) = (self.approved.lock().unwrap())
             .remove(ticket)
             .unwrap_or_default();
         if ts.status != STATUS_PR_OPEN {
             return self.report(ticket, "address pr comments refused: no open PR");
+        }
+        let cap = app::count(&self.cfg.repo, &app::ADDRESS_PR_COMMENTS_RUNS);
+        if !by_hand && ts.address_runs >= cap {
+            let runs = plural(cap, "Address PR comments run");
+            let text = format!(
+                "{}: past the cap of {runs}, /address-pr-comments opens them",
+                pr_ref(&ts.pr)
+            );
+            return self.report(ticket, &text);
         }
         let fields = "reviews,comments,statusCheckRollup";
         let argv = ["gh", "pr", "view", &ts.pr, "--json", fields];
