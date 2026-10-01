@@ -17,6 +17,9 @@ use crate::tools::Tools;
 /// The Review's fallback row, for when the Review's App is Limited; its
 /// model starts as none, no fallback.
 pub(crate) const IF_LIMITED: &str = "review_if_limited";
+/// The Release's row: it ends a run, not a Ticket's Pipeline, so no Ticket
+/// label overrides it.
+pub(crate) const RELEASE: &str = "release";
 
 /// A model id and its effort levels, as an App lists them.
 pub(crate) type Model = (String, Vec<String>);
@@ -706,6 +709,12 @@ pub(crate) const ADDRESS_PR_COMMENTS_AUTO: Switch = Switch {
     key: "address_pr_comments_auto",
     question: "Open PR comments and failing checks for approval by themselves?",
 };
+/// A run whose Epic, or any Ticket of a Ticket run, carries orqa:release
+/// ends in a Release; off, the label is ignored.
+pub(crate) const RELEASE_ON: Switch = Switch {
+    key: "release_on",
+    question: "Turn on releases (the orqa:release label)?",
+};
 
 /// Whether a switch is on in doc: true alone is on, so a repo initialised
 /// before it is off.
@@ -726,7 +735,7 @@ pub(crate) fn set_switch(repo: &Path, switch: &Switch, on: bool) -> Result<(), S
 
 /// The key of every row of config.json; static, so a label's Check can
 /// borrow one.
-pub(crate) static ROWS: [&str; 9] = [
+pub(crate) static ROWS: [&str; 10] = [
     "implement",
     "review",
     IF_LIMITED,
@@ -736,6 +745,7 @@ pub(crate) static ROWS: [&str; 9] = [
     "fix",
     "rebase",
     "address_pr_comments",
+    RELEASE,
 ];
 
 /// A Ticket label's entry in config.json's labels, keyed by its name, the
@@ -847,14 +857,19 @@ pub(crate) fn labels(doc: &Value) -> BTreeMap<String, Result<Label, String>> {
 }
 
 /// The label entry under name: a kind that is neither area nor modifier,
-/// a row config.json has not, or a field of the wrong type refuses.
+/// a row config.json has not, the Release's, or a field of the wrong type
+/// refuses.
 pub(crate) fn entry(name: &str, value: &Value) -> Result<Label, String> {
     let label: Label =
         serde_json::from_value(value.clone()).map_err(|err| format!("labels {name}: {err}"))?;
     if !matches!(label.kind.as_str(), "area" | "modifier") {
         return Err(format!("labels {name} kind is not area or modifier"));
     }
-    match label.rows.keys().find(|key| !ROWS.contains(&key.as_str())) {
+    match label
+        .rows
+        .keys()
+        .find(|key| *key == RELEASE || !ROWS.contains(&key.as_str()))
+    {
         Some(key) => Err(format!("labels {name} rows has no row {key}")),
         None => Ok(label),
     }
@@ -1126,8 +1141,8 @@ pub(crate) fn field(doc: &Value, key: &str, name: &str) -> Result<String, String
 /// On codex only Implement (the two-step Plan, plan.rs), the Review, its
 /// fallback and the Debate's sides run, until it has the network the
 /// Moderator's side commands and TypeSafe calls need, and a Git write path
-/// for Fix, Rebase and Address PR comments: its sandbox keeps Git metadata
-/// read-only. Every other App runs every Stage.
+/// for Fix, Rebase, Address PR comments and the Release: its sandbox keeps
+/// Git metadata read-only. Every other App runs every Stage.
 pub(crate) fn runs_on(key: &str, app: &App) -> Result<(), String> {
     match app.name != "codex"
         || matches!(

@@ -10,11 +10,12 @@ use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
 use crate::orchestrator::limit_test::{hits, CODEX};
 use crate::orchestrator::plan_test::{at_dialog, nouls};
 use crate::orchestrator::question_test::ASKS;
+use crate::orchestrator::release_test::{label, releasing, VERSION_PR};
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::{Ask, Config, Event, Orchestrator};
 use crate::orchestrator::state::{
-    acquire_lock, load_state, Review, Session, State, TicketState, STATUS_MERGED, STATUS_PARKED,
-    STATUS_PR_OPEN, STATUS_RUNNING,
+    acquire_lock, load_state, Release, Review, Session, State, TicketState, STATUS_MERGED,
+    STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING,
 };
 use crate::orchestrator::trust::claude_slug;
 use crate::orchestrator::world::{new_world, set_clock, succeed, wait_until, BdTicket, World};
@@ -1185,6 +1186,7 @@ fn the_idle_tree_renders_from_a_fake_bd_with_the_saved_epic_resumable() {
             "which claude",
             "which claude",
             "which codex",
+            "which claude",
             "which claude",
             "which claude",
             "which claude",
@@ -2680,6 +2682,98 @@ fn start_epic_asks_over_a_saved_queued_or_removed_ticket_not_the_epics() {
     assert_eq!(load_state(&w.repo).unwrap(), saved);
 }
 
+/// A saved run stopped in its Release, every Ticket merged: an Epic run
+/// over it, or a Ticket joining it, asks before discarding it, so the
+/// Release never goes on in another run nor misses a Ticket it never listed.
+#[test]
+fn a_saved_release_asks_before_another_run_or_a_ticket_takes_it_up() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
+    let merged = TicketState {
+        status: STATUS_MERGED.to_string(),
+        ..Default::default()
+    };
+    let release = Release {
+        id: "release-2026-10-01-120000".to_string(),
+        ts: TicketState {
+            status: STATUS_RUNNING.to_string(),
+            stage: "release".to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let saved = State {
+        queue: vec!["lx".to_string()],
+        tickets: [("lx".to_string(), merged)].into(),
+        release: Some(Box::new(release)),
+        ..Default::default()
+    };
+    saved.save(&w.repo).unwrap();
+    let mut s = shell(&w);
+    for command in ["/start-epic hx", "/start-ticket hx-1"] {
+        s.command(command);
+        assert_eq!(
+            question(&s),
+            "discard the saved run on release-2026-10-01-120000?",
+            "{command}"
+        );
+        s.command("n");
+        assert!(s.run.is_none(), "{command}");
+        assert_eq!(load_state(&w.repo).unwrap(), saved, "{command}");
+    }
+}
+
+/// After the version PR merges, the tag Question: yes tags and pushes it;
+/// no leaves a Notice, never closing by itself, with the commands that do.
+/// Either ends the run.
+#[test]
+fn the_tag_question_offers_yes_and_no_and_either_answer_ends_the_run() {
+    for (n, line) in [(1, "tagged v1.5.0 and pushed"), (2, "v1.5.0 not tagged: ")] {
+        let (w, _) = releasing(vec![BdTicket::new("hx-1")]);
+        w.lock().epic_labels = label();
+        let mut s = shell(&w);
+        s.command("/start-epic hx");
+        await_questions(&mut s, 1);
+        s.summary = None; // opened by itself once every Ticket had its PR
+        assert_eq!(question(&s), "Tag v1.5.0 and push it?");
+        assert_eq!(s.options(), ["yes", "no"]);
+
+        pick(&mut s, n);
+
+        await_line(&mut s, line);
+        await_end(&mut s);
+        let notices: Vec<&str> = s.notices.iter().map(|n| n.text.as_str()).collect();
+        if n == 1 {
+            assert!(notices.is_empty(), "{notices:?}");
+            assert_eq!(w.called("git tag"), ["git tag v1.5.0 m3rg3d"]);
+            continue;
+        }
+        assert!(w.called("git tag").is_empty());
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        for command in ["git tag v1.5.0 m3rg3d", "git push origin v1.5.0"] {
+            assert!(notices[0].contains(command), "{notices:?}");
+        }
+        assert!(matches!(s.notices[0].kind, NoticeKind::Info));
+        assert_eq!(s.notices[0].closes, None, "it closes by itself");
+    }
+}
+
+#[test]
+fn start_epic_while_the_version_pr_waits_is_refused() {
+    let (w, _) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    let open = r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#.to_string();
+    w.lock().prs.insert(VERSION_PR.to_string(), open);
+    let mut s = shell(&w);
+    s.command("/start-epic hx");
+    await_line(&mut s, "version PR #version opened");
+
+    s.command("/start-epic hx");
+
+    assert_eq!(notice(&s), "refused: a run is live, /stop-work first");
+    s.command("/stop-work");
+    await_end(&mut s);
+}
+
 /// A Ticket that waits on an open one outside the run would never start:
 /// refused. Named together, it starts once the other's PR is merged and its
 /// Ticket closed.
@@ -4126,7 +4220,7 @@ fn only_a_trust_dialog_waiting_line_blocks_a_ticket() {
 fn a_blocked_question_closes_itself_when_the_session_carries_on() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
     w.lock().merged = true;
-    w.session(|_| ("STATUS: done\n".to_string(), "blocked".to_string()));
+    w.session(|p| (succeed(p).0, "blocked".to_string()));
     let unblock = |w: &World| {
         for status in w.lock().agents.values_mut() {
             *status = "idle".to_string();
@@ -5899,6 +5993,11 @@ fn the_close_confirmation_on_the_last_merge_runs_bd_close_on_yes_and_nothing_on_
     for (answer, want) in [('y', 1), ('n', 0)] {
         let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
         w.lock().merged = true;
+        // A clean Review: the Debate's empty Verdict still counts the Round.
+        w.session(|p| match p.stage.as_str() {
+            "review" => ("STATUS: done\n".to_string(), "idle".to_string()),
+            _ => succeed(p),
+        });
         let mut s = shell(&w);
         s.command("/start-epic hx");
         await_line(&mut s, "Epic done, every Ticket closed");

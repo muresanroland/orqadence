@@ -454,7 +454,9 @@ impl Orchestrator {
     }
 
     /// A Debate over `findings` Findings, reported as settled; its Verdict
-    /// file joins the history and its fix items are returned.
+    /// file joins the history and its fix items are returned. With no
+    /// Findings it does not run: an empty Verdict is written in its place,
+    /// so the Round still counts.
     fn debate(
         &self,
         ticket: &str,
@@ -463,6 +465,18 @@ impl Orchestrator {
         findings: usize,
         verdicts: &mut Vec<String>,
     ) -> Result<Vec<String>, StageError> {
+        let label = stage_label(&DEBATE, round);
+        let file = self.run_dir(ticket).join(result_name(&DEBATE, round));
+        if findings == 0 {
+            let empty =
+                "STATUS: done\n\n## Verdict\n\n## Notes\n\nNo Findings: the Debate did not run.\n";
+            fs::write(&file, empty).map_err(|err| {
+                StageError::Parked(format!("{label}: empty Verdict not written: {err}"))
+            })?;
+            self.report(ticket, &format!("{label} skipped: no findings"));
+            verdicts.push(file.display().to_string());
+            return Ok(Vec::new());
+        }
         let verdict = self.run_read_only(
             ticket,
             &DEBATE,
@@ -476,13 +490,11 @@ impl Orchestrator {
         self.report(
             ticket,
             &format!(
-                "{} settled: {} to fix, {} skipped",
-                stage_label(&DEBATE, round),
+                "{label} settled: {} to fix, {} skipped",
                 verdict.fixes.len(),
                 verdict.skips.len()
             ),
         );
-        let file = self.run_dir(ticket).join(result_name(&DEBATE, round));
         verdicts.push(file.display().to_string());
         Ok(verdict.fixes)
     }
@@ -653,7 +665,7 @@ impl Orchestrator {
     /// was just merged (ADR 0002), and marks the Ticket in progress. It
     /// gets no skill links: its Stages run the skills committed on its base
     /// (ADR 0006), so each time those an older Orqadence linked in go.
-    fn prepare_worktree(&self, ticket: &str) -> Result<(), StageError> {
+    pub(super) fn prepare_worktree(&self, ticket: &str) -> Result<(), StageError> {
         let worktree = self.worktree(ticket);
         let tools = &self.cfg.tools;
         let repo = &self.cfg.repo;
@@ -675,9 +687,12 @@ impl Orchestrator {
                     "new branch not brought up to origin's default branch: {err}"
                 )));
             }
-            if let Err(err) = tools.run(repo, &["bd", "update", ticket, "--status", "in_progress"])
-            {
-                self.log(ticket, &format!("not marked in_progress: {err}"));
+            // the Release has no bd issue to mark
+            let update = ["bd", "update", ticket, "--status", "in_progress"];
+            if !self.is_release(ticket) {
+                if let Err(err) = tools.run(repo, &update) {
+                    self.log(ticket, &format!("not marked in_progress: {err}"));
+                }
             }
             self.report(ticket, &format!("branch {ticket} created"));
         }

@@ -16,6 +16,8 @@ pub(crate) struct StageResult {
     /// The Review did not run: its App was Limited and the answer was to
     /// open the PR unreviewed. Why, for the Fix's Input.
     pub(crate) unreviewed: String,
+    /// The Release's new version, as its VERSION: line wrote it: v1.5.0.
+    pub(crate) version: String,
 }
 
 /// The Pipeline context needed to accept a result. The default requires only
@@ -26,6 +28,8 @@ pub(crate) struct ResultRequirements {
     pub(crate) review_findings: usize,
     /// The final Fix must identify its opened PR.
     pub(crate) require_pr: bool,
+    /// The Release must name its new version.
+    pub(crate) require_version: bool,
 }
 
 /// The Wake reasons a result file gives (docs/design/events.md).
@@ -75,6 +79,14 @@ pub(crate) fn read_stage_result(path: &Path, want: ResultRequirements) -> (Stage
         if let Some(why) = line.strip_prefix("UNREVIEWED:") {
             result.unreviewed = why.trim().to_string();
         }
+        // The first VERSION: line, as for PR: the free text after it may
+        // start a line the same way.
+        if let Some(version) = line
+            .strip_prefix("VERSION:")
+            .filter(|_| result.version.is_empty())
+        {
+            result.version = version.trim().to_string();
+        }
         // As ^PR:\s*(\S+): the whitespace may cross blank lines.
         if let Some(rest) = line.strip_prefix("PR:").filter(|_| result.pr.is_empty()) {
             match rest.split_whitespace().next() {
@@ -93,6 +105,9 @@ pub(crate) fn read_stage_result(path: &Path, want: ResultRequirements) -> (Stage
     }
     if want.require_pr && result.pr.is_empty() {
         return rejected("finished without a PR link");
+    }
+    if want.require_version && result.version.is_empty() {
+        return rejected("finished without a VERSION line");
     }
     (result, String::new())
 }

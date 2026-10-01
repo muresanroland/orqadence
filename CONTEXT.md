@@ -24,7 +24,7 @@ A skill, third-party or Shipped, a Stage skill or Brainstorm skill runs for one 
 _Avoid_: Override, replacement, work skill
 
 **Shipped skill**:
-Any skill Orqadence ships and installs for a Target repo, committed with the repo's Orqadence settings: the Stage skills, the Brainstorm skills, plus orqa-create-pr, which the Fix Stage runs, orqa-infra-review, orqa:infra's Extra review skill, and orqa-address-pr-comments, the Address PR comments Stage's default Delegate skill. Like every skill Orqadence installs, fetched Delegate skills too, its name starts with orqa-, so none shares a name with a skill of the repo's or the user's own.
+Any skill Orqadence ships and installs for a Target repo, committed with the repo's Orqadence settings: the Stage skills, the Brainstorm skills, plus orqa-create-pr, which the Fix Stage and the Release run, orqa-infra-review, orqa:infra's Extra review skill, and orqa-address-pr-comments, the Address PR comments Stage's default Delegate skill. Like every skill Orqadence installs, fetched Delegate skills too, its name starts with orqa-, so none shares a name with a skill of the repo's or the user's own.
 
 **Personal override**:
 One setting of the Target repo's Orqadence settings that one person keeps for themselves, read over the repo's committed value on their machine only. It never leaves the machine and is never reviewed, so it covers the settings that change how a run is scheduled and which App, model or effort a Stage uses, never a skill or a Delegate pick.
@@ -98,7 +98,7 @@ A second review an Area label adds to its Tickets, with its own skill, App, mode
 _Avoid_: Extra Stage, label Stage, security Stage
 
 **Round**:
-One pass of Review, Debate and Fix over a Ticket, with any Extra review beside the Review. Rounds repeat until a Verdict has no fix items or the cap is reached, after which the pull request opens with any leftover Findings listed.
+One pass of Review, Debate and Fix over a Ticket, with any Extra review beside the Review. With no Findings to argue the Debate does not run, and an empty Verdict stands in its place. Rounds repeat until a Verdict has no fix items or the cap is reached, after which the pull request opens with any leftover Findings listed.
 _Avoid_: Iteration, loop, cycle
 
 **Stage**:
@@ -176,7 +176,7 @@ _Avoid_: LLM call, Main session
 What an Implement session writes before it may edit: the changes and tests it intends for its Ticket, the decisions it made with the answer taken, and an open question only when it has one. A Judgment approves it when it covers every acceptance criterion, stays in scope and asks nothing; otherwise the user reads it and answers, and the session revises it. An open question always goes to the user; while they are Away it parks its Ticket until they continue it.
 
 **Question**:
-What the Shell puts to the user when the Orchestrator cannot act alone: a Wake the Judgment was unsure about, a blocked session, a plan to approve, a Stage's own question, a pick not yet merged on a Ticket's base or a personal skill shadowing a committed one when the Ticket starts, an Extra review skill's fetch.sh that failed, Manual work its session waits on, the Review's App at its usage limit, or a confirmation. It holds only its Ticket (the Review's limit, every Ticket reaching the Review on that App until it is answered), is answered from a fixed set of options or a line of the user's own text, and is never saved: on resume it is derived again from the live session or the Stage result.
+What the Shell puts to the user when the Orchestrator cannot act alone: a Wake the Judgment was unsure about, a blocked session, a plan to approve, a Stage's own question, a pick not yet merged on a Ticket's base or a personal skill shadowing a committed one when the Ticket starts, an Extra review skill's fetch.sh that failed, Manual work its session waits on, the Review's App at its usage limit, the Release's tag or its version pull request closed unmerged, or a confirmation. It holds only its Ticket (the Review's limit, every Ticket reaching the Review on that App until it is answered), is answered from a fixed set of options or a line of the user's own text, and is never saved: on resume it is derived again from the live session or the Stage result.
 _Avoid_: Prompt, dialog, alert, form, popup
 
 **Parked**:
@@ -188,7 +188,7 @@ Something a code-editing Stage or a Brainstorm session needs done that it cannot
 _Avoid_: Manual step, human task, hand-off
 
 **Away**:
-What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question, a Plan's open question, one at a Ticket's start or one on a failed fetch.sh, then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket. Nothing is pushed to the phone, and the Shell never goes On call. Nothing else changes: Judgments still answer what they can.
+What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question, a Plan's open question, one at a Ticket's start or one on a failed fetch.sh, then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket; the Release's, with no Ticket to park, wait. Nothing is pushed to the phone, and the Shell never goes On call. Nothing else changes: Judgments still answer what they can.
 _Avoid_: AFK, offline, unattended mode
 
 **On call**:

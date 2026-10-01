@@ -226,6 +226,23 @@ Not a finding: - [fix] inside prose is ignored only when it does not start the l
             },
         ),
         (
+            "Release",
+            "STATUS: done\nVERSION: v1.5.0\nPR: https://github.com/o/r/pull/9\n\nCargo.toml and Cargo.lock, from the tag v1.4.14\n",
+            StageResult {
+                version: "v1.5.0".to_string(),
+                pr: "https://github.com/o/r/pull/9".to_string(),
+                ..Default::default()
+            },
+        ),
+        (
+            "Release in a tags-only repo",
+            "STATUS: done\nVERSION: v1.4.15\n\nVERSION: kept only in tags, from v1.4.14\n",
+            StageResult {
+                version: "v1.4.15".to_string(),
+                ..Default::default()
+            },
+        ),
+        (
             "Fix with the PR after a blank line",
             "STATUS: done\nPR:\n\nhttps://github.com/o/r/pull/7\n",
             StageResult {

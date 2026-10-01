@@ -150,17 +150,24 @@ pub(crate) fn working(_: &Prompt) -> (String, String) {
     (String::new(), "working".to_string())
 }
 
-/// The default session: every Stage is done, Verdicts are clean, and the last
-/// Fix opens a PR.
+/// The default session: every Stage is done, the Review finds one low
+/// Finding, so the Debate runs, its Verdict skips it, and the last Fix opens
+/// a PR.
 pub(crate) fn succeed(p: &Prompt) -> (String, String) {
-    if p.open_pr {
-        return (
-            format!("STATUS: done\nPR: https://example.test/pr/{}\n", p.ticket),
-            "idle".to_string(),
-        );
-    }
-    ("STATUS: done\n".to_string(), "idle".to_string())
+    let body = match p.stage.as_str() {
+        _ if p.open_pr => format!("STATUS: done\nPR: https://example.test/pr/{}\n", p.ticket),
+        "review" => format!("STATUS: done\n{NIT}\n"),
+        "verdict" => format!(
+            "STATUS: done\n- [skip] {} | reason: a nit | settled: consensus\n",
+            &NIT[2..]
+        ),
+        _ => "STATUS: done\n".to_string(),
+    };
+    (body, "idle".to_string())
 }
+
+/// The default Review's one Finding.
+const NIT: &str = "- (low) a.rs:1 — a nit";
 
 /// What the world's lock guards, the port of world's mu-guarded fields.
 #[derive(Default)]
@@ -187,6 +194,8 @@ pub(crate) struct Inner {
     pub(crate) epic_deps: Vec<String>,
     /// The Epic's description, as 'bd show hx --json' prints it.
     pub(crate) epic_description: String,
+    /// The Epic's own bd labels, as 'bd show hx --json' prints them.
+    pub(crate) epic_labels: Vec<String>,
     /// PR url -> the PR node in the poll's GraphQL shape. 'gh pr view',
     /// Address PR comments', gets the same JSON: a test of it gives its shape.
     pub(crate) prs: BTreeMap<String, String>,
@@ -563,8 +572,8 @@ impl World {
         }
         if cmd.starts_with("bd show") && cmd.ends_with(" --json") {
             if argv[2] == EPIC {
-                let epic = json!([{"id": EPIC, "issue_type": "epic",
-                    "description": w.epic_description}]);
+                let epic = json!([{"id": EPIC, "title": "Epic hx", "issue_type": "epic",
+                    "description": w.epic_description, "labels": w.epic_labels}]);
                 return Ok(epic.to_string());
             }
             let shown = w.tickets.iter().filter(|t| t.id == argv[2]);
@@ -578,7 +587,10 @@ impl World {
         // the PR at a url, as the poll's GraphQL query shapes it
         let pr = |url: &str| match (w.prs.get(url), w.merged) {
             (Some(pr), _) => pr.clone(),
-            (None, true) => r#"{"state":"MERGED","mergeable":"UNKNOWN"}"#.to_string(),
+            (None, true) => {
+                r#"{"state":"MERGED","mergeable":"UNKNOWN","mergeCommit":{"oid":"m3rg3d"}}"#
+                    .to_string()
+            }
             (None, false) => r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#.to_string(),
         };
         if cmd.starts_with("gh api graphql") {

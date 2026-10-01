@@ -7,9 +7,10 @@
 //! job's Delegate skill, the skills Orqadence installed (harness-0sx.7),
 //! cloned off the screen thread too, TypeSafe on or off with its key and
 //! the Judgments' floors, the Tickets and PR sessions a run takes at once,
-//! Rebase and Address PR comments' switches, countdown and cap, On call's
-//! Moshi token, minutes and test push, and the Ticket labels: each entry of
-//! config.json's labels, area or modifier, with its skills and guidance.
+//! Rebase and Address PR comments' switches, countdown and cap, the
+//! Release's switch, On call's Moshi token, minutes and test push, and the
+//! Ticket labels: each entry of config.json's labels, area or modifier,
+//! with its skills and guidance.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -26,7 +27,7 @@ use crate::on_call::{self, OnCall, DEFAULT_MINUTES};
 use crate::orchestrator::app::{
     self, app, App, Check, Count, Floor, Label, Model, Row, Switch, ADDRESS_PR_COMMENTS_AUTO,
     ADDRESS_PR_COMMENTS_COUNTDOWN, ADDRESS_PR_COMMENTS_RUNS, APPS, IF_LIMITED, MAX_PR_SESSIONS,
-    MAX_TICKETS, REBASE_AUTO,
+    MAX_TICKETS, REBASE_AUTO, RELEASE, RELEASE_ON,
 };
 use crate::orchestrator::judgment::{PLAN_FLOOR, WAKE_FLOOR};
 use crate::orchestrator::stage::plural;
@@ -52,7 +53,7 @@ pub(crate) struct ConfigRow {
     pub(crate) note: &'static str,
 }
 
-pub(crate) const ROWS: [ConfigRow; 9] = [
+pub(crate) const ROWS: [ConfigRow; 10] = [
     ConfigRow {
         key: "implement",
         name: "Implement",
@@ -116,10 +117,17 @@ pub(crate) const ROWS: [ConfigRow; 9] = [
         section: 5,
         note: "Fixes a PR's comments and failing checks, and pushes to the same PR.",
     },
+    ConfigRow {
+        key: RELEASE,
+        name: "Release",
+        lead: "",
+        section: 6,
+        note: "Raises the Target repo's version, adds a changelog entry where the repo keeps one, and opens the version PR.",
+    },
 ];
 
 /// The Pipeline's sections: title, short name on the left, description.
-pub(crate) const SECTIONS: [(&str, &str, &str); 6] = [
+pub(crate) const SECTIONS: [(&str, &str, &str); 7] = [
     (
         "Plan + Implement",
         "Plan+Impl",
@@ -146,11 +154,18 @@ pub(crate) const SECTIONS: [(&str, &str, &str); 6] = [
         "Comments",
         "Fixes a PR's comments and failing checks, and pushes to the same PR.",
     ),
+    (
+        "Release",
+        "Release",
+        "Turned on, a run whose Epic, or any Ticket of a Ticket run, carries orqa:release ends in a Release once every Ticket is merged: an Epic run raises the minor version, a Ticket run the patch. Off, the label is ignored.",
+    ),
 ];
 
-/// The Rebase and Address PR comments sections, whose pages have a switch.
+/// The Rebase, Address PR comments and Release sections, whose pages have a
+/// switch.
 pub(crate) const REBASE_PAGE: usize = 4;
 pub(crate) const ADDRESS_PR_COMMENTS_PAGE: usize = 5;
+pub(crate) const RELEASE_PAGE: usize = 6;
 /// The Apps page's place on the left, after the Pipeline's sections, and
 /// the Skills, Labels, TypeSafe, Run and On call pages' after it.
 pub(crate) const APPS_PAGE: usize = SECTIONS.len();
@@ -213,9 +228,10 @@ pub(crate) static NUMBERS: [Number; 4] = [
 ];
 
 /// Each Stage page's switch: the section and the Switch.
-const SWITCHES: [(usize, &Switch); 2] = [
+const SWITCHES: [(usize, &Switch); 3] = [
     (REBASE_PAGE, &REBASE_AUTO),
     (ADDRESS_PR_COMMENTS_PAGE, &ADDRESS_PR_COMMENTS_AUTO),
+    (RELEASE_PAGE, &RELEASE_ON),
 ];
 
 /// What turning TypeSafe off changes, asked first.
@@ -242,7 +258,8 @@ pub(crate) enum Field {
     Template,
     /// The open label's Extra review skill.
     ExtraSkill,
-    /// The page's switch, on the Rebase and Address PR comments pages.
+    /// The page's switch, on the Rebase, Address PR comments and Release
+    /// pages.
     Switch(&'static Switch),
     /// A whole number on a Stage's page.
     Number(&'static Number),
@@ -1092,6 +1109,7 @@ impl Settings {
                 job_name(j)
             ),
             Field::Skills | Field::Template | Field::ExtraSkill => return self.labels_note(),
+            Field::Switch(switch) if *switch == RELEASE_ON => "Enter or Space turns it on or off, saved at once, uncommitted.",
             Field::Switch(_) => "Enter or Space turns it on or off, saved at once, uncommitted; off, the poll only says it in a line and the command still works by hand.",
             Field::Number(n) => return number_note(n),
             Field::App => "Changing the App leads into its model list; the pair saves together.",
@@ -1219,7 +1237,8 @@ impl Settings {
 
     /// The open label's page, row by row: kind, skills, guidance and PR
     /// template; an Area label's Extra review; then the Stage rows it
-    /// overrides. A label that cannot be read has the first three only.
+    /// overrides, all but the Release's. A label that cannot be read has the
+    /// first three only.
     pub(crate) fn label_items(&self) -> Vec<LabelItem> {
         use LabelItem::{
             Debate, Extra, ExtraSkill, Guidance, Kind, Position, Row, Skills, Template,
@@ -1233,7 +1252,8 @@ impl Settings {
             items.extend([ExtraSkill, Position, Debate]);
             items.extend(FIELDS.map(Extra));
         }
-        items.extend((0..ROWS.len()).flat_map(|r| FIELDS.map(|f| Row(r, f))));
+        let rows = (0..ROWS.len()).filter(|&r| ROWS[r].key != RELEASE);
+        items.extend(rows.flat_map(|r| FIELDS.map(|f| Row(r, f))));
         items
     }
 
