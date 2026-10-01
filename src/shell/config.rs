@@ -2379,20 +2379,19 @@ impl Screen {
     /// /config reads again; a list that cannot be read starts empty.
     fn tick_bot(&mut self, bot: &'static str) {
         let st = self.settings.as_ref().unwrap();
-        let mut bots = app::review_bots_in(&st.doc).unwrap_or_default();
-        match bots.contains(&bot) {
-            true => bots.retain(|b| *b != bot),
-            false => bots.push(bot),
-        }
-        bots.sort_unstable();
+        let kept = app::review_bots_in(&st.doc).unwrap_or_default();
+        let bots: Vec<_> = REVIEW_BOTS
+            .into_iter()
+            .filter(|b| kept.contains(b) != (*b == bot))
+            .collect();
         let repo = &self.cfg.repo;
         match app::set_review_bots(repo, &bots).and_then(|()| app::read_object(repo)) {
             Ok((_, doc)) => {
                 self.settings.as_mut().unwrap().doc = doc;
-                let said = match bots.is_empty() {
-                    true => "none".to_string(),
-                    false => bots.join(", "),
-                };
+                let mut said = bots.join(", ");
+                if bots.is_empty() {
+                    said = "none".to_string();
+                }
                 self.done(format!("review bots: {said}"), CONFIG);
             }
             Err(err) => self.refused(&err),
