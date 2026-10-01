@@ -213,6 +213,12 @@ impl Orchestrator {
 
         let mut last_poll: Option<Instant> = None;
         loop {
+            // polled before the commands: after a restart /rebase goes by a
+            // poll of this run, not the false `conflicting` starts with
+            if last_poll.is_none_or(|at| at.elapsed() >= self.cfg.poll_prs) {
+                self.poll_merges();
+                last_poll = Some(Instant::now());
+            }
             for command in self.commands() {
                 let (kind, ticket) = match command.strip_prefix("address-pr-comments-") {
                     Some(ticket) => ("address-pr-comments", ticket),
@@ -249,10 +255,6 @@ impl Orchestrator {
                 } else if self.consume(&command) {
                     self.report(ticket, "ignored: not waiting on a Wake");
                 }
-            }
-            if last_poll.is_none_or(|at| at.elapsed() >= self.cfg.poll_prs) {
-                self.poll_merges();
-                last_poll = Some(Instant::now());
             }
 
             let queued = self.state.lock().unwrap().queue.clone();

@@ -418,6 +418,34 @@ fn rebase_command_after_conflicting_then_unknown_is_refused() {
     assert!(w.called("herdr agent start h-hx-1-rebase").is_empty());
 }
 
+/// After a restart `conflicting` starts false: the run polls before it
+/// takes a command, so a /rebase sent at once still sees the conflict.
+#[test]
+fn rebase_command_right_after_a_restart_sees_the_conflict() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    let pr = "https://example.test/pr/hx-1".to_string();
+    w.lock().prs.insert(
+        pr.clone(),
+        r#"{"state":"OPEN","mergeable":"CONFLICTING"}"#.to_string(),
+    );
+    o.update("hx-1", |ts| {
+        ts.status = STATUS_PR_OPEN.to_string();
+        ts.pr = pr;
+        ts.conflict = true; // saved; conflicting is not
+    });
+    let kept = o.worktree("hx-1").display().to_string();
+    let create = ["bd", "worktree", "create", &kept];
+    o.cfg.tools.run(&o.cfg.repo, &create).unwrap();
+    o.command("rebase-hx-1");
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+
+    w.await_line("hx-1 rebased PR #hx-1");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+}
+
 /// /address-pr-comments: a fresh session fed the PR and gh's view of its
 /// comments; the Ticket stays pr-open.
 #[test]
