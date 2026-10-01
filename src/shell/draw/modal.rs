@@ -1,7 +1,8 @@
 //! The modal a plan Question docks in (layout C of harness-0sx.5): the live
 //! Shell keeps the left 42% and the plan takes the right 58%, its markdown
 //! styled; under 110 columns it folds to a box over the dimmed Shell. A Wake
-//! and a Stage's own question dock in the same frame (harness-crk).
+//! and a Stage's own question dock in the same frame (harness-crk), and so
+//! does the approval modal.
 
 use std::cell::Cell;
 use std::fs;
@@ -147,6 +148,73 @@ pub(super) fn notice(f: &mut Frame, s: &Screen) {
     f.render_widget(Paragraph::new(rows), text);
     let ok = Span::styled("[ OK ]", bold(Color::Black).bg(c));
     f.render_widget(Line::from(ok).centered(), button);
+}
+
+/// The front approval modal in the dock: its PR, the other PRs waiting,
+/// one row per item (the cursor's marked, scrolled into sight) with its
+/// checkbox, summary and rating, then [ Fix comments ] and [ Cancel ]; at
+/// its foot the keys and, while it runs, the countdown.
+pub(super) fn approval(f: &mut Frame, s: &Screen) {
+    let a = &s.approvals[0];
+    let (rect, block) = dock(f, s);
+    let mut foot = "↑↓ Space toggles · Enter fixes · Esc cancels".to_string();
+    if let Some(at) = a.approves {
+        let secs = ((at - (s.cfg.clock)()).num_milliseconds().max(0) + 999) / 1000;
+        foot += &format!(" · approves in {}:{:02}", secs / 60, secs % 60);
+    }
+    let title = format!(" PR COMMENTS · {} ", s.name(&a.ticket));
+    let block = block
+        .title(Span::styled(title, bold(TEXT)))
+        .title_bottom(Span::styled(format!(" {foot} "), fg(MUTED)));
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let [head, _, body, rule, buttons] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    let mut badges = vec![
+        Span::styled(a.pr.clone(), fg(TEXT)),
+        Span::styled(plural(a.rows.len(), "PR comment"), fg(TEXT)),
+    ];
+    if s.approvals.len() > 1 {
+        let waiting = format!("{} waiting", plural(s.approvals.len() - 1, "more PR"));
+        badges.push(Span::styled(waiting, bold(ORANGE)));
+    }
+    f.render_widget(Line::from(joined(badges)), head);
+
+    let w = body.width as usize;
+    let from = a
+        .cursor
+        .saturating_sub((body.height as usize).saturating_sub(1));
+    let rows: Vec<Line> = (a.rows.iter().enumerate().skip(from))
+        .map(|(i, (item, on))| {
+            let (mark, style) = match i == a.cursor {
+                true => ("›", bold(PURPLE)),
+                false => (" ", fg(TEXT)),
+            };
+            let check = if *on { "[x]" } else { "[ ]" };
+            let rating = format!("  {}", item.rating);
+            let room = w.saturating_sub(rating.chars().count());
+            let text = cut(&format!("{mark} {check} {}", item.summary), room);
+            Line::from(vec![
+                Span::styled(format!("{text:<room$}"), style),
+                Span::styled(rating, fg(MUTED)),
+            ])
+        })
+        .collect();
+    f.render_widget(Paragraph::new(rows), body);
+    f.render_widget(divider(rule.width as usize), rule);
+    let line = Line::from(vec![
+        Span::styled("[ Fix comments ]", bold(Color::Black).bg(GREEN)),
+        Span::raw("  "),
+        Span::styled("[ Cancel ]", bold(Color::Black).bg(RED)),
+    ]);
+    f.render_widget(line, buttons);
 }
 
 /// A dock's badges joined by a muted " · ".

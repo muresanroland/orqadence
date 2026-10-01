@@ -154,7 +154,7 @@ fn await_threads(s: &Screen) {
 }
 
 /// Polls the Shell until the run is over.
-fn await_end(s: &mut Screen) {
+pub(super) fn await_end(s: &mut Screen) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while s.run.is_some() {
         assert!(Instant::now() < deadline, "the run never ended");
@@ -208,6 +208,7 @@ fn event(ticket: Option<&str>, text: &str, panel: bool) -> Event {
         text: text.to_string(),
         panel,
         ask: None,
+        offer: Vec::new(),
     }
 }
 
