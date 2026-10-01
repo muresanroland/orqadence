@@ -1015,110 +1015,58 @@ fn a_repo_without_a_coderabbit_yaml_gets_one_with_the_exclusion() {
     assert!(!repo.path().join("greptile.json").exists(), "{out}");
 }
 
-/// The text edit of .coderabbit.yaml finds reviews.auto_review.labels or
-/// adds what is missing of it, and puts the label after the list's last
-/// item: every other line, comment and line ending stays, and a text that
-/// has the label is left alone. A comment naming the label is not the label.
+/// The text edit of .coderabbit.yaml adds reviews.auto_review.labels at the
+/// end of a file without a reviews key, every other line, comment and line
+/// ending kept, and leaves alone a text that has that block. A file with a
+/// reviews key of its own, or that cannot take a key at its end, is refused.
 #[test]
 fn coderabbit_skipping_adds_the_label_and_keeps_every_other_line() {
+    let block = "reviews:\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n";
     let cases = [
-        // No reviews key, and no newline ending the file.
-        (
-            "# \"!orqa:no-review\" goes below\nlanguage: en-US\nchat:\n  auto_reply: true",
-            "# \"!orqa:no-review\" goes below\nlanguage: en-US\nchat:\n  auto_reply: true\nreviews:\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n",
-        ),
-        // reviews without auto_review: added where reviews' block ends.
-        (
-            "language: en-US\nreviews:\n  profile: chill # calm\n  path_filters:\n    - \"!dist/**\"\n\nchat:\n  auto_reply: true\n",
-            "language: en-US\nreviews:\n  profile: chill # calm\n  path_filters:\n    - \"!dist/**\"\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n\nchat:\n  auto_reply: true\n",
-        ),
-        // auto_review without labels, the file indented by four.
-        (
-            "reviews:\n    auto_review:\n        enabled: true\n        drafts: false\n    profile: chill\n",
-            "reviews:\n    auto_review:\n        enabled: true\n        drafts: false\n        labels:\n          - \"!orqa:no-review\"\n    profile: chill\n",
-        ),
-        // A list: after its last item, at the items' indent.
-        (
-            "reviews:\n  auto_review:\n    labels:\n      - bug\n      - \"!wip\" # not yet\n    drafts: false\n",
-            "reviews:\n  auto_review:\n    labels:\n      - bug\n      - \"!wip\" # not yet\n      - \"!orqa:no-review\"\n    drafts: false\n",
-        ),
-        // A list whose items sit at the key's own indent.
-        (
-            "reviews:\n  auto_review:\n    labels:\n    - bug\n    drafts: false\n",
-            "reviews:\n  auto_review:\n    labels:\n    - bug\n    - \"!orqa:no-review\"\n    drafts: false\n",
-        ),
-        // labels with nothing under it.
-        (
-            "reviews:\n  auto_review:\n    labels:\n    drafts: false\n",
-            "reviews:\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n    drafts: false\n",
-        ),
-        // A list on labels' own line, empty or not.
-        (
-            "reviews:\n  auto_review:\n    labels: []\n",
-            "reviews:\n  auto_review:\n    labels: [\"!orqa:no-review\"]\n",
-        ),
-        (
-            "reviews:\n  auto_review:\n    labels: [\"bug\"] # only bugs\n",
-            "reviews:\n  auto_review:\n    labels: [\"bug\", \"!orqa:no-review\"] # only bugs\n",
-        ),
-        // Windows line endings stay on the lines that had them.
-        (
-            "reviews:\r\n  auto_review:\r\n    labels:\r\n      - bug\r\n",
-            "reviews:\r\n  auto_review:\r\n    labels:\r\n      - bug\r\n      - \"!orqa:no-review\"\n",
-        ),
-        // The label under another key, or in a comment ending a line, is not
-        // the label in reviews.auto_review.labels.
-        (
-            "reviews:\n  profile: chill # add \"!orqa:no-review\" later\n  path_filters:\n    - \"!orqa:no-review-docs/**\"\n",
-            "reviews:\n  profile: chill # add \"!orqa:no-review\" later\n  path_filters:\n    - \"!orqa:no-review-docs/**\"\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n",
-        ),
+        // No newline ending the file; a comment naming the label is not it.
+        "# \"!orqa:no-review\" goes below\nlanguage: en-US\nchat:\n  auto_reply: true",
+        // A block of text ending the file.
+        "language: en-US\ntone: |\n  hello\n  # heading\n",
         // A document start before the keys.
-        (
-            "---\nlanguage: en-US\n",
-            "---\nlanguage: en-US\nreviews:\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n",
-        ),
-        // Quoted keys, and a space before the colon.
-        (
-            "\"reviews\":\n  'auto_review' :\n    labels:\n      - bug\n",
-            "\"reviews\":\n  'auto_review' :\n    labels:\n      - bug\n      - \"!orqa:no-review\"\n",
-        ),
-        // A file indented as a whole.
-        (
-            "  language: en-US\n  reviews:\n    profile: chill\n",
-            "  language: en-US\n  reviews:\n    profile: chill\n    auto_review:\n      labels:\n        - \"!orqa:no-review\"\n",
-        ),
-        // A block of text ending in a line that reads as a comment keeps it.
-        (
-            "reviews:\n  tone: |\n    hello\n    # heading\n\n# the chat\nchat:\n  auto_reply: true\n",
-            "reviews:\n  tone: |\n    hello\n    # heading\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n\n# the chat\nchat:\n  auto_reply: true\n",
-        ),
+        "---\nlanguage: en-US\n",
+        // Windows line endings stay on the lines that had them.
+        "language: en-US\r\nchat:\r\n  auto_reply: true\r\n",
+        "# only a comment\n",
+        "",
     ];
-    for (before, after) in cases {
+    for before in cases {
+        let newline = if before.is_empty() || before.ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        };
+        let after = format!("{before}{newline}{block}");
         assert_eq!(
             coderabbit_skipping(before),
-            Ok(Some(after.to_string())),
+            Ok(Some(after.clone())),
             "{before}"
         );
-        assert_eq!(coderabbit_skipping(after), Ok(None), "{after}");
+        assert_eq!(coderabbit_skipping(&after), Ok(None), "{after}");
     }
     for unreadable in [
+        // A reviews key of its own, however it is written.
+        "reviews:\n  profile: chill\n",
         "reviews: {}\n",
+        "\"reviews\":\n  auto_review:\n    labels:\n      - bug\n",
+        "reviews:\n  auto_review:\n    labels: [bug]\n",
+        "reviews:\n  auto_review:\n    labels:\n      - '!orqa:no-review # suffix'\n",
+        // Keys that do not start their lines, past a document start too.
+        "---\n  reviews:\n    profile: chill\n",
+        "  language: en-US\n",
         "{}\n",
-        "{\"reviews\": {\"profile\": \"chill\"}}\n",
-        "\u{feff}reviews:\n  profile: chill\n",
-        "reviews:\n  - chill\n",
-        "reviews:\n  auto_review:\n    {enabled: true}\n",
-        "reviews:\n  auto_review: {enabled: true}\n",
-        "reviews:\n  auto_review:\n    labels: bug\n",
-        "reviews:\n  auto_review:\n    labels:\n      [bug,\n       feature]\n",
+        "- chill\n",
+        "\u{feff}language: en-US\n",
         // A merge key or a `?` key could hold reviews.auto_review out of sight.
-        "base: &base\n  auto_review:\n    enabled: false\nreviews:\n  <<: *base\n",
+        "base: &base\n  auto_review:\n    enabled: false\nchat:\n  <<: *base\n",
         "? reviews\n: {profile: chill}\n",
         // A key added at the end would land outside the document.
         "language: en-US\n...\n",
         "language: en-US\n---\nlanguage: de-DE\n",
-        // A comma inside a quoted label.
-        "reviews:\n  auto_review:\n    labels: ['bug,!orqa:no-review']\n",
     ] {
         assert!(coderabbit_skipping(unreadable).is_err(), "{unreadable}");
     }

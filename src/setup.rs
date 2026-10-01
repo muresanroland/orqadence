@@ -525,22 +525,21 @@ fn after_key<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 
 /// .coderabbit.yaml's `text` with "!orqa:no-review" in
 /// reviews.auto_review.labels, a label CodeRabbit reads as not to review,
-/// and every other line as it was; None when that list has it already.
-/// serde_yaml is not an allowed crate, so the YAML is edited as text: each
-/// key of the path is found by its indent, a missing one added with the
-/// rest of the path at the end of its parent's block, and the label added
-/// after the list's last item, or inside a `[..]` on labels' own line. Err
-/// when text cannot follow the path, as through a `{..}`.
-// ponytail: line by line, so a key only a YAML parser sees (a merge `<<`, a
-// `? ` key) or a second document is refused rather than read; parse the
-// file once a YAML crate is allowed.
+/// and every other line as it was; None when it has the block this adds.
+/// serde_yaml is not an allowed crate, so the YAML is edited as text and
+/// only where that is safe: a missing file is made, and a file without a
+/// reviews key gains the block at its end. Err for any other, as one with
+/// a reviews key of its own, so init says what to add by hand.
+// ponytail: a file with its own reviews key is left for a human; edit it in
+// place once a YAML crate is allowed.
 fn coderabbit_skipping(text: &str) -> Result<Option<String>, String> {
+    let block = format!("reviews:\n  auto_review:\n    labels:\n      - \"!{NO_REVIEW}\"\n");
+    if text.starts_with(&block) || text.contains(&format!("\n{block}")) {
+        return Ok(None);
+    }
     if text.starts_with('\u{feff}') {
         return Err("it starts with a byte order mark".to_string());
     }
-    let label = format!("!{NO_REVIEW}");
-    let entry = format!("\"{label}\"");
-    let mut lines: Vec<String> = text.split_inclusive('\n').map(String::from).collect();
     let content = |line: &str| !line.trim().is_empty() && !line.trim_start().starts_with('#');
     // A key added past one of these could land outside the document or
     // override what a merge key brings in.
@@ -556,104 +555,26 @@ fn coderabbit_skipping(text: &str) -> Result<Option<String>, String> {
         }
         seen |= content(line);
     }
-    let indent = |line: &str| line.len() - line.trim_start().len();
-    let item = |line: &str| line.trim() == "-" || line.trim_start().starts_with("- ");
-    // A list's entry, its quotes and a comment after it aside.
-    let is_label = |entry: &str| {
-        let entry = entry.split(" #").next().unwrap_or("").trim();
-        entry.trim_matches(['"', '\'']) == label
-    };
+    // The root's first line past a document start: a block added at the end
+    // is one of its keys only when they start their lines.
+    let root = text
+        .lines()
+        .find(|line| content(line) && line.trim_end() != "---");
+    if root.is_some_and(|line| line.starts_with([' ', '\t', '-', '{', '['])) {
+        return Err("its keys are not at the start of their lines".to_string());
+    }
+    if text
+        .lines()
+        .any(|line| content(line) && after_key(line, "reviews").is_some())
+    {
+        return Err("it has a reviews key".to_string());
+    }
     // Added lines end in \n whatever the file's line endings: YAML reads both.
-    let add = |mut lines: Vec<String>, at: usize, block: String| {
-        if at > 0 && !lines[at - 1].ends_with('\n') {
-            lines[at - 1].push('\n');
-        }
-        lines.insert(at, block);
-        Ok(Some(lines.concat()))
-    };
-    let opening =
-        |lines: &[String], from: usize, to: usize| (from..to).find(|&i| content(&lines[i]));
-    let path = ["reviews", "auto_review", "labels"];
-    // The block searched, lines[from..to], and its keys' indent: its first
-    // line's, or two more than its key's while it is empty.
-    let (mut from, mut to, mut depth) = (0, lines.len(), 0);
-    for (n, key) in path.iter().enumerate() {
-        if let Some(first) = opening(&lines, from, to) {
-            depth = indent(&lines[first]);
-            if item(&lines[first]) || lines[first].trim_start().starts_with(['{', '[']) {
-                let holder = if n == 0 { "the file" } else { path[n - 1] };
-                return Err(format!("{holder} is not a block of keys"));
-            }
-        }
-        let found = (from..to).find(|&i| {
-            content(&lines[i]) && indent(&lines[i]) == depth && after_key(&lines[i], key).is_some()
-        });
-        let Some(at) = found else {
-            let mut block = String::new();
-            for (level, key) in path[n..].iter().enumerate() {
-                block += &format!("{}{key}:\n", " ".repeat(depth + 2 * level));
-            }
-            block += &format!("{}- {entry}\n", " ".repeat(depth + 2 * (path.len() - n)));
-            return add(lines, to, block);
-        };
-        let rest = after_key(&lines[at], key).unwrap_or_default();
-        let start = lines[at].len() - rest.len();
-        let value = rest.split(" #").next().unwrap_or("").trim();
-        if *key == "labels" && value.starts_with('[') && value.ends_with(']') {
-            let inner = value[1..value.len() - 1].trim_end();
-            // Split on every comma, so a comma inside quotes is refused.
-            let split_quote = |entry: &str| {
-                let entry = entry.trim();
-                entry.starts_with(['"', '\'']) && (entry.len() < 2 || !entry.ends_with(&entry[..1]))
-            };
-            if inner.split(',').any(split_quote) {
-                return Err("labels has a comma inside quotes".to_string());
-            }
-            if inner.split(',').any(is_label) {
-                return Ok(None);
-            }
-            let comma = if inner.trim().is_empty() || inner.ends_with(',') {
-                ""
-            } else {
-                ", "
-            };
-            let last = start + rest.find('[').unwrap_or(0) + 1 + inner.len();
-            lines[at].insert_str(last, &format!("{comma}{entry}"));
-            return Ok(Some(lines.concat()));
-        }
-        if !value.is_empty() {
-            return Err(format!("{key} is not a block"));
-        }
-        // The key's block: to the next line at its indent or less, a list's
-        // items at its own indent aside, less the blank lines and the
-        // comments at its indent or less that end it; a deeper line that
-        // reads as a comment may be the end of a block of text.
-        let mut end = (at + 1..to)
-            .find(|&i| {
-                content(&lines[i])
-                    && indent(&lines[i]) <= depth
-                    && !(indent(&lines[i]) == depth && item(&lines[i]))
-            })
-            .unwrap_or(to);
-        while end > at + 1
-            && (lines[end - 1].trim().is_empty()
-                || !content(&lines[end - 1]) && indent(&lines[end - 1]) <= depth)
-        {
-            end -= 1;
-        }
-        (from, to, depth) = (at + 1, end, depth + 2);
+    let mut text = text.to_string();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
     }
-    if let Some(first) = opening(&lines, from, to) {
-        depth = indent(&lines[first]);
-    }
-    let mut entries = (from..to).filter(|&i| content(&lines[i]) && indent(&lines[i]) == depth);
-    if entries.clone().any(|i| !item(&lines[i])) {
-        return Err("labels is not a list".to_string());
-    }
-    if entries.any(|i| is_label(&lines[i].trim_start()[1..])) {
-        return Ok(None);
-    }
-    add(lines, to, format!("{}- {entry}\n", " ".repeat(depth)))
+    Ok(Some(text + &block))
 }
 
 /// Greptile's config `text` with orqa:no-review in disabledLabels, the
