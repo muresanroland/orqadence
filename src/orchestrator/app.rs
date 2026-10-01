@@ -979,6 +979,8 @@ pub(crate) fn read(repo: &Path) -> Result<(PathBuf, Value), String> {
 /// A config.json from before Rebase and Address PR comments, its address
 /// row and neither of theirs: both rows are the address row, so the repo
 /// keeps its App, model and effort, and a save writes the new keys.
+/// One way: the address row stays, as a save never removes it, and once
+/// either new row is set it is no longer read.
 fn split_address(mut doc: Value) -> Value {
     let (old, new) = ("address", ["rebase", "address_pr_comments"]);
     if !doc[old].is_null() && new.iter().all(|key| doc[key].is_null()) {
