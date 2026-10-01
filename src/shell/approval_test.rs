@@ -14,7 +14,7 @@ use super::brand::{GREEN, PURPLE, RED};
 use super::shell_test::{
     await_end, await_line, find, key, line, render, row, rows, screen_at, shell,
 };
-use super::{Approval, Screen};
+use super::{Approval, NoticeKind, Screen};
 use crate::orchestrator::app::{set_switch, ADDRESS_PR_COMMENTS_AUTO};
 use crate::orchestrator::pr::Item;
 use crate::orchestrator::stage::Orchestrator;
@@ -115,11 +115,6 @@ fn checked(a: &Approval) -> Vec<(&str, bool)> {
         .collect()
 }
 
-/// The prompt Address PR comments was sent.
-fn prompt(w: &World) -> String {
-    w.prompt("address-pr-comments.md")
-}
-
 /// A quiet head's new items open the modal, not a Question: one row each,
 /// most severe first, all checked. Space unchecks a row, and Enter starts
 /// Address PR comments with the checked rows approved, the others won't
@@ -146,7 +141,7 @@ fn a_quiet_head_opens_the_modal_and_enter_starts_address_pr_comments_with_the_li
     await_line(&mut s, "hx-1 you approved 1 of 2 PR comments");
     await_line(&mut s, "hx-1 addressed PR #hx-1");
 
-    let prompt = prompt(&w);
+    let prompt = w.prompt("address-pr-comments.md");
     let lists = "- Approved: \n  - check by github-actions — test\n\
                  - Won't fix: \n  - thread by coderabbitai at src/a.rs:3 — Guard the empty list\n";
     assert!(prompt.contains(lists), "{prompt}");
@@ -252,7 +247,8 @@ fn away_approves_every_item_without_a_modal() {
     let lists = "- Approved: \n  - check by github-actions — test\n  \
                  - thread by coderabbitai at src/a.rs:3 — Guard the empty list\n\
                  - Won't fix: none\n";
-    assert!(prompt(&w).contains(lists), "{}", prompt(&w));
+    let prompt = w.prompt("address-pr-comments.md");
+    assert!(prompt.contains(lists), "{prompt}");
 }
 
 /// With address_pr_comments_auto off the poll only says so, once for the
@@ -329,6 +325,40 @@ fn a_modal_left_at_exit_is_withdrawn() {
     s.close();
     assert!(s.approvals.is_empty());
     assert!(o.ticket("hx-1").offered.is_empty());
+}
+
+/// An offer the Shell has not read yet at exit, its items already saved
+/// as offered, is withdrawn too.
+#[test]
+fn an_offer_unread_at_exit_is_withdrawn() {
+    let (_w, mut s, clock) = polled(&["hx-1"], &commented("a"), true);
+    let o = run(&s);
+    later(&clock, 60);
+    wait_until("the poll offering", || !o.ticket("hx-1").offered.is_empty());
+    s.close();
+    assert!(s.approvals.is_empty());
+    assert!(o.ticket("hx-1").offered.is_empty());
+}
+
+/// A Notice modal over the approval modal takes its keys, so its countdown
+/// holds; once the Notice closes it runs again in full.
+#[test]
+fn a_notice_over_the_modal_holds_its_countdown() {
+    let (_w, mut s, clock) = polled(&["hx-1"], &commented("a"), true);
+    later(&clock, 60);
+    await_approvals(&mut s, 1);
+    s.notify(NoticeKind::Info, "news", None);
+    later(&clock, 300);
+    s.tick();
+    assert_eq!(s.approvals.len(), 1, "approved under the Notice");
+    s.key(key(KeyCode::Enter));
+    assert!(s.notices.is_empty());
+    later(&clock, 299);
+    s.tick();
+    assert_eq!(s.approvals.len(), 1, "the countdown did not start again");
+    later(&clock, 1);
+    s.tick();
+    assert!(s.approvals.is_empty(), "never approved itself");
 }
 
 /// Two PRs with new items: one modal shows, the other waits its turn, its

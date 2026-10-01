@@ -554,7 +554,15 @@ impl Screen {
     /// lock with it, and then the release that waited on it installs (/exit
     /// and Ctrl-C twice, with no re-exec). Another process's lock drops it.
     pub(crate) fn close(&mut self) {
-        if let Some(run) = self.run.take() {
+        if let Some(mut run) = self.run.take() {
+            // the scheduler alone sends offers: once it has returned, the
+            // ones still unread are withdrawn too
+            run.o.stop();
+            if let Some(scheduler) = run.scheduler.take() {
+                let _ = scheduler.join();
+            }
+            let unread = self.receiver.try_iter().filter(|e| !e.offer.is_empty());
+            run.o.withdraw(unread.map(|e| (e.ticket.unwrap_or_default(), e.offer)));
             self.withdraw(&run);
         }
         self.install(false);
@@ -739,8 +747,10 @@ impl Screen {
         {
             self.close_notice();
         }
-        if (self.approvals.first().and_then(|a| a.approves))
-            .is_some_and(|at| (self.cfg.clock)() >= at)
+        // a Notice modal covers the approval modal and takes its keys
+        if self.notices.is_empty()
+            && (self.approvals.first().and_then(|a| a.approves))
+                .is_some_and(|at| (self.cfg.clock)() >= at)
         {
             self.decide(true, "the countdown");
         }
@@ -2237,10 +2247,18 @@ impl Screen {
         }
     }
 
-    /// Closes the front Notice modal; the next one waiting shows.
+    /// Closes the front Notice modal; the next one waiting shows. The last
+    /// one gone, the approval modal's countdown starts again, unless a key
+    /// has stopped it.
     fn close_notice(&mut self) {
         self.notices.remove(0);
         self.show_notice();
+        let now = (self.cfg.clock)();
+        if let Some(a) = self.approvals.first_mut().filter(|a| a.approves.is_some()) {
+            if self.notices.is_empty() {
+                a.approves = a.countdown.map(|length| now + length);
+            }
+        }
     }
 
     /// The front Notice modal shows: its autoclose, if any, counts from now.
