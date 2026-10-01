@@ -312,7 +312,7 @@ impl Orchestrator {
     ) -> Result<Option<String>, StageError> {
         let (tools, worktree) = (&self.cfg.tools, self.worktree(ticket));
         let base = self.origin_head(ticket);
-        let base = base.as_deref().unwrap_or("main");
+        let base = base.as_deref().unwrap_or("origin/main");
         let argv = [
             "env",
             &format!("ORQA_CACHE={}", cache.display()),
