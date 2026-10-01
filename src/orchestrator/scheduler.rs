@@ -540,44 +540,67 @@ impl Orchestrator {
                 continue;
             }
 
-            let now = (self.cfg.clock)();
-            if pr.head_ref_oid != ts.head {
-                self.update(&ticket, |ts| {
-                    ts.head = pr.head_ref_oid.clone();
-                    ts.head_at = Some(now);
-                });
-                continue;
-            }
-            if pr.busy() || ts.head_at.is_none_or(|at| now - at < QUIET) {
-                continue;
-            }
-            // Rebase goes first: a PR that conflicts, or has a Rebase queued
-            // or running, is offered nothing until it is done
-            let rebasing = self.active.lock().unwrap().get(&ticket) == Some(&Some(REBASE.name));
-            let queued = self.commands().contains(&format!("rebase-{ticket}"));
-            if pr.mergeable == "CONFLICTING" || rebasing || queued {
-                continue;
-            }
-            // what is no longer open leaves the set, so it is offered
-            // again if it comes back
-            let items = pr.items();
-            let ids: BTreeSet<String> = items.iter().map(|i| i.id.clone()).collect();
-            if ids != ts.offered {
-                let mut open = false;
-                self.update(&ticket, |ts| {
-                    open = ts.status == STATUS_PR_OPEN;
-                    if open {
-                        ts.offered = ids;
-                    }
-                });
-                if !open {
-                    continue;
+            let fresh = self.quiet_items(&ticket, &ts, &pr);
+            // done: its Rebase and PR comments too, so a merge is all its
+            // dependents wait on, said once
+            let pr_stage = self
+                .active
+                .lock()
+                .unwrap()
+                .get(&ticket)
+                .is_some_and(Option::is_some);
+            let approved = self.approved.lock().unwrap().contains_key(&ticket);
+            let settled = fresh.as_ref().is_some_and(Vec::is_empty) && !pr_stage && !approved;
+            if settled != ts.settled {
+                self.update(&ticket, |ts| ts.settled = settled);
+                if settled {
+                    self.wait_dependents(&ticket, &ts.pr);
                 }
             }
-            let fresh = items.into_iter().filter(|i| !ts.offered.contains(&i.id));
-            quiet.push((ticket, fresh.collect()));
+            quiet.extend(fresh.map(|items| (ticket, items)));
         }
         quiet
+    }
+
+    /// An open PR's items not offered before, once its head is quiet and
+    /// nothing is to rebase; None before that.
+    fn quiet_items(&self, ticket: &str, ts: &TicketState, pr: &Pr) -> Option<Vec<Item>> {
+        let now = (self.cfg.clock)();
+        if pr.head_ref_oid != ts.head {
+            self.update(ticket, |ts| {
+                ts.head = pr.head_ref_oid.clone();
+                ts.head_at = Some(now);
+            });
+            return None;
+        }
+        if pr.busy() || ts.head_at.is_none_or(|at| now - at < QUIET) {
+            return None;
+        }
+        // Rebase goes first: a PR that conflicts, or has a Rebase queued
+        // or running, is offered nothing until it is done
+        let rebasing = self.active.lock().unwrap().get(ticket) == Some(&Some(REBASE.name));
+        let queued = self.commands().contains(&format!("rebase-{ticket}"));
+        if pr.mergeable == "CONFLICTING" || rebasing || queued {
+            return None;
+        }
+        // what is no longer open leaves the set, so it is offered
+        // again if it comes back
+        let items = pr.items();
+        let ids: BTreeSet<String> = items.iter().map(|i| i.id.clone()).collect();
+        if ids != ts.offered {
+            let mut open = false;
+            self.update(ticket, |ts| {
+                open = ts.status == STATUS_PR_OPEN;
+                if open {
+                    ts.offered = ids;
+                }
+            });
+            if !open {
+                return None;
+            }
+        }
+        let fresh = items.into_iter().filter(|i| !ts.offered.contains(&i.id));
+        Some(fresh.collect())
     }
 
     /// The PR at `url`, one GraphQL query.
@@ -630,6 +653,7 @@ impl Orchestrator {
         lists.1.extend(skip);
         lists.2 |= by_hand;
         drop(approved);
+        self.update(ticket, |ts| ts.settled = false);
         if !waiting {
             self.command(&format!("address-pr-comments-{ticket}"));
         }
@@ -785,6 +809,7 @@ impl Orchestrator {
                 ts.address_runs += 1;
             }
             ts.status = STATUS_PR_OPEN.to_string();
+            ts.settled = false;
             ts.reason.clear();
         });
         if !live {

@@ -623,9 +623,11 @@ impl Screen {
                 }
             }
         }
-        let run = self.run.as_ref().unwrap();
-        self.state = run.o.state.lock().unwrap().clone();
+        let before = self.to_unblock();
+        self.state = self.run.as_ref().unwrap().o.state.lock().unwrap().clone();
+        self.ring_unblock(&before);
         // the cache again once it says done: a Ticket added since has no PR
+        let run = self.run.as_ref().unwrap();
         if !run.summarized && self.all_prs_open() && self.reload_epics() && self.all_prs_open() {
             self.run.as_mut().unwrap().summarized = true;
             let state = self.state.clone();
@@ -794,6 +796,7 @@ impl Screen {
         for i in 0..self.questions.len() {
             self.ring_question(i);
         }
+        self.ring_unblock(&[]);
     }
 
     /// Pushes Question `i` when it counts: its Ticket, kind and Ticket
@@ -818,6 +821,34 @@ impl Screen {
             message = format!("{message} · {title}");
         }
         self.ring(message);
+    }
+
+    /// The PRs MERGE TO UNBLOCK lists.
+    fn to_unblock(&self) -> Vec<String> {
+        let prs = draw::to_unblock(self).into_iter();
+        prs.map(|(pr, _)| pr.to_string()).collect()
+    }
+
+    /// While On call, pushes each PR MERGE TO UNBLOCK lists but `before`
+    /// did: its Ticket, the Tickets it unblocks and its title.
+    fn ring_unblock(&mut self, before: &[String]) {
+        if !self.calling {
+            return;
+        }
+        let new: Vec<(String, String)> = (draw::to_unblock(self).into_iter())
+            .filter(|(pr, _)| !before.iter().any(|b| b == pr))
+            .filter_map(|(pr, waiting)| {
+                let (id, _) = self.state.tickets.iter().find(|(_, ts)| ts.pr == pr)?;
+                Some((id.clone(), waiting.join(", ")))
+            })
+            .collect();
+        for (id, waiting) in new {
+            let mut message = format!("{id} · Merge to unblock {waiting}");
+            if let Some(title) = self.title(&id) {
+                message = format!("{message} · {title}");
+            }
+            self.ring(message);
+        }
     }
 
     /// Ends On call with a RECENT line saying why; the clock starts again.

@@ -108,7 +108,7 @@ fn blocked_ticket_starts_only_after_its_dependency_is_merged_and_closed() {
 
     run_epic(&o);
 
-    w.await_line("hx-2 waiting for PR #hx-1 to merge (Ticket hx-1)");
+    w.await_line("hx-1 merged, Ticket closed");
     let order = w.calls().join("\n");
     let closed = order.find("bd close hx-1");
     let started = order.find(&format!(

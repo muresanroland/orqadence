@@ -205,7 +205,6 @@ impl Orchestrator {
                 true,
                 &fix.pr, // the log line adds the url
             );
-            self.wait_dependents(ticket, &fix.pr);
             self.prune_run_dir(ticket);
             return Ok(());
         }

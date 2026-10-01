@@ -1327,6 +1327,7 @@ fn sections_screen(running: bool) -> Screen {
                 stage: stage.to_string(),
                 round,
                 pr,
+                settled: status == STATUS_PR_OPEN,
                 ..Default::default()
             },
         );
@@ -1837,6 +1838,7 @@ fn merge_to_unblock_lists_each_pr_a_waiting_ticket_depends_on() {
         let ts = s.state.tickets.get_mut(&format!("harness-a.{n}")).unwrap();
         ts.status = STATUS_PR_OPEN.to_string();
         ts.pr = format!("https://github.com/o/r/pull/{}", 28 + n);
+        ts.settled = true;
     };
     pr_open(&mut s, 6);
     pr_open(&mut s, 2);
@@ -1859,6 +1861,17 @@ fn merge_to_unblock_lists_each_pr_a_waiting_ticket_depends_on() {
         ]
     );
     assert!(find(&buf, "pull/30").is_none(), "{:#?}", rows(&buf));
+    // 6's PR not settled, its Rebase or PR comments to do, or its comments
+    // waiting in an approval modal: nothing waits on it yet
+    let six = "harness-a.6".to_string();
+    s.state.tickets.get_mut(&six).unwrap().settled = false;
+    let unsettled = rows(&render(&s, 120, 40)).join("\n");
+    assert!(!unsettled.contains("merge to unblock 8:"), "{unsettled}");
+    s.state.tickets.get_mut(&six).unwrap().settled = true;
+    s.offer(six, Vec::new(), None, false);
+    let approving = rows(&render(&s, 120, 40)).join("\n");
+    assert!(!approving.contains("merge to unblock 8:"), "{approving}");
+    s.approvals.clear();
     // Nothing waits: 3 and 6 merged, or no run live.
     for n in [3, 6] {
         s.state
@@ -2632,7 +2645,6 @@ fn start_ticket_refuses_one_waiting_on_a_ticket_outside_the_run() {
     assert!(s.run.is_none());
 
     s.command("/start-ticket hx-2 hx-1");
-    await_line(&mut s, "hx-2 waiting for PR #hx-1 to merge (Ticket hx-1)");
     await_line(&mut s, "Ticket run done, every Ticket closed");
     await_end(&mut s);
     let order = w.calls().join("\n");
@@ -6056,6 +6068,40 @@ fn a_question_waiting_its_minutes_goes_on_call_and_rings_once() {
     assert_eq!(
         line(s.events.last().unwrap()),
         "on call: a Question has waited 5 minutes, pushing to your phone"
+    );
+}
+
+/// On call pushes each PR MERGE TO UNBLOCK lists when it starts, and one
+/// as it joins the list: its Ticket, the Tickets it unblocks and its title,
+/// once each.
+#[test]
+fn on_call_rings_each_pr_to_merge_to_unblock_once() {
+    let mut s = sections_screen(true);
+    let (bell, _) = on_call(&mut s, after(6));
+    s.tick();
+    settle(&mut s);
+    let mut rang = messages(&bell);
+    rang.sort();
+    assert_eq!(
+        rang,
+        [
+            "harness-a.3 · Merge to unblock 5 · Status counts",
+            "harness-a.4 · Blocked session · The / list",
+        ]
+    );
+
+    // 3 back at its PR comments, then settled again
+    s.state.tickets.get_mut("harness-a.3").unwrap().settled = false;
+    let before = s.to_unblock();
+    assert!(before.is_empty());
+    s.state.tickets.get_mut("harness-a.3").unwrap().settled = true;
+    s.ring_unblock(&before);
+    let now = s.to_unblock();
+    s.ring_unblock(&now);
+    settle(&mut s);
+    assert_eq!(
+        messages(&bell)[2..],
+        ["harness-a.3 · Merge to unblock 5 · Status counts"]
     );
 }
 

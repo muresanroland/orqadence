@@ -79,6 +79,11 @@ pub(crate) struct TicketState {
     /// the Stage. Live only, never saved.
     #[serde(skip)]
     pub(crate) fetching: bool,
+    /// The poll last found its open PR done: a quiet head, no conflict,
+    /// nothing new to offer, no PR Stage approved or running. Only then do
+    /// its dependents wait on its merge alone. Live only, never saved.
+    #[serde(skip)]
+    pub(crate) settled: bool,
 }
 
 /// A Stage's session: the App it runs on, and the id herdr's integration

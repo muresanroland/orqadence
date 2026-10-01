@@ -347,17 +347,19 @@ fn status(s: &Screen, t: &BdIssue) -> Status {
 }
 
 /// The open PRs a Ticket waits on: its bd blocks dependencies on Tickets
-/// whose PR is open (ADR 0002).
+/// whose PR is open (ADR 0002) and settled, its Rebase and PR comments
+/// done, none waiting in an approval modal.
 fn waits_on<'a>(s: &'a Screen, t: &'a BdIssue) -> impl Iterator<Item = &'a str> {
     t.blockers()
+        .filter(|id| !s.approvals.iter().any(|a| a.ticket == *id))
         .filter_map(|id| s.state.tickets.get(id))
-        .filter(|ts| ts.status == STATUS_PR_OPEN)
+        .filter(|ts| ts.status == STATUS_PR_OPEN && ts.settled)
         .map(|ts| ts.pr.as_str())
 }
 
-/// MERGE TO UNBLOCK's lines: each open PR a waiting Ticket depends on, and
-/// every waiting Ticket's suffix, 'merge to unblock 5, 11: <url>'.
-fn unblock_lines(s: &Screen) -> Vec<Line<'static>> {
+/// MERGE TO UNBLOCK: each open PR a waiting Ticket depends on, and every
+/// waiting Ticket's suffix.
+pub(super) fn to_unblock(s: &Screen) -> Vec<(&str, Vec<&str>)> {
     let mut prs: Vec<(&str, Vec<&str>)> = Vec::new();
     for t in listed(s).flat_map(|(_, tickets)| tickets) {
         if status(s, t) != Status::Waiting {
@@ -370,7 +372,13 @@ fn unblock_lines(s: &Screen) -> Vec<Line<'static>> {
             }
         }
     }
-    prs.into_iter()
+    prs
+}
+
+/// MERGE TO UNBLOCK's lines, 'merge to unblock 5, 11: <url>'.
+fn unblock_lines(s: &Screen) -> Vec<Line<'static>> {
+    to_unblock(s)
+        .into_iter()
         .map(|(pr, waiting)| {
             Line::from(vec![
                 Span::styled(
