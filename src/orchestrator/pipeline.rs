@@ -654,7 +654,7 @@ impl Orchestrator {
     /// was just merged (ADR 0002), and marks the Ticket in progress. It
     /// gets no skill links: its Stages run the skills committed on its base
     /// (ADR 0006), so each time those an older Orqadence linked in go.
-    fn prepare_worktree(&self, ticket: &str) -> Result<(), StageError> {
+    pub(super) fn prepare_worktree(&self, ticket: &str) -> Result<(), StageError> {
         let worktree = self.worktree(ticket);
         let tools = &self.cfg.tools;
         let repo = &self.cfg.repo;
@@ -676,9 +676,12 @@ impl Orchestrator {
                     "new branch not brought up to origin's default branch: {err}"
                 )));
             }
-            if let Err(err) = tools.run(repo, &["bd", "update", ticket, "--status", "in_progress"])
-            {
-                self.log(ticket, &format!("not marked in_progress: {err}"));
+            // the Release has no bd issue to mark
+            let update = ["bd", "update", ticket, "--status", "in_progress"];
+            if !self.is_release(ticket) {
+                if let Err(err) = tools.run(repo, &update) {
+                    self.log(ticket, &format!("not marked in_progress: {err}"));
+                }
             }
             self.report(ticket, &format!("branch {ticket} created"));
         }

@@ -71,6 +71,9 @@ pub(crate) const FINAL: usize = MAX_ROUNDS + 1;
 pub(crate) const REBASE: Stage = stage("rebase", "orqa-stage-rebase", 60);
 pub(crate) const ADDRESS_PR_COMMENTS: Stage =
     stage("address-pr-comments", "orqa-stage-address-pr-comments", 60);
+/// The Release: a Stage of the run, not of a Ticket's Pipeline, once every
+/// Ticket of a run carrying orqa:release is merged (release.rs).
+pub(crate) const RELEASE: Stage = stage("release", "orqa-stage-release", 60);
 /// The code-editing Stages: the ones given the Ticket's labels.
 pub(crate) const EDITING: [&Stage; 4] = [&IMPLEMENT, &FIX, &REBASE, &ADDRESS_PR_COMMENTS];
 
@@ -542,18 +545,20 @@ impl Orchestrator {
         self.consume(&format!("park-{ticket}")) || answered
     }
 
-    /// Changes one Ticket's state and writes the state file.
+    /// Changes one Ticket's state, or the Release's by its id, and writes
+    /// the state file.
     pub(crate) fn update(&self, ticket: &str, change: impl FnOnce(&mut TicketState)) {
         self.change_state(|state| {
-            change(
-                state
+            change(match &mut state.release {
+                Some(release) if release.id == ticket => &mut release.ts,
+                _ => state
                     .tickets
                     .entry(ticket.to_string())
                     .or_insert_with(|| TicketState {
                         status: STATUS_RUNNING.to_string(),
                         ..Default::default()
                     }),
-            )
+            })
         });
     }
 
@@ -568,15 +573,29 @@ impl Orchestrator {
         }
     }
 
-    /// A snapshot of one Ticket's state; the default for an unknown Ticket.
+    /// A snapshot of one Ticket's state, or the Release's by its id; the
+    /// default for an unknown Ticket.
     pub(crate) fn ticket(&self, ticket: &str) -> TicketState {
-        self.state
-            .lock()
-            .unwrap()
-            .tickets
-            .get(ticket)
-            .cloned()
-            .unwrap_or_default()
+        let state = self.state.lock().unwrap();
+        match &state.release {
+            Some(release) if release.id == ticket => release.ts.clone(),
+            _ => state.tickets.get(ticket).cloned().unwrap_or_default(),
+        }
+    }
+
+    /// Whether `id` is the run's Release, not a Ticket.
+    pub(crate) fn is_release(&self, id: &str) -> bool {
+        let state = self.state.lock().unwrap();
+        state.release.as_ref().is_some_and(|r| r.id == id)
+    }
+
+    /// The id a line about `ticket` goes by: none for the Release, whose
+    /// started and resumed lines are the run's.
+    fn line_id<'a>(&self, ticket: &'a str) -> &'a str {
+        match self.is_release(ticket) {
+            true => "",
+            false => ticket,
+        }
     }
 }
 
@@ -1066,7 +1085,8 @@ impl Orchestrator {
                 return Held::Woke(format!("session did not start: {err}"));
             }
         }
-        self.report(ticket, &format!("{label} started: {} {at}", row.said()));
+        let started = format!("{label} started: {} {at}", row.said());
+        self.report(self.line_id(ticket), &started);
         if start_err.is_some() {
             // blocked at startup: nothing can be prompted yet
             if let Some(held) = self.wait_unblocked(ticket, st, label, &pane) {
@@ -1201,7 +1221,8 @@ impl Orchestrator {
             })
             .map_err(|err| err.to_string())?;
         let at = self.locate(&pane);
-        self.report(ticket, &format!("{label} resumed: {} {at}", row.said()));
+        let resumed = format!("{label} resumed: {} {at}", row.said());
+        self.report(self.line_id(ticket), &resumed);
         Ok(pane)
     }
 
@@ -1366,6 +1387,7 @@ impl Orchestrator {
     /// Away, the Ticket parks with a bd comment asking for a manual resume,
     /// its session left waiting in its pane, a PR Stage's PR still polled
     /// for its merge; turning Away on while the Question waits does the
+    /// same. The Release's, no Ticket to park, waits as a Question all the
     /// same. Otherwise it is a Question, whose answer goes into the pane as
     /// a prompt. None once the answer is sent, or the session moves on in
     /// the pane.
@@ -1389,7 +1411,7 @@ impl Orchestrator {
                 }
             }
             let (question, options) = asked.unwrap();
-            if self.cfg.away.load(Ordering::SeqCst) {
+            if self.cfg.away.load(Ordering::SeqCst) && !self.is_release(ticket) {
                 let lead = format!(
                     "{label} asked a question while you were away and needs a manual resume: \
                      /continue @{ticket} in the Orqadence Shell puts it to you, its session \

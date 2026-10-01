@@ -81,6 +81,21 @@ pub(crate) struct TicketState {
     pub(crate) fetching: bool,
 }
 
+/// The run's Release, once the run ended in one: a Stage of the run, not of
+/// a Ticket, its record apart from the Tickets'.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Release {
+    /// release-<epic>, or release-<date> in a Ticket run: its worktree, Run
+    /// directory, branch and tab go by it.
+    pub(crate) id: String,
+    /// Its Stage's record, kept as a Ticket's is: pane, session, its PR.
+    #[serde(flatten)]
+    pub(crate) ts: TicketState,
+    /// The new version its result names: v1.5.0.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) version: String,
+}
+
 /// A Stage's session: the App it runs on, and the id herdr's integration
 /// reports for it (empty without one).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -115,6 +130,9 @@ pub(crate) struct State {
     /// every Review on it while its limit holds.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) reviews: BTreeMap<String, Review>,
+    /// Boxed: a TicketState inside, which a State held by value pays for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) release: Option<Box<Release>>,
 }
 
 /// How Reviews go while their App is Limited, as the user answered.

@@ -9,6 +9,7 @@ pub(crate) mod limit;
 pub(crate) mod pipeline;
 pub(crate) mod plan;
 pub(crate) mod pr;
+pub(crate) mod release;
 pub(crate) mod result;
 pub(crate) mod scheduler;
 pub(crate) mod stage;
@@ -50,6 +51,8 @@ mod pr_template_test;
 mod pr_test;
 #[cfg(test)]
 pub(crate) mod question_test;
+#[cfg(test)]
+mod release_test;
 #[cfg(test)]
 mod reliability_test;
 #[cfg(test)]

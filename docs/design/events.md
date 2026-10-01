@@ -80,6 +80,20 @@ Decided on the map tickets "Limited" (harness-0sx.8) and "Apps per Stage" (harne
 | a Review skipped, the PR to open unreviewed | review 1 and debate 1 skipped: codex was limited until 3:05pm *(the last Fix gets the Input Unreviewed: codex was limited until 3:05pm)* · *with an Extra review:* extra review 1 skipped: codex was limited until 3:05pm *(the Input ends ", the extra review skipped too", and the Question's option reads open the PR unreviewed, the extra review skipped too)* |
 | a Debate side's App at its limit | *no line:* the Moderator's Inputs carry Side B: limited until 3:05pm |
 
+## Release
+
+Decided on 'Version bump label' (harness-bsg.22). A run carrying orqa:release, with release_on set, ends in the Release once every Ticket is closed and one at least merged its PR: an Epic's own label, or any queued Ticket's in a Ticket run, read at that moment. The Release belongs to the run, not to a Ticket: its lines below are run-level. Its other lines (holds, stuck, a question, waiting at a prompt, parked) are a Stage's as above, named by the Release's id, `release-<epic>` or `release-<date>` in a Ticket run, as RECENT names a Ticket, so its Questions are answered as a Ticket's are.
+
+| Moment | Wording |
+|---|---|
+| started | *(orqadence)* release started: claude opus/high (pane 3-1) *(after Epic done or Ticket run done; its worktree and branch are its id, its tab of its own)* |
+| resumed | *(orqadence)* release resumed: claude (pane 3-1) *(/continue on a saved run whose Tickets are all merged)* |
+| done | *(orqadence)* release done: v1.5.0 |
+| version PR | *(orqadence)* version PR #12 opened *(log line adds the url; none in a repo that keeps its version only in tags)* |
+| bd cannot show the Epic | *(orqadence)* bd show failed: `err` *(tried again on the next pass, never read as no Release)* |
+| parked | release-hx parked: `reason` *(a Wake settled as park, or its worktree not made: the run stops, the Release saved, as on /stop-work; /continue starts it again)* |
+| asked while Away | *nothing:* question in release (pane 3-1) *(no Ticket to park: it waits as a Question, no bd comment)* |
+
 ## Wake reasons
 
 session reported failure · went idle without a result · wrote a result file whose first line is not STATUS: · timed out after 30m · session died · finished without a PR link · never took the Stage skill · never took the nudge · never took the continue · never took your answer · wrote STATUS: plan and no plan.md · has no plan hook · never took the answer to its plan · left plan mode before your feedback · feedback not sent: `why` · the cursor never reached Yes, clear context · changed the worktree before its plan was approved

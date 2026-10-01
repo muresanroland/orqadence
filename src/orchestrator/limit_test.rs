@@ -18,12 +18,12 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 /// Friday 25 Sep 2026, 2pm, local time.
-fn now() -> DateTime<Local> {
+pub(crate) fn now() -> DateTime<Local> {
     at(25, 14, 0)
 }
 
 /// A local time in September 2026.
-fn at(day: u32, hour: u32, min: u32) -> DateTime<Local> {
+pub(crate) fn at(day: u32, hour: u32, min: u32) -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 9, day, hour, min, 0).unwrap()
 }
 
@@ -302,7 +302,8 @@ fn a_reset_reads_as_its_time_today_or_its_day_otherwise() {
     assert_eq!(until(at(28, 0, 0), now()), "Mon 12:00am");
 }
 
-const CLAUDE: &str = "⎿  You've hit your session limit · resets 3:45pm (Europe/Bucharest)";
+pub(crate) const CLAUDE: &str =
+    "⎿  You've hit your session limit · resets 3:45pm (Europe/Bucharest)";
 pub(crate) const CODEX: &str = "■ You’ve hit your usage limit. Try again at 3:05 PM.";
 
 /// Sets the Orchestrator's wall clock at now(); the test moves it.
