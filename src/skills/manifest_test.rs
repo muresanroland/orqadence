@@ -729,13 +729,6 @@ fn the_shipped_stage_skills_hold_every_jobs_placeholder_and_no_slash_call() {
     }
 }
 
-/// The merge conflicts job's line runs on the Rebase's row, the Stage
-/// whose skill holds it.
-#[test]
-fn the_merge_conflicts_job_runs_on_the_rebase_row() {
-    assert_eq!(job_row("merge-conflicts"), "rebase");
-}
-
 /// The PR comments job runs on the Address PR comments row, its default the
 /// Shipped address-pr-comments: nothing to fetch. Picked none, the Stage
 /// skill's own steps stand alone.

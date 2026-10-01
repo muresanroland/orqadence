@@ -613,37 +613,115 @@ fn set_top(repo: &Path, key: &str, value: Option<Value>) -> Result<(), String> {
     write(&path, &doc)
 }
 
-/// Tickets in the Pipeline at once, in an Epic run or a Ticket run: its key
-/// in config.json, and the value missing or empty stands for.
-pub(crate) const MAX_TICKETS: &str = "max_tickets";
-pub(crate) const DEFAULT_MAX_TICKETS: usize = 3;
+/// A whole number of config.json: its key, the value missing or empty
+/// stands for, and the least it takes.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Count {
+    pub(crate) key: &'static str,
+    pub(crate) default: usize,
+    pub(crate) least: usize,
+}
 
-/// max_tickets in doc: missing or empty is its default; anything but a
-/// whole number of at least 1 is refused.
-pub(crate) fn max_tickets_in(doc: &Value) -> Result<usize, String> {
-    match doc.get(MAX_TICKETS) {
-        None => Ok(DEFAULT_MAX_TICKETS),
-        Some(Value::String(s)) if s.is_empty() => Ok(DEFAULT_MAX_TICKETS),
-        Some(value) => value
-            .as_u64()
-            .filter(|n| *n >= 1)
-            .map(|n| n as usize)
-            .ok_or(format!("{MAX_TICKETS} is not a whole number of at least 1")),
+impl Count {
+    /// What it must be: "a whole number of at least 1".
+    pub(crate) fn rule(&self) -> String {
+        match self.least {
+            0 => "a whole number".to_string(),
+            n => format!("a whole number of at least {n}"),
+        }
     }
 }
 
-/// max_tickets as config.json has it, read on every pass of the scheduler
-/// so a change reaches the live run; one that cannot be read is the default,
-/// and /config shows why.
-pub(crate) fn max_tickets(repo: &Path) -> usize {
-    read(repo)
-        .and_then(|(_, doc)| max_tickets_in(&doc))
-        .unwrap_or(DEFAULT_MAX_TICKETS)
+/// Tickets in the Pipeline at once, in an Epic run or a Ticket run.
+pub(crate) const MAX_TICKETS: Count = Count {
+    key: "max_tickets",
+    default: 3,
+    least: 1,
+};
+/// Rebase and Address PR comments sessions at once, together, apart from
+/// max_tickets.
+pub(crate) const MAX_PR_SESSIONS: Count = Count {
+    key: "max_pr_sessions",
+    default: 2,
+    least: 1,
+};
+/// Minutes the approval modal counts down before it approves itself; 0 is
+/// no countdown: the modal waits.
+pub(crate) const ADDRESS_PR_COMMENTS_COUNTDOWN: Count = Count {
+    key: "address_pr_comments_countdown",
+    default: 5,
+    least: 0,
+};
+/// Address PR comments runs per PR, past which new items only get a line.
+pub(crate) const ADDRESS_PR_COMMENTS_RUNS: Count = Count {
+    key: "address_pr_comments_runs",
+    default: 3,
+    least: 1,
+};
+
+/// A count in doc: missing or empty is its default; anything but a whole
+/// number of at least its least is refused.
+pub(crate) fn count_in(doc: &Value, count: &Count) -> Result<usize, String> {
+    match doc.get(count.key) {
+        None => Ok(count.default),
+        Some(Value::String(s)) if s.is_empty() => Ok(count.default),
+        Some(value) => value
+            .as_u64()
+            .filter(|n| *n >= count.least as u64)
+            .map(|n| n as usize)
+            .ok_or(format!("{} is not {}", count.key, count.rule())),
+    }
 }
 
-/// Keeps max_tickets in config.json, or with None puts its default back.
-pub(crate) fn set_max_tickets(repo: &Path, value: Option<usize>) -> Result<(), String> {
-    set_top(repo, MAX_TICKETS, value.map(|v| json!(v)))
+/// A count as config.json has it, read as each pass of the scheduler or
+/// poll runs so a change reaches the live run; one that cannot be read is
+/// its default, and /config shows why.
+pub(crate) fn count(repo: &Path, count: &Count) -> usize {
+    read(repo)
+        .and_then(|(_, doc)| count_in(&doc, count))
+        .unwrap_or(count.default)
+}
+
+/// Keeps a count in config.json, or with None puts its default back.
+pub(crate) fn set_count(repo: &Path, count: &Count, value: Option<usize>) -> Result<(), String> {
+    set_top(repo, count.key, value.map(|v| json!(v)))
+}
+
+/// An on/off of config.json and the question init asks for it, which
+/// /config shows as its label.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Switch {
+    pub(crate) key: &'static str,
+    pub(crate) question: &'static str,
+}
+
+/// Rebase starts by itself on a PR the poll sees conflict with main.
+pub(crate) const REBASE_AUTO: Switch = Switch {
+    key: "rebase_auto",
+    question: "Rebase PRs that conflict with main by themselves?",
+};
+/// A quiet head's PR comments and failing checks open the approval modal
+/// by themselves.
+pub(crate) const ADDRESS_PR_COMMENTS_AUTO: Switch = Switch {
+    key: "address_pr_comments_auto",
+    question: "Open PR comments and failing checks for approval by themselves?",
+};
+
+/// Whether a switch is on in doc: true alone is on, so a repo initialised
+/// before it is off.
+pub(crate) fn switch_in(doc: &Value, switch: &Switch) -> bool {
+    doc[switch.key] == true
+}
+
+/// Whether a switch is on, read as each poll runs; a config.json that
+/// cannot be read is off.
+pub(crate) fn switch(repo: &Path, switch: &Switch) -> bool {
+    read(repo).is_ok_and(|(_, doc)| switch_in(&doc, switch))
+}
+
+/// Keeps a switch on or off in config.json, the rest as it was.
+pub(crate) fn set_switch(repo: &Path, switch: &Switch, on: bool) -> Result<(), String> {
+    set_top(repo, switch.key, Some(Value::Bool(on)))
 }
 
 /// The key of every row of config.json; static, so a label's Check can
@@ -980,12 +1058,27 @@ pub(crate) fn read(repo: &Path) -> Result<(PathBuf, Value), String> {
 /// row and neither of theirs: both rows are the address row, so the repo
 /// keeps its App, model and effort, and a save writes the new keys.
 /// One way: the address row stays, as a save never removes it, and once
-/// either new row is set it is no longer read.
+/// either new row is set it is no longer read. A label's address row moves
+/// the same way, and leaves, as a label's rows refuse a row not in ROWS.
 fn split_address(mut doc: Value) -> Value {
-    let (old, new) = ("address", ["rebase", "address_pr_comments"]);
-    if !doc[old].is_null() && new.iter().all(|key| doc[key].is_null()) {
-        for key in new {
-            doc[key] = doc[old].clone();
+    fn split(rows: &mut Value, old: Value) {
+        let new = ["rebase", "address_pr_comments"];
+        if !old.is_null() && new.iter().all(|key| rows[key].is_null()) {
+            for key in new {
+                rows[key] = old.clone();
+            }
+        }
+    }
+    let old = doc["address"].clone();
+    split(&mut doc, old);
+    if let Some(labels) = doc.get_mut("labels").and_then(Value::as_object_mut) {
+        for rows in labels
+            .values_mut()
+            .filter_map(|label| label.get_mut("rows"))
+        {
+            if let Some(old) = rows.as_object_mut().and_then(|rows| rows.remove("address")) {
+                split(rows, old);
+            }
         }
     }
     doc

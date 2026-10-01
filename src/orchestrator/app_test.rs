@@ -2,8 +2,10 @@
 //! effort, read when the Stage starts.
 
 use super::app::{
-    app, canonical, checks, clash, debate_inputs, extra_review, fallback_row, floor_in, labels,
-    row, runs_on, Clash, ExtraReview, Floor, Label, IF_LIMITED,
+    app, canonical, checks, clash, count, debate_inputs, extra_review, fallback_row, floor_in,
+    labels, row, runs_on, switch, Clash, ExtraReview, Floor, Label, ADDRESS_PR_COMMENTS_AUTO,
+    ADDRESS_PR_COMMENTS_COUNTDOWN, ADDRESS_PR_COMMENTS_RUNS, IF_LIMITED, MAX_PR_SESSIONS,
+    MAX_TICKETS, REBASE_AUTO,
 };
 use super::stage::{Answer, Ask, Orchestrator, AWAY};
 use super::state::STATUS_PARKED;
@@ -983,11 +985,15 @@ fn rebase_and_address_pr_comments_rows_replace_address_and_read_an_old_address_r
             "{key}"
         );
     }
-    let old = json!({"labels": {"be": {"kind": "area", "rows": {"address": {}}}}});
-    assert_eq!(
-        labels(&old)["be"],
-        Err("labels be rows has no row address".to_string())
-    );
+    let old = repo_with(&json!({"labels": {"be": {"kind": "area",
+        "rows": {"address": {"effort": "low"}}}}}));
+    for key in ["rebase", "address_pr_comments"] {
+        assert_eq!(
+            row(old.path(), key, &names(&["be"])).map(|r| r.said()),
+            Ok("claude default/low".to_string()),
+            "{key}"
+        );
+    }
 }
 
 /// hx-1 with the bd labels given.
@@ -1240,4 +1246,27 @@ fn a_failed_label_remove_parks_the_ticket_saying_why() {
     let said = w.await_line("hx-1 orqa:fe not removed: ");
     assert!(said.contains("no such label"), "{said}");
     w.await_line("hx-1 parked: by you at review 1");
+}
+
+/// The PR sessions' settings read as each poll runs: a config.json without
+/// them, or none at all, is each one's default, so a repo initialised
+/// earlier stays off.
+#[test]
+fn each_reader_is_its_default_on_an_empty_config_json() {
+    let repo = TempDir::new();
+    for body in [None, Some("{}")] {
+        if let Some(body) = body {
+            write_file(&repo.path().join(".orqadence/config.json"), body);
+        }
+        assert!(!switch(repo.path(), &REBASE_AUTO), "{body:?}");
+        assert!(!switch(repo.path(), &ADDRESS_PR_COMMENTS_AUTO), "{body:?}");
+        assert_eq!(count(repo.path(), &MAX_PR_SESSIONS), 2, "{body:?}");
+        assert_eq!(
+            count(repo.path(), &ADDRESS_PR_COMMENTS_COUNTDOWN),
+            5,
+            "{body:?}"
+        );
+        assert_eq!(count(repo.path(), &ADDRESS_PR_COMMENTS_RUNS), 3, "{body:?}");
+        assert_eq!(count(repo.path(), &MAX_TICKETS), 3, "{body:?}");
+    }
 }

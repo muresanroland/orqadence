@@ -3,8 +3,8 @@
 
 use super::brand::{PURPLE, RED};
 use super::config::{
-    put, Field, LabelItem, APPS_PAGE, LABELS_PAGE, ON_CALL_PAGE, RUN_PAGE, SKILLS_PAGE,
-    TYPESAFE_PAGE,
+    put, Field, LabelItem, ADDRESS_PR_COMMENTS_PAGE, APPS_PAGE, LABELS_PAGE, ON_CALL_PAGE,
+    REBASE_PAGE, RUN_PAGE, SKILLS_PAGE, TYPESAFE_PAGE,
 };
 use super::shell_test::{
     asking, await_line, cols, find, key, logged, notice_modal, render, row, rows, screen_at, shell,
@@ -1475,7 +1475,7 @@ fn the_comments_page_lists_the_pr_comments_job_at_the_shipped_skill() {
     let text =
         |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
     let buf = render(&s, 160, 45);
-    let right: Vec<String> = (1..15).map(|y| text(&buf, y, 99, 158)).collect();
+    let right: Vec<String> = (1..20).map(|y| text(&buf, y, 99, 158)).collect();
     let at = right.iter().position(|l| l == "DELEGATE SKILLS");
     let job = at.and_then(|at| right.get(at + 1));
     assert_eq!(
@@ -1484,10 +1484,8 @@ fn the_comments_page_lists_the_pr_comments_job_at_the_shipped_skill() {
         "{right:#?}"
     );
 
-    keys(
-        &mut s,
-        &[KeyCode::Enter, KeyCode::Down, KeyCode::Down, KeyCode::Down],
-    );
+    s.key(key(KeyCode::Enter));
+    keys(&mut s, &[KeyCode::Down; 6]);
     s.key(key(KeyCode::Enter));
     let buf = render(&s, 160, 45);
     let right: Vec<String> = (1..5).map(|y| text(&buf, y, 99, 158)).collect();
@@ -1827,7 +1825,7 @@ fn the_run_page_keeps_the_tickets_a_run_takes_at_once() {
     assert_eq!(config_json(repo.path()), json!({"max_tickets": 5}));
     assert_eq!(
         note(&s),
-        "5 Tickets at once, saved uncommitted in .orqadence/config.json"
+        "tickets at once: 5, saved uncommitted in .orqadence/config.json"
     );
     let buf = render(&s, 160, 45);
     assert!(
@@ -1840,7 +1838,7 @@ fn the_run_page_keeps_the_tickets_a_run_takes_at_once() {
     assert_eq!(config_json(repo.path()), json!({}));
     assert_eq!(
         note(&s),
-        "3 Tickets at once, its default, saved uncommitted in .orqadence/config.json"
+        "tickets at once: 3, its default, saved uncommitted in .orqadence/config.json"
     );
 
     write_file(
@@ -1863,11 +1861,200 @@ fn the_run_page_keeps_the_tickets_a_run_takes_at_once() {
     assert!(
         find(
             &buf,
-            "✗ max_tickets is not a whole number of at least 1: a run"
+            "✗ max_tickets is not a whole number of at least 1: its"
         )
         .is_some(),
         "{:#?}",
         rows(&buf)
+    );
+}
+
+/// The Rebase or the Address PR comments page, open.
+fn pr_page(s: &mut Screen, section: usize) {
+    type_line(s, "/config");
+    keys(s, &vec![KeyCode::Down; section]);
+    s.key(key(KeyCode::Enter));
+}
+
+/// The Rebase and Address PR comments pages: each its row, then its switch,
+/// off by default, and Address PR comments' countdown and runs cap at
+/// their defaults.
+#[test]
+fn the_rebase_and_address_pr_comments_pages_render_their_row_switch_and_numbers() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, REBASE_PAGE);
+    let buf = render(&s, 160, 45);
+    for line in [
+        "▸ app                   claude",
+        "  effort                default",
+        "  [ ] Rebase PRs that conflict with main by themselves",
+    ] {
+        assert!(find(&buf, line).is_some(), "{line:?}: {:#?}", rows(&buf));
+    }
+
+    keys(&mut s, &[KeyCode::Esc, KeyCode::Esc]);
+    pr_page(&mut s, ADDRESS_PR_COMMENTS_PAGE);
+    let buf = render(&s, 160, 45);
+    let right: Vec<String> = (1..15)
+        .map(|y| cols(&buf, y, 99, 158).trim_end().to_string())
+        .collect();
+    let at = right
+        .iter()
+        .position(|l| l.starts_with("▸ app"))
+        .unwrap_or_else(|| panic!("{right:#?}"));
+    assert_eq!(
+        right[at..at + 9],
+        [
+            "▸ app                   claude",
+            "  model                 default  Anthropic",
+            "  effort                default",
+            "",
+            "  [ ] Open PR comments and failing checks for approval by",
+            "      themselves",
+            "  countdown minutes     5  default",
+            "  runs per PR           3  default",
+            "",
+        ],
+        "{right:#?}"
+    );
+}
+
+/// Enter or Space on a switch turns it on or off, saved at once.
+#[test]
+fn toggling_a_switch_saves_config_json_at_once() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, REBASE_PAGE);
+    keys(&mut s, &[KeyCode::Down; 3]);
+    s.key(key(KeyCode::Enter));
+    assert_eq!(config_json(repo.path()), json!({"rebase_auto": true}));
+    assert_eq!(
+        note(&s),
+        "Rebase PRs that conflict with main by themselves: on, saved uncommitted in .orqadence/config.json"
+    );
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(
+            &buf,
+            "▸ [x] Rebase PRs that conflict with main by themselves"
+        )
+        .is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    s.key(key(KeyCode::Char(' ')));
+    assert_eq!(config_json(repo.path()), json!({"rebase_auto": false}));
+
+    keys(&mut s, &[KeyCode::Esc, KeyCode::Down, KeyCode::Enter]);
+    keys(&mut s, &[KeyCode::Down; 3]);
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        config_json(repo.path()),
+        json!({"rebase_auto": false, "address_pr_comments_auto": true})
+    );
+}
+
+/// The countdown takes 0, no countdown, and refuses -1 and text, the text
+/// kept to mend; the runs cap refuses 0. A bad one in config.json is
+/// flagged on the page.
+#[test]
+fn the_countdown_takes_0_and_the_runs_cap_refuses_it() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, ADDRESS_PR_COMMENTS_PAGE);
+    keys(&mut s, &[KeyCode::Down; 4]);
+    s.key(key(KeyCode::Enter));
+    type_in(&mut s, "0");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        config_json(repo.path()),
+        json!({"address_pr_comments_countdown": 0})
+    );
+    assert_eq!(
+        note(&s),
+        "countdown minutes: 0, saved uncommitted in .orqadence/config.json"
+    );
+    for typed in ["-1", "abc"] {
+        s.key(key(KeyCode::Enter));
+        type_in(&mut s, typed);
+        s.key(key(KeyCode::Enter));
+        assert_eq!(
+            note(&s),
+            format!("Refused: {typed} is not a whole number. Nothing changed.")
+        );
+        let st = s.settings.as_ref().unwrap();
+        assert_eq!(st.typing.as_ref().map(|(_, t)| t.as_str()), Some(typed));
+        s.key(key(KeyCode::Esc));
+    }
+
+    s.key(key(KeyCode::Down));
+    s.key(key(KeyCode::Enter));
+    type_in(&mut s, "0");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        note(&s),
+        "Refused: 0 is not a whole number of at least 1. Nothing changed."
+    );
+    s.key(key(KeyCode::Esc));
+    assert_eq!(
+        config_json(repo.path()),
+        json!({"address_pr_comments_countdown": 0})
+    );
+
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"address_pr_comments_runs": 0}"#,
+    );
+    keys(&mut s, &[KeyCode::Esc, KeyCode::Esc]);
+    pr_page(&mut s, ADDRESS_PR_COMMENTS_PAGE);
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(
+            &buf,
+            "✗ address_pr_comments_runs is not a whole number of at"
+        )
+        .is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+}
+
+/// The Run page keeps max_pr_sessions under max_tickets: 0 is refused, a
+/// whole number saved at once, and nothing typed puts the default 2 back.
+#[test]
+fn max_pr_sessions_refuses_0_and_a_blank_puts_the_default_back() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    type_line(&mut s, "/config");
+    keys(&mut s, &[KeyCode::Down; RUN_PAGE]);
+    s.key(key(KeyCode::Enter));
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(&buf, "  PR sessions at once   2  default").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    keys(&mut s, &[KeyCode::Down, KeyCode::Enter]);
+    type_in(&mut s, "0");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        note(&s),
+        "Refused: 0 is not a whole number of at least 1. Nothing changed."
+    );
+    s.key(key(KeyCode::Backspace));
+    type_in(&mut s, "4");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(config_json(repo.path()), json!({"max_pr_sessions": 4}));
+    assert_eq!(
+        note(&s),
+        "PR sessions at once: 4, saved uncommitted in .orqadence/config.json"
+    );
+    keys(&mut s, &[KeyCode::Enter, KeyCode::Enter]);
+    assert_eq!(config_json(repo.path()), json!({}));
+    assert_eq!(
+        note(&s),
+        "PR sessions at once: 2, its default, saved uncommitted in .orqadence/config.json"
     );
 }
 

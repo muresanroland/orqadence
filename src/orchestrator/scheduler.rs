@@ -278,7 +278,7 @@ impl Orchestrator {
                 Some(_) => {}
             }
 
-            let max = app::max_tickets(&self.cfg.repo);
+            let max = app::count(&self.cfg.repo, &app::MAX_TICKETS);
             for ticket in self.resumable() {
                 if !busy(&ticket) && in_pipeline() < max {
                     launch(&ticket, Orchestrator::run_ticket);
