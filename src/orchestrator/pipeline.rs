@@ -429,9 +429,9 @@ impl Orchestrator {
     /// one not yet committed or merged still works: the Area label's
     /// pr_template, else the default, else none. A mapped file since gone
     /// falls back to the default, and RECENT says so.
-    fn pr_template(&self, ticket: &str) -> Option<String> {
+    pub(super) fn pr_template(&self, ticket: &str) -> Option<String> {
         let repo = &self.cfg.repo;
-        // labels or config not read parked the Round already
+        // labels or config not read stop the Stage before it starts
         let labels = self.labels(ticket).unwrap_or_default();
         let mapped = app::pr_template(repo, &labels).unwrap_or_default();
         let default = repo.join(DEFAULT_TEMPLATE);

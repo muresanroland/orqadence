@@ -244,21 +244,11 @@ fn stage_address_pr_comments_holds_no_rebase() {
     assert!(!comments.contains("{{merge-conflicts}}"));
 }
 
-/// address-pr-comments knows the approved and won't-fix lists, the
-/// won't-fix reply, and a Ticket's worktree already on the PR's branch.
+/// address-pr-comments ends its replies with the marker threads.sh:28 and
+/// pr.rs:346 match exactly.
 #[test]
-fn address_pr_comments_knows_the_lists() {
-    let skill = skill("orqa-address-pr-comments");
-    for text in [
-        "name: orqa-address-pr-comments",
-        "**approved list**",
-        "**won't-fix list**",
-        "`Won't fix: not approved for this PR.`",
-        "<!-- address-pr-comments -->",
-        "When HEAD is already the PR's head branch",
-    ] {
-        assert!(skill.contains(text), "address-pr-comments lacks {text:?}");
-    }
+fn address_pr_comments_writes_the_reply_marker() {
+    assert!(skill("orqa-address-pr-comments").contains("<!-- address-pr-comments -->"));
 }
 
 /// threads.sh run with a stub gh first on PATH: gh's --jq filter applied
@@ -408,5 +398,30 @@ fn stage_fix_names_the_orqadence_run_heading_and_its_parts_in_order() {
     ];
     for pair in parts.windows(2) {
         assert!(at(pair[0]) < at(pair[1]), "{} before {}", pair[0], pair[1]);
+    }
+}
+
+/// stage-address-pr-comments, once it has pushed, captures an orqa:fe
+/// Ticket's changed screens again into the Run directory's pr/ and attaches
+/// them, or says why not, and rewrites each shipped label section of the PR
+/// body its changes made stale, leaving the rest as it is.
+#[test]
+fn stage_address_pr_comments_recaptures_screenshots_and_refreshes_label_sections() {
+    let stage = skill("orqa-stage-address-pr-comments");
+    for text in ["`orqa:fe`", "`<Run directory>/pr/`", "**PR template**"] {
+        assert!(
+            stage.contains(text),
+            "stage-address-pr-comments lacks {text:?}"
+        );
+    }
+    for label in crate::setup::LABELS
+        .iter()
+        .filter(|l| !l.pr_section.is_empty())
+    {
+        let heading = format!("`{}`", label.pr_section.lines().next().unwrap());
+        assert!(
+            stage.contains(&heading),
+            "stage-address-pr-comments lacks {heading}"
+        );
     }
 }

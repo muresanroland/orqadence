@@ -646,10 +646,11 @@ impl Orchestrator {
     }
 
     /// Runs Address PR comments for a Ticket with an open PR, once its
-    /// items are approved, fed its approved and won't-fix lists and gh's
-    /// view of the PR's reviews, comments and checks; each run counts
-    /// toward the cap, which holds back a run no modal opened by hand
-    /// approved: the count may have reached it since the modal was offered.
+    /// items are approved, fed its approved and won't-fix lists, gh's view
+    /// of the PR's reviews, comments and checks, and the PR template the
+    /// last Fix had, for the body's sections; each run counts toward the
+    /// cap, which holds back a run no modal opened by hand approved: the
+    /// count may have reached it since the modal was offered.
     fn address_pr_comments(&self, ticket: &str) {
         let ts = self.ticket(ticket);
         let (fix, skip, by_hand) = (self.approved.lock().unwrap())
@@ -678,12 +679,16 @@ impl Orchestrator {
         };
         self.update(ticket, |ts| ts.address_runs += 1);
         let (fix, skip) = (listed(&fix), listed(&skip));
-        let inputs = [
+        let template = self.pr_template(ticket);
+        let mut inputs = vec![
             ("PR", ts.pr.as_str()),
             ("Approved", &fix),
             ("Won't fix", &skip),
             ("PR metadata (gh JSON)", comments.trim()),
         ];
+        if let Some(template) = &template {
+            inputs.push(("PR template", template));
+        }
         self.on_pr(ticket, &ADDRESS_PR_COMMENTS, &inputs, "addressed");
     }
 
