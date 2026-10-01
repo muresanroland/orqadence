@@ -12,11 +12,11 @@ You are the Release Stage of an Orqadence run, in a fresh session inside its own
 ## 1. Find the version
 
 1. Find every place the repo keeps its own version: `Cargo.toml` with `Cargo.lock`, `package.json` with its lockfile, `pyproject.toml`, a `VERSION` file, and the like. Then `git grep` the version you found to catch the rest (a constant the build reads, a chart). Only the repo's own version: a dependency's equal number is not it.
-2. `git fetch origin --tags`, and take the highest `vX.Y.Z` tag, pre-release tags such as `v1.5.0-rc.1` aside.
-3. The base is the highest of the versions found and the tag. When they disagree, remember which you took and why: the PR body says so.
+2. `git fetch origin --tags`, and take the highest `vX.Y.Z` tag, pre-release tags such as `v1.5.0-rc.1` aside (none: v0.0.0).
+3. The base is the highest of the versions found and the tag.
 4. Raise the base as **Bump** says.
 
-A repo that keeps its version only in tags (no file holds it): change no file, commit nothing and open no PR; go to the Result file with the next version from the latest tag. With no tag either, the base is v0.0.0.
+A repo that keeps its version only in tags (no file holds it): change no file, commit nothing and open no PR; go to the Result file with the next version from the latest tag.
 
 ## 2. Raise it
 
