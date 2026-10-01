@@ -19,6 +19,7 @@ use super::herdr::{agent_name, split_target};
 use super::judgment::{offered, Action, Judged, PlanJudged, TypeSafe, WAKE_FLOOR};
 use super::limit::{codex_review, until, Limit, LAST_LINES};
 use super::pipeline::MAX_ROUNDS;
+use super::pr::Item;
 use super::result::{
     read_question, read_stage_result, stage_prompt, ResultRequirements, StageResult, ASKED, PLANNED,
 };
@@ -205,6 +206,9 @@ pub(crate) struct Event {
     /// a plan failure, the Review's limit, a Stage's own question or one at
     /// a Ticket's start.
     pub(crate) ask: Option<Ask>,
+    /// A PR's items for the approval modal: never a Question. Empty on
+    /// every other Event.
+    pub(crate) offer: Vec<Item>,
 }
 
 /// What the Shell knows when it starts a run: kept whole by the Shell and
@@ -250,6 +254,10 @@ pub(crate) struct Config {
     pub(crate) wait: Option<Duration>,
 }
 
+/// A PR's approved items, its won't-fix ones, and whether a modal opened
+/// by hand approved any, which the runs cap does not hold.
+pub(crate) type Lists = (Vec<Item>, Vec<Item>, bool);
+
 /// Owns Ticket state, pane placement and Stage transitions. It composes no
 /// text: what it cannot advance by rule becomes a Wake, which a Judgment or
 /// the user answers.
@@ -271,6 +279,9 @@ pub(crate) struct Orchestrator {
     pub(crate) commands: Mutex<Vec<String>>,
     /// Answers to Questions, each for one session: (ticket, pane, answer).
     pub(crate) answers: Mutex<Vec<(String, String, Answer)>>,
+    /// Each Ticket's approved and won't-fix PR comments, for the Address PR
+    /// comments run its command queued.
+    pub(crate) approved: Mutex<BTreeMap<String, Lists>>,
     /// The Tickets running on a thread of this process, each with the PR
     /// Stage it runs, None for its Pipeline.
     pub(crate) active: Mutex<BTreeMap<String, Option<&'static str>>>,
@@ -319,6 +330,7 @@ impl Orchestrator {
             done: AtomicBool::new(false),
             commands: Mutex::new(Vec::new()),
             answers: Mutex::new(Vec::new()),
+            approved: Mutex::new(BTreeMap::new()),
             active: Mutex::new(BTreeMap::new()),
             asked: Mutex::new(BTreeMap::new()),
             deadlines: Mutex::new(BTreeMap::new()),
@@ -379,12 +391,18 @@ impl Orchestrator {
     /// the Event to the Shell. A `detail` (a PR's url) goes on the log line
     /// alone, in parentheses.
     pub(crate) fn emit(&self, ticket: &str, text: &str, panel: bool, detail: &str) {
-        self.event(ticket, text, panel, detail, None);
+        self.event(ticket, text, panel, detail, None, Vec::new());
     }
 
     /// A panel line that asks the user: the Shell puts it as a Question.
     pub(super) fn asks(&self, ticket: &str, text: &str, ask: Ask) {
-        self.event(ticket, text, true, "", Some(ask));
+        self.event(ticket, text, true, "", Some(ask), Vec::new());
+    }
+
+    /// A PR's items put to the user in the approval modal, with a line in
+    /// the log alone.
+    pub(super) fn offers(&self, ticket: &str, text: &str, items: Vec<Item>) {
+        self.event(ticket, text, false, "", None, items);
     }
 
     /// A Question with no line of its own, after the lines that led to it:
@@ -396,10 +414,19 @@ impl Orchestrator {
             text: text.to_string(),
             panel: false,
             ask: Some(ask),
+            offer: Vec::new(),
         });
     }
 
-    fn event(&self, ticket: &str, text: &str, panel: bool, detail: &str, ask: Option<Ask>) {
+    fn event(
+        &self,
+        ticket: &str,
+        text: &str,
+        panel: bool,
+        detail: &str,
+        ask: Option<Ask>,
+        offer: Vec<Item>,
+    ) {
         let time = chrono::Local::now();
         let detail = if detail.is_empty() {
             String::new()
@@ -415,6 +442,7 @@ impl Orchestrator {
             text: text.to_string(),
             panel,
             ask,
+            offer,
         });
     }
 

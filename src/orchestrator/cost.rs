@@ -403,7 +403,10 @@ pub(crate) fn logged(repo: &Path) -> HashMap<String, Logged> {
                 .extend(row.split(' ').next().map(str::to_string));
         }
         if let Some((model, tokens)) = typesafe_tokens(text) {
-            let per = TYPESAFE.iter().find(|(m, _)| *m == model).map(|(_, per)| *per);
+            let per = TYPESAFE
+                .iter()
+                .find(|(m, _)| *m == model)
+                .map(|(_, per)| *per);
             logged.typesafe.charge(per, tokens);
         }
     }

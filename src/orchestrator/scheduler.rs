@@ -1,9 +1,9 @@
 //! The scheduler: starts ready Tickets, at most max_tickets at once, each on
 //! a thread of its own that is never joined (ADR 0003), resumes the ones a
-//! stopped run left behind, polls PRs for merges (ADR 0002) and conflicts,
-//! and obeys the Shell's commands. PR sessions, Rebase and Address PR
-//! comments, count apart: at most max_pr_sessions at once, one per Ticket,
-//! a PR Stage that /continue takes back included.
+//! stopped run left behind, polls PRs for merges (ADR 0002), conflicts and
+//! PR comments, and obeys the Shell's commands. PR sessions, Rebase and
+//! Address PR comments, count apart: at most max_pr_sessions at once, one
+//! per Ticket, a PR Stage that /continue takes back included.
 //! Its Tickets are an Epic's children, or a Ticket run's queue, which the
 //! Shell adds to while it runs.
 
@@ -16,11 +16,11 @@ use std::thread;
 use std::time::Instant;
 
 use super::app;
-use super::pr::{self, Item};
+use super::pr::{self, Item, Pr};
 use super::result::ResultRequirements;
 use super::stage::{
-    pr_ref, result_name, stage_label, Orchestrator, Stage, StageError, ADDRESS_PR_COMMENTS, AWAY,
-    REBASE,
+    plural, pr_ref, result_name, stage_label, Orchestrator, Stage, StageError, ADDRESS_PR_COMMENTS,
+    AWAY, REBASE,
 };
 use super::state::{TicketState, STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 
@@ -242,7 +242,9 @@ impl Orchestrator {
             // polled before the commands: after a restart /rebase goes by a
             // poll of this run, not the false `conflicting` starts with
             if last_poll.is_none_or(|at| at.elapsed() >= self.cfg.poll_prs) {
-                self.poll_merges();
+                for (ticket, items) in self.poll_merges() {
+                    self.offer(&ticket, items);
+                }
                 last_poll = Some(Instant::now());
             }
             let max_pr = app::count(&self.cfg.repo, &app::MAX_PR_SESSIONS);
@@ -454,15 +456,10 @@ impl Orchestrator {
             .map(|(id, ts)| (id.clone(), ts.clone()))
             .collect();
         let (tools, repo) = (&self.cfg.tools, &self.cfg.repo);
-        let query = format!("query={}", pr::QUERY);
 
         let mut quiet = Vec::new();
         for (ticket, ts) in open {
-            let url = format!("url={}", ts.pr);
-            let reply = tools
-                .run(repo, &["gh", "api", "graphql", "-f", &query, "-f", &url])
-                .map_err(|err| err.to_string())
-                .and_then(|out| pr::parse(&out));
+            let reply = self.pr(&ts.pr);
             // read again: it may have parked at its PR Stage during the call
             let ts = self.ticket(&ticket);
             let returning = ts.status != STATUS_PR_OPEN;
@@ -583,6 +580,97 @@ impl Orchestrator {
         quiet
     }
 
+    /// The PR at `url`, one GraphQL query.
+    fn pr(&self, url: &str) -> Result<Pr, String> {
+        let (query, url) = (format!("query={}", pr::QUERY), format!("url={url}"));
+        let argv = ["gh", "api", "graphql", "-f", &query, "-f", &url];
+        let out = self.cfg.tools.run(&self.cfg.repo, &argv);
+        pr::parse(&out.map_err(|err| err.to_string())?)
+    }
+
+    /// A quiet head's new items: with address_pr_comments_auto off, or past
+    /// the runs cap, a line that /address-pr-comments opens them; under
+    /// Away every one approved; otherwise the approval modal.
+    fn offer(&self, ticket: &str, items: Vec<Item>) {
+        if items.is_empty() {
+            return;
+        }
+        let (ts, repo) = (self.ticket(ticket), &self.cfg.repo);
+        let n = format!("{}: {}", pr_ref(&ts.pr), plural(items.len(), "PR comment"));
+        let cap = app::count(repo, &app::ADDRESS_PR_COMMENTS_RUNS);
+        if !app::switch(repo, &app::ADDRESS_PR_COMMENTS_AUTO) {
+            self.report(ticket, &format!("{n}, /address-pr-comments opens them"));
+        } else if ts.address_runs >= cap {
+            let runs = plural(cap, "Address PR comments run");
+            let text = format!("{n}, past the cap of {runs}, /address-pr-comments opens them");
+            self.report(ticket, &text);
+        } else if self.cfg.away.load(Ordering::SeqCst) {
+            self.report(ticket, &format!("{n} approved while away"));
+            self.approve_comments(ticket, items, Vec::new(), false);
+        } else {
+            self.offers(ticket, &format!("{n} to approve"), items);
+        }
+    }
+
+    /// Adds `fix` to the Ticket's approved list and `skip` to its won't-fix
+    /// list, and queues Address PR comments for them: lists already waiting
+    /// have their run queued or starting, which takes these too. `by_hand`:
+    /// approved in a modal /address-pr-comments opened.
+    pub(crate) fn approve_comments(
+        &self,
+        ticket: &str,
+        fix: Vec<Item>,
+        skip: Vec<Item>,
+        by_hand: bool,
+    ) {
+        let mut approved = self.approved.lock().unwrap();
+        let waiting = approved.contains_key(ticket);
+        let lists = approved.entry(ticket.to_string()).or_default();
+        lists.0.extend(fix);
+        lists.1.extend(skip);
+        lists.2 |= by_hand;
+        drop(approved);
+        if !waiting {
+            self.command(&format!("address-pr-comments-{ticket}"));
+        }
+    }
+
+    /// At the run's end: the items of the approval modals left unanswered,
+    /// and of the lists no run took, are no longer offered, so the poll of
+    /// a run that resumes offers them again.
+    pub(crate) fn withdraw(&self, open: impl Iterator<Item = (String, Vec<Item>)>) {
+        let approved = std::mem::take(&mut *self.approved.lock().unwrap());
+        let lists = approved
+            .into_iter()
+            .map(|(t, (fix, skip, _))| (t, [fix, skip].concat()));
+        for (ticket, items) in open.chain(lists) {
+            self.unoffer(&ticket, &items);
+        }
+    }
+
+    /// Takes `items` out of the Ticket's offered set, so the poll offers
+    /// them again while they stay open.
+    fn unoffer<'a>(&self, ticket: &str, items: impl IntoIterator<Item = &'a Item>) {
+        self.update(ticket, |ts| {
+            for item in items {
+                ts.offered.remove(&item.id);
+            }
+        });
+    }
+
+    /// /address-pr-comments: every item open on the Ticket's PR now, each
+    /// offered, for the approval modal opened by hand.
+    pub(crate) fn open_items(&self, ticket: &str) -> Result<Vec<Item>, String> {
+        let ts = self.ticket(ticket);
+        if ts.status != STATUS_PR_OPEN {
+            return Err("address pr comments refused: no open PR".to_string());
+        }
+        let items = self.pr(&ts.pr)?.items();
+        let ids = items.iter().map(|i| i.id.clone()).collect();
+        self.update(ticket, |ts| ts.offered = ids);
+        Ok(items)
+    }
+
     /// Runs Rebase for a Ticket whose open PR the last poll saw conflict
     /// with main, on the user's command or, with rebase_auto, the poll's.
     fn rebase(&self, ticket: &str) {
@@ -597,31 +685,52 @@ impl Orchestrator {
             let text = format!("refused: {} does not conflict with main", pr_ref(&ts.pr));
             return self.report(ticket, &text);
         }
-        self.on_pr(ticket, &REBASE, false);
+        self.on_pr(ticket, &REBASE, false, None);
     }
 
-    /// Runs Address PR comments for a Ticket with an open PR, on the user's
-    /// command only.
+    /// Runs Address PR comments for a Ticket with an open PR, once its
+    /// items are approved, fed its approved and won't-fix lists; each run
+    /// counts toward the cap, which holds back a run no modal opened by
+    /// hand approved: the count may have reached it since the modal was
+    /// offered.
     fn address_pr_comments(&self, ticket: &str) {
-        if self.ticket(ticket).status != STATUS_PR_OPEN {
+        let ts = self.ticket(ticket);
+        let (fix, skip, by_hand) = (self.approved.lock().unwrap())
+            .remove(ticket)
+            .unwrap_or_default();
+        if ts.status != STATUS_PR_OPEN {
             return self.report(ticket, "address pr comments refused: no open PR");
         }
-        self.on_pr(ticket, &ADDRESS_PR_COMMENTS, false);
+        let cap = app::count(&self.cfg.repo, &app::ADDRESS_PR_COMMENTS_RUNS);
+        if !by_hand && ts.address_runs >= cap {
+            let runs = plural(cap, "Address PR comments run");
+            let text = format!(
+                "{}: past the cap of {runs}, /address-pr-comments opens them",
+                pr_ref(&ts.pr)
+            );
+            return self.report(ticket, &text);
+        }
+        self.on_pr(ticket, &ADDRESS_PR_COMMENTS, false, Some((&fix, &skip)));
     }
 
     /// Takes a Ticket back to its PR Stage, never its Pipeline: Parked from
-    /// it, or stopped by a long usage limit, and continued.
+    /// it, or stopped by a long usage limit, and continued. Its approved
+    /// lists went with the run that took them.
     fn continue_pr(&self, ticket: &str) {
         if let Some(st) = pr_stage(&self.ticket(ticket)) {
-            self.on_pr(ticket, st, true);
+            self.on_pr(ticket, st, true, None);
         }
     }
 
     /// Runs a PR Stage in the kept worktree: a fresh session, or `resumed`,
-    /// the one /continue takes back. Its tab closes once it is done, said
-    /// as "<rebased|addressed> PR #n". Away, its question parks the Ticket;
-    /// a long usage limit leaves it running for /continue.
-    fn on_pr(&self, ticket: &str, st: &Stage, resumed: bool) {
+    /// the one /continue takes back. Address PR comments is fed gh's view
+    /// of the PR's reviews, comments and checks, the PR template the last
+    /// Fix had, for the body's sections, and a fresh run's `lists`, its
+    /// approved and won't-fix items, which count it toward the cap. Its tab
+    /// closes once it is done, said as "<rebased|addressed> PR #n". Away,
+    /// its question parks the Ticket; a long usage limit leaves it running
+    /// for /continue.
+    fn on_pr(&self, ticket: &str, st: &Stage, resumed: bool, lists: Option<(&[Item], &[Item])>) {
         let pr = self.ticket(ticket).pr;
         let rebase = st.name == REBASE.name;
         let (name, value) = if rebase {
@@ -632,6 +741,10 @@ impl Orchestrator {
             match self.cfg.tools.run(&self.cfg.repo, &argv) {
                 Ok(json) => ("PR metadata (gh JSON)", json.trim().to_string()),
                 Err(err) => {
+                    // no run took the lists: the poll offers their items again
+                    if let Some((fix, skip)) = lists {
+                        self.unoffer(ticket, fix.iter().chain(skip));
+                    }
                     let text = format!("address pr comments failed: {err}");
                     // taken back, it stays Parked for the next /continue
                     if !resumed || !self.park_live(ticket, &text) {
@@ -646,9 +759,12 @@ impl Orchestrator {
         } else {
             self.pr_template(ticket)
         };
-        let mut inputs = vec![("PR", pr.as_str()), (name, value.as_str())];
-        // Address PR comments keeps the body's sections to the template the
-        // last Fix had
+        let lists_s = lists.map(|(fix, skip)| (listed(fix), listed(skip)));
+        let mut inputs = vec![("PR", pr.as_str())];
+        if let Some((fix, skip)) = &lists_s {
+            inputs.extend([("Approved", fix.as_str()), ("Won't fix", skip.as_str())]);
+        }
+        inputs.push((name, value.as_str()));
         if let Some(template) = &template {
             inputs.push(("PR template", template));
         }
@@ -664,6 +780,9 @@ impl Orchestrator {
                 // a new Stage to run_stage: an earlier session, a parked
                 // one's pane still open, is dropped, not watched
                 ts.stage.clear();
+            }
+            if lists.is_some() {
+                ts.address_runs += 1;
             }
             ts.status = STATUS_PR_OPEN.to_string();
             ts.reason.clear();
@@ -725,6 +844,20 @@ impl Orchestrator {
         }
         live
     }
+}
+
+/// Items as an Input: "none", or one per line as the skill matches them,
+/// by title, author and place.
+fn listed(items: &[Item]) -> String {
+    if items.is_empty() {
+        return "none".to_string();
+    }
+    let line = |i: &Item| match i.place.as_str() {
+        "" => format!("{} by {} — {}", i.kind, i.author, i.summary),
+        at => format!("{} by {} at {at} — {}", i.kind, i.author, i.summary),
+    };
+    let lines: Vec<String> = items.iter().map(line).collect();
+    format!("\n  - {}", lines.join("\n  - "))
 }
 
 /// A Ticket's place in the Pipeline, or its PR session's, given back when
