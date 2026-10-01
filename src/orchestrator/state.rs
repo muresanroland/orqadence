@@ -47,6 +47,9 @@ pub(crate) struct TicketState {
     /// the plan Judgment weighs when the revised plan comes back.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) feedback: String,
+    /// Its PR's conflict was reported, and with rebase_auto its Rebase
+    /// started: once, until the PR is seen mergeable or a Rebase finds it
+    /// no longer conflicting.
     #[serde(
         default,
         rename = "conflict_reported",

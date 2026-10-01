@@ -1,10 +1,10 @@
-use super::app::{set_count, MAX_TICKETS};
+use super::app::{set_count, set_switch, MAX_PR_SESSIONS, MAX_TICKETS, REBASE_AUTO};
 use super::stage::{Config, Orchestrator};
 use super::state::{
     acquire_lock, load_state, lock_holder, STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN,
     STATUS_RUNNING,
 };
-use super::world::{new_world, spawn_epic, succeed, BdTicket, Prompt, World};
+use super::world::{new_world, spawn_epic, succeed, wait_until, working, BdTicket, Prompt, World};
 use std::fs;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -185,6 +185,7 @@ fn closed_pr_parks_the_ticket_and_conflict_is_reported_exactly_once() {
         conflicts, 1,
         "conflict reported {conflicts} times, want once"
     );
+    assert!(!started(&w, "h-hx-2-rebase"), "rebase_auto is off");
     assert_eq!(
         o.ticket("hx-1").status,
         STATUS_PARKED,
@@ -606,4 +607,204 @@ fn a_ticket_run_never_ends_over_a_ticket_enqueued_while_it_lists() {
         "a Ticket joined a finished run"
     );
     assert_eq!(o.state.lock().unwrap().queue, ["hx-1", "hx-2"]);
+}
+
+const CONFLICTING: &str = r#"{"state":"OPEN","mergeable":"CONFLICTING"}"#;
+const MERGEABLE: &str = r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#;
+
+/// `ticket`'s PR open, as gh shows it in `pr`, its worktree kept.
+fn pr_open(w: &World, o: &Orchestrator, ticket: &str, pr: &str) {
+    let url = format!("https://example.test/pr/{ticket}");
+    w.lock().prs.insert(url.clone(), pr.to_string());
+    o.update(ticket, |ts| {
+        ts.status = STATUS_PR_OPEN.to_string();
+        ts.pr = url;
+    });
+    let kept = o.worktree(ticket).display().to_string();
+    let create = ["bd", "worktree", "create", &kept];
+    o.cfg.tools.run(&o.cfg.repo, &create).unwrap();
+}
+
+/// Whether the world has started agent `name`.
+fn started(w: &World, name: &str) -> bool {
+    !w.called(&format!("herdr agent start {name} ")).is_empty()
+}
+
+/// PR sessions and the Pipeline count apart: with one slot each, a running
+/// Rebase holds no Ticket back, and a running Ticket no Rebase.
+#[test]
+fn pr_sessions_and_pipeline_tickets_count_apart() {
+    for rebase_first in [true, false] {
+        let (w, o) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+        set_count(&w.repo, &MAX_TICKETS, Some(1)).unwrap();
+        set_count(&w.repo, &MAX_PR_SESSIONS, Some(1)).unwrap();
+        set_switch(&w.repo, &REBASE_AUTO, true).unwrap();
+        w.session(|p| match p.stage.as_str() {
+            "rebase" | "implement" => working(p),
+            _ => succeed(p),
+        });
+        let first = match rebase_first {
+            true => {
+                pr_open(&w, &o, "hx-1", CONFLICTING);
+                w.lock().tickets[1].status = "deferred".to_string(); // not ready yet
+                "h-hx-1-rebase"
+            }
+            false => {
+                pr_open(&w, &o, "hx-1", MERGEABLE);
+                "h-hx-2-implement"
+            }
+        };
+        let o = Arc::new(o);
+        let mut run = spawn_epic(o.clone(), "hx");
+        wait_until(first, || started(&w, first));
+        let second = match rebase_first {
+            true => {
+                w.lock().tickets[1].status = "open".to_string();
+                "h-hx-2-implement"
+            }
+            false => {
+                let url = "https://example.test/pr/hx-1".to_string();
+                w.lock().prs.insert(url, CONFLICTING.to_string());
+                "h-hx-1-rebase"
+            }
+        };
+        wait_until(second, || started(&w, second));
+        o.stop();
+        run.wait();
+        o.wait_in_flight();
+    }
+}
+
+/// Holds `ticket`'s Rebase session inside its prompt until the gate opens.
+fn gated(w: &World, ticket: &'static str) -> Arc<AtomicBool> {
+    let gate = Arc::new(AtomicBool::new(false));
+    let open = gate.clone();
+    w.session(move |p| {
+        while p.ticket == ticket && p.stage == "rebase" && !open.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        succeed(p)
+    });
+    gate
+}
+
+/// Past max_pr_sessions a PR session waits, said once, and starts as a
+/// slot frees.
+#[test]
+fn past_max_pr_sessions_a_rebase_waits_for_a_slot() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    set_count(&w.repo, &MAX_PR_SESSIONS, Some(1)).unwrap();
+    set_switch(&w.repo, &REBASE_AUTO, true).unwrap();
+    pr_open(&w, &o, "hx-1", CONFLICTING);
+    pr_open(&w, &o, "hx-2", CONFLICTING);
+    let gate = gated(&w, "hx-1");
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+
+    w.await_line("hx-2 rebase waits for a slot");
+    thread::sleep(Duration::from_millis(30)); // many more passes
+    assert!(started(&w, "h-hx-1-rebase"));
+    assert!(!started(&w, "h-hx-2-rebase"), "hx-2 took a second slot");
+    gate.store(true, Ordering::SeqCst);
+    w.await_line("hx-2 rebased PR #hx-2");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+
+    let waits = w
+        .lines()
+        .iter()
+        .filter(|l| l.contains("waits for a slot"))
+        .count();
+    assert_eq!(waits, 1, "{:#?}", w.lines());
+}
+
+/// A Ticket has one PR session at a time: Address PR comments sent while
+/// its Rebase runs waits for it.
+#[test]
+fn address_pr_comments_queues_behind_the_tickets_running_rebase() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    pr_open(&w, &o, "hx-1", CONFLICTING);
+    let gate = gated(&w, "hx-1");
+    o.command("rebase-hx-1");
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+    wait_until("the Rebase", || started(&w, "h-hx-1-rebase"));
+
+    o.command("address-pr-comments-hx-1");
+    w.await_line("hx-1 address pr comments waits for a slot");
+    assert!(!started(&w, "h-hx-1-address-pr-comments"));
+    gate.store(true, Ordering::SeqCst);
+    w.await_line("hx-1 rebased PR #hx-1");
+    w.await_line("hx-1 addressed PR #hx-1");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+}
+
+/// With rebase_auto on, a PR the poll sees conflict gets a Rebase with no
+/// command, once per conflict: a failed one is not restarted until the PR
+/// is seen mergeable, then conflicting again.
+#[test]
+fn rebase_auto_rebases_a_conflicting_pr_once_per_conflict() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    set_switch(&w.repo, &REBASE_AUTO, true).unwrap();
+    let url = "https://example.test/pr/hx-1".to_string();
+    w.lock().prs.insert(url.clone(), CONFLICTING.to_string());
+    let failed = AtomicBool::new(false);
+    w.session(
+        move |p| match p.stage == "rebase" && !failed.swap(true, Ordering::SeqCst) {
+            true => (
+                "STATUS: failed\nboth sides rename it\n".to_string(),
+                "idle".to_string(),
+            ),
+            false => succeed(p),
+        },
+    );
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+
+    w.await_line("hx-1 PR #hx-1 conflicts with main, rebasing it");
+    w.await_line("hx-1 stuck in rebase");
+    o.command("park-hx-1");
+    w.await_line("hx-1 rebase gave up");
+    thread::sleep(Duration::from_millis(30)); // many more polls
+    assert_eq!(w.called("herdr agent start h-hx-1-rebase ").len(), 1);
+
+    w.lock().prs.insert(url.clone(), MERGEABLE.to_string());
+    wait_until("the conflict cleared", || !o.ticket("hx-1").conflict);
+    w.lock().prs.insert(url, CONFLICTING.to_string());
+    w.await_line("hx-1 rebased PR #hx-1");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+    assert_eq!(w.called("herdr agent start h-hx-1-rebase ").len(), 2);
+}
+
+/// A Rebase that waited for a slot while its PR stopped conflicting is
+/// refused, and the next conflict queues one again.
+#[test]
+fn a_rebase_refused_after_its_wait_comes_back_with_the_next_conflict() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    set_count(&w.repo, &MAX_PR_SESSIONS, Some(1)).unwrap();
+    set_switch(&w.repo, &REBASE_AUTO, true).unwrap();
+    pr_open(&w, &o, "hx-1", CONFLICTING);
+    pr_open(&w, &o, "hx-2", CONFLICTING);
+    let gate = gated(&w, "hx-1");
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+    w.await_line("hx-2 rebase waits for a slot");
+
+    // GitHub works the merge state out again after main moves
+    let url = "https://example.test/pr/hx-2".to_string();
+    let unknown = r#"{"state":"OPEN","mergeable":"UNKNOWN"}"#;
+    w.lock().prs.insert(url.clone(), unknown.to_string());
+    wait_until("UNKNOWN polled", || !o.ticket("hx-2").conflicting);
+    gate.store(true, Ordering::SeqCst);
+    w.await_line("hx-2 refused: PR #hx-2 does not conflict with main");
+    w.lock().prs.insert(url, CONFLICTING.to_string());
+    w.await_line("hx-2 rebased PR #hx-2");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
 }

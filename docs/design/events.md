@@ -36,7 +36,8 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 | Fix done | fix N done |
 | PR opened | PR #12 opened after N rounds *(log line adds the url)* |
 | dependents now wait on a merge | *on each open dependent:* waiting for PR #12 to merge (Ticket 5) |
-| PR conflicts | PR #12 conflicts with main, /rebase resolves it |
+| PR conflicts | PR #12 conflicts with main, /rebase resolves it · *with rebase_auto on, its Rebase starts:* PR #12 conflicts with main, rebasing it |
+| PR session queued | rebase waits for a slot · address pr comments waits for a slot *(past max_pr_sessions, or behind the Ticket's own session; it starts as one ends)* |
 | merged | merged, Ticket closed |
 | PR closed unmerged | parked: PR #12 closed without merging |
 | parked | parked: `reason` |
