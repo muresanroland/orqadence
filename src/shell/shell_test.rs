@@ -6225,11 +6225,10 @@ fn a_question_waiting_its_minutes_goes_on_call_and_rings_once() {
     );
 }
 
-/// On call pushes each PR MERGE TO UNBLOCK lists when it starts, and one
-/// as it joins the list: its Ticket, the Tickets it unblocks and its title,
-/// once each.
+/// On call pushes each PR MERGE TO UNBLOCK lists when it starts: its
+/// Ticket, the Tickets it unblocks and its title.
 #[test]
-fn on_call_rings_each_pr_to_merge_to_unblock_once() {
+fn on_call_rings_each_pr_to_merge_to_unblock_as_it_starts() {
     let mut s = sections_screen(true);
     let (bell, _) = on_call(&mut s, after(6));
     s.tick();
@@ -6243,20 +6242,53 @@ fn on_call_rings_each_pr_to_merge_to_unblock_once() {
             "harness-a.4 · Blocked session · The / list",
         ]
     );
+}
 
-    // 3 back at its PR comments, then settled again
-    s.state.tickets.get_mut("harness-a.3").unwrap().settled = false;
-    let before = s.to_unblock();
-    assert!(before.is_empty());
-    s.state.tickets.get_mut("harness-a.3").unwrap().settled = true;
-    s.ring_unblock(&before);
-    let now = s.to_unblock();
-    s.ring_unblock(&now);
+/// While On call, the poll reads the live run's state and pushes a PR as it
+/// joins MERGE TO UNBLOCK, once: hx-1's PR settles once its head is quiet,
+/// and hx-2 waits on it.
+#[test]
+fn on_call_rings_a_pr_as_it_joins_merge_to_unblock_once() {
+    let (w, _) = new_world(vec![
+        BdTicket::new("hx-1"),
+        BdTicket {
+            deps: vec!["hx-1".to_string()],
+            ..BdTicket::new("hx-2")
+        },
+    ]);
+    w.lock().prs.insert(
+        "https://example.test/pr/hx-1".to_string(),
+        r#"{"state":"OPEN","mergeable":"MERGEABLE","headRefOid":"a"}"#.to_string(),
+    );
+    let mut s = shell(&w);
+    let (bell, clock) = on_call(&mut s, chrono::Local::now());
+    s.calling = true;
+    s.command("/start-epic hx");
+    await_line(&mut s, "hx-1 PR #hx-1 opened after 1 round");
+    for _ in 0..20 {
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(messages(&bell).is_empty(), "rang before the head was quiet");
+
+    *clock.lock().unwrap() += chrono::Duration::seconds(61);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while messages(&bell).is_empty() {
+        assert!(Instant::now() < deadline, "the settled PR never rang");
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
+    for _ in 0..20 {
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
     settle(&mut s);
     assert_eq!(
-        messages(&bell)[2..],
-        ["harness-a.3 · Merge to unblock 5 · Status counts"]
+        messages(&bell),
+        ["hx-1 · Merge to unblock hx-2 · Ticket hx-1"]
     );
+    s.command("/stop-work");
+    await_end(&mut s);
 }
 
 /// Away, or no token, never goes On call.
