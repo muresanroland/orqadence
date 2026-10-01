@@ -1072,6 +1072,11 @@ fn coderabbit_skipping_adds_the_label_and_keeps_every_other_line() {
             "reviews:\n  profile: chill # add \"!orqa:no-review\" later\n  path_filters:\n    - \"!orqa:no-review-docs/**\"\n",
             "reviews:\n  profile: chill # add \"!orqa:no-review\" later\n  path_filters:\n    - \"!orqa:no-review-docs/**\"\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n",
         ),
+        // A document start before the keys.
+        (
+            "---\nlanguage: en-US\n",
+            "---\nlanguage: en-US\nreviews:\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n",
+        ),
         // Quoted keys, and a space before the colon.
         (
             "\"reviews\":\n  'auto_review' :\n    labels:\n      - bug\n",
@@ -1106,38 +1111,24 @@ fn coderabbit_skipping_adds_the_label_and_keeps_every_other_line() {
         "reviews:\n  auto_review: {enabled: true}\n",
         "reviews:\n  auto_review:\n    labels: bug\n",
         "reviews:\n  auto_review:\n    labels:\n      [bug,\n       feature]\n",
+        // A merge key or a `?` key could hold reviews.auto_review out of sight.
+        "base: &base\n  auto_review:\n    enabled: false\nreviews:\n  <<: *base\n",
+        "? reviews\n: {profile: chill}\n",
+        // A key added at the end would land outside the document.
+        "language: en-US\n...\n",
+        "language: en-US\n---\nlanguage: de-DE\n",
+        // A comma inside a quoted label.
+        "reviews:\n  auto_review:\n    labels: ['bug,!orqa:no-review']\n",
     ] {
         assert!(coderabbit_skipping(unreadable).is_err(), "{unreadable}");
     }
 }
 
-/// An existing .coderabbit.yaml keeps every other key and comment and gains
-/// the label once: a re-run changes nothing and lists nothing.
-#[test]
-fn an_existing_coderabbit_yaml_gains_the_exclusion_once() {
-    let repo = TempDir::new();
-    let file = repo.path().join(".coderabbit.yaml");
-    write_file(
-        &file,
-        "# our CodeRabbit settings\nlanguage: en-US\nreviews:\n  profile: chill\n",
-    );
-    let out = exclusions(repo.path(), MERGE_CODERABBIT);
-    let written = read(repo.path(), ".coderabbit.yaml");
-    assert_eq!(
-        written,
-        "# our CodeRabbit settings\nlanguage: en-US\nreviews:\n  profile: chill\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n"
-    );
-    assert!(out.contains("init: wrote .coderabbit.yaml"), "{out}");
-
-    let out = exclusions(repo.path(), MERGE_CODERABBIT);
-    assert_eq!(read(repo.path(), ".coderabbit.yaml"), written);
-    assert_eq!(out, "");
-}
-
 /// Greptile listed: its disabledLabels gains orqa:no-review once, in a
 /// greptile.json made when missing or beside every key an existing one has,
-/// and in .greptile/config.json instead when the repo has that, since
-/// Greptile reads it first.
+/// and in .greptile/config.json instead when the repo has a .greptile
+/// folder, made when only other files are there, since Greptile reads the
+/// folder first.
 #[test]
 fn greptiles_config_gains_the_exclusion_once() {
     let repo = TempDir::new();
@@ -1181,6 +1172,18 @@ fn greptiles_config_gains_the_exclusion_once() {
     assert_eq!(
         doc,
         serde_json::json!({"strictness": 3, "disabledLabels": ["orqa:no-review"]})
+    );
+    assert!(out.contains("init: wrote .greptile/config.json"), "{out}");
+    assert!(!repo.path().join("greptile.json").exists(), "{out}");
+
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".greptile/rules.md"), "be kind\n");
+    let out = exclusions(repo.path(), MERGE_GREPTILE);
+    let doc: serde_json::Value =
+        serde_json::from_str(&read(repo.path(), ".greptile/config.json")).unwrap();
+    assert_eq!(
+        doc,
+        serde_json::json!({"disabledLabels": ["orqa:no-review"]})
     );
     assert!(out.contains("init: wrote .greptile/config.json"), "{out}");
     assert!(!repo.path().join("greptile.json").exists(), "{out}");

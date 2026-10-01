@@ -449,7 +449,8 @@ const NO_REVIEW: &str = "orqa:no-review";
 
 /// Under Agent merge, tells each review bot that review_bots lists to skip
 /// a No-review pull request: CodeRabbit in .coderabbit.yaml, Greptile in
-/// .greptile/config.json when the repo has one, which wins, else in
+/// .greptile/config.json when the repo has a .greptile folder, which wins
+/// over greptile.json, else in
 /// greptile.json. A file is made when missing, written only when it lacks
 /// the label, and named so it gets committed; one that cannot be edited is
 /// left as it is, with what to add by hand.
@@ -469,9 +470,8 @@ fn write_bot_exclusions(repo: &Path, out: &mut dyn Write) -> io::Result<()> {
                 coderabbit_skipping,
             ),
             "greptile" => {
-                let folder = ".greptile/config.json";
-                let file = if repo.join(folder).exists() {
-                    folder
+                let file = if repo.join(".greptile").is_dir() {
+                    ".greptile/config.json"
                 } else {
                     "greptile.json"
                 };
@@ -532,8 +532,8 @@ fn after_key<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 /// after the list's last item, or inside a `[..]` on labels' own line. Err
 /// when text cannot follow the path, as through a `{..}`.
 // ponytail: line by line, so a key only a YAML parser sees (a merge `<<`, a
-// `? ` key) reads as missing and is added again; parse the file once a YAML
-// crate is allowed.
+// `? ` key) or a second document is refused rather than read; parse the
+// file once a YAML crate is allowed.
 fn coderabbit_skipping(text: &str) -> Result<Option<String>, String> {
     if text.starts_with('\u{feff}') {
         return Err("it starts with a byte order mark".to_string());
@@ -542,6 +542,20 @@ fn coderabbit_skipping(text: &str) -> Result<Option<String>, String> {
     let entry = format!("\"{label}\"");
     let mut lines: Vec<String> = text.split_inclusive('\n').map(String::from).collect();
     let content = |line: &str| !line.trim().is_empty() && !line.trim_start().starts_with('#');
+    // A key added past one of these could land outside the document or
+    // override what a merge key brings in.
+    let mut seen = false;
+    for line in text.lines() {
+        let key = line.trim_start();
+        if key.starts_with("<<") || key == "?" || key.starts_with("? ") {
+            return Err("it has a merge key or a `?` key".to_string());
+        }
+        let marker = |m: &str| line.trim_end() == m || line.starts_with(&format!("{m} "));
+        if marker("...") || seen && marker("---") {
+            return Err("it has more than one YAML document".to_string());
+        }
+        seen |= content(line);
+    }
     let indent = |line: &str| line.len() - line.trim_start().len();
     let item = |line: &str| line.trim() == "-" || line.trim_start().starts_with("- ");
     // A list's entry, its quotes and a comment after it aside.
@@ -587,6 +601,14 @@ fn coderabbit_skipping(text: &str) -> Result<Option<String>, String> {
         let value = rest.split(" #").next().unwrap_or("").trim();
         if *key == "labels" && value.starts_with('[') && value.ends_with(']') {
             let inner = value[1..value.len() - 1].trim_end();
+            // Split on every comma, so a comma inside quotes is refused.
+            let split_quote = |entry: &str| {
+                let entry = entry.trim();
+                entry.starts_with(['"', '\'']) && (entry.len() < 2 || !entry.ends_with(&entry[..1]))
+            };
+            if inner.split(',').any(split_quote) {
+                return Err("labels has a comma inside quotes".to_string());
+            }
             if inner.split(',').any(is_label) {
                 return Ok(None);
             }
