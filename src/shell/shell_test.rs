@@ -4,7 +4,7 @@ use super::brand::{
 };
 use super::draw::{draw, ticket_color};
 use super::{About, Epic, NoticeKind, Pending, Screen};
-use crate::orchestrator::app::set_max_tickets;
+use crate::orchestrator::app::{set_count, MAX_TICKETS};
 use crate::orchestrator::judgment::fake::Fake as TypeSafeFake;
 use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
 use crate::orchestrator::limit_test::{hits, CODEX};
@@ -2010,7 +2010,7 @@ fn exit_command_ctrl_c_twice_and_an_unknown_command() {
 fn start_epic_runs_the_tickets_to_prs_and_a_done_epic_clears_the_saved_run() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
     w.lock().merged = true;
-    set_max_tickets(&w.repo, Some(1)).unwrap();
+    set_count(&w.repo, &MAX_TICKETS, Some(1)).unwrap();
     let mut s = shell(&w);
     s.ticks = 45;
     s.command("/start-epic hx");
@@ -2477,7 +2477,7 @@ fn a_ticket_run_takes_several_tickets_and_more_while_live_and_ends_on_the_merges
 fn remove_ticket_takes_a_queued_or_parked_ticket_out_and_refuses_a_working_one() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
     w.session(|_| (String::new(), "working".to_string()));
-    set_max_tickets(&w.repo, Some(1)).unwrap();
+    set_count(&w.repo, &MAX_TICKETS, Some(1)).unwrap();
     let mut s = shell(&w);
     s.command("/remove-ticket hx-1");
     assert_eq!(notice(&s), "refused: no Ticket run is live");

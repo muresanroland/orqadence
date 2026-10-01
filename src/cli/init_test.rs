@@ -732,15 +732,15 @@ codex: outdated (v7) (/h/.codex/herdr-agent-state.sh)
             .filter(|c| c.starts_with("herdr integration install"))
             .collect()
     };
-    // The docs/agents setup, TypeSafe no, the labels, On call no, then the
-    // integrations: yes.
+    // The docs/agents setup, TypeSafe no, the labels, both switches no, On
+    // call no, then the integrations: yes.
     let (repo, home) = (bare_repo(), TempDir::new());
     let tools = herdr(true);
     let (_, out) = init_with(
         repo.path(),
         home.path(),
         tools.clone(),
-        &["\n", "n\n", "\n", "\n", "\n"],
+        &["\n", "n\n", "\n", "\n", "\n", "\n", "\n"],
         "",
     );
     assert_eq!(
@@ -907,9 +907,10 @@ fn on_call(repo: &Path) -> Option<serde_json::Value> {
 /// readable only by you; enter alone, or nobody answering, keeps none.
 #[test]
 fn init_asks_on_call_and_keeps_the_moshi_token_readable_only_by_you() {
-    // The docs/agents setup, TypeSafe no, the labels, On call yes, the token.
+    // The docs/agents setup, TypeSafe no, the labels, both switches no, On
+    // call yes, the token.
     let (repo, home) = (bare_repo(), TempDir::new());
-    let keys = ["\n", "n\n", "\n", "y\n", "moshi-tok\n"];
+    let keys = ["\n", "n\n", "\n", "\n", "\n", "y\n", "moshi-tok\n"];
     let (code, out) = init_keys(repo.path(), home.path(), &keys);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains(ON_CALL) && out.contains("› 2. No"), "{out}");
@@ -930,7 +931,7 @@ fn init_asks_on_call_and_keeps_the_moshi_token_readable_only_by_you() {
     );
 
     // Enter alone is no; nobody answering changes nothing.
-    for keys in [&["\n", "n\n", "\n", "\n"][..], &[][..]] {
+    for keys in [&["\n", "n\n", "\n", "\n", "\n", "\n"][..], &[][..]] {
         let (repo, home) = (bare_repo(), TempDir::new());
         let (code, out) = init_keys(repo.path(), home.path(), keys);
         assert_eq!(code, 0, "{out}");
@@ -967,6 +968,90 @@ fn a_committed_checkout_asks_on_call() {
     assert!(out.contains(COMMITTED), "{out}");
     assert!(out.contains(ON_CALL), "{out}");
     assert_eq!(on_call(repo.path()).unwrap()["token"], "moshi-tok");
+}
+
+const REBASE_QUESTION: &str = "Rebase PRs that conflict with main by themselves?";
+const ADDRESS_PR_COMMENTS_QUESTION: &str =
+    "Open PR comments and failing checks for approval by themselves?";
+
+/// config.json's two switches: (rebase_auto, address_pr_comments_auto),
+/// each on only when true.
+fn switches(repo: &Path) -> (bool, bool) {
+    (
+        app::switch(repo, &app::REBASE_AUTO),
+        app::switch(repo, &app::ADDRESS_PR_COMMENTS_AUTO),
+    )
+}
+
+/// After the Ticket labels init asks the two switches, default no: y and n
+/// set each, enter alone is no, and nobody answering leaves both off.
+#[test]
+fn init_asks_both_switches_and_enter_is_no() {
+    // (the answers after the docs/agents setup, TypeSafe no and the labels)
+    for (keys, want) in [
+        (&["y\n", "n\n"][..], (true, false)),
+        (&["n\n", "y\n"][..], (false, true)),
+        (&["\n", "\n"][..], (false, false)),
+    ] {
+        let (repo, home) = (bare_repo(), TempDir::new());
+        let keys: Vec<&str> = ["\n", "n\n", "\n"].iter().chain(keys).copied().collect();
+        let (code, out) = init_keys(repo.path(), home.path(), &keys);
+        assert_eq!(code, 0, "{keys:?}:\n{out}");
+        assert!(
+            out.contains(REBASE_QUESTION) && out.contains(ADDRESS_PR_COMMENTS_QUESTION),
+            "{out}"
+        );
+        assert_eq!(switches(repo.path()), want, "{keys:?}:\n{out}");
+    }
+    let repo = bare_repo();
+    let (code, out) = run_with(&["init"], repo.path(), ok_tools(), &herdr_env);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains(REBASE_QUESTION) && out.contains(ADDRESS_PR_COMMENTS_QUESTION),
+        "{out}"
+    );
+    assert_eq!(switches(repo.path()), (false, false), "{out}");
+}
+
+/// A re-run keeps a switch that is on: nobody answering, or enter alone,
+/// changes nothing.
+#[test]
+fn a_rerun_of_init_keeps_a_switch_that_is_on() {
+    let (repo, home) = (bare_repo(), TempDir::new());
+    init_keys(repo.path(), home.path(), &["\n", "n\n", "\n", "y\n", "y\n"]);
+    assert_eq!(switches(repo.path()), (true, true));
+    // The gate, then nobody answering.
+    let (_, out) = init_keys(repo.path(), home.path(), &["2"]);
+    assert!(
+        out.contains(ADDRESS_PR_COMMENTS_QUESTION),
+        "not asked:\n{out}"
+    );
+    assert_eq!(switches(repo.path()), (true, true), "{out}");
+    // The gate, TypeSafe no, the labels, then enter on each switch.
+    let (_, out) = init_keys(repo.path(), home.path(), &["2", "n\n", "\r", "\n", "\n"]);
+    let asked = &out[out.find(REBASE_QUESTION).expect("not asked")..];
+    assert_eq!(
+        asked.matches("✓ Yes").count(),
+        2,
+        "not both answered:\n{asked}"
+    );
+    assert_eq!(switches(repo.path()), (true, true), "{out}");
+}
+
+/// The switches are team settings: a checkout whose settings are committed
+/// is not asked them.
+#[test]
+fn a_committed_checkout_is_not_asked_the_switches() {
+    let (repo, home) = (prepared_repo(), TempDir::new());
+    let config = r#"{"typesafe": false}"#;
+    write_file(&repo.path().join(".orqadence/config.json"), config);
+    let (_, out) = init_with(repo.path(), home.path(), committed_tools(), &["\n"], "");
+    assert!(out.contains(COMMITTED), "{out}");
+    assert!(
+        !out.contains(REBASE_QUESTION) && !out.contains(ADDRESS_PR_COMMENTS_QUESTION),
+        "{out}"
+    );
+    assert_eq!(read(repo.path(), ".orqadence/config.json"), config);
 }
 
 /// config.json's labels, each entry read as the Orchestrator reads it.

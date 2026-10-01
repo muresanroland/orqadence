@@ -6,7 +6,8 @@
 //! first, off the screen thread; it saves only if the App answers. Also each
 //! job's Delegate skill, the skills Orqadence installed (harness-0sx.7),
 //! cloned off the screen thread too, TypeSafe on or off with its key and
-//! the Judgments' floors, the Tickets a run takes at once, On call's
+//! the Judgments' floors, the Tickets and PR sessions a run takes at once,
+//! Rebase and Address PR comments' switches, countdown and cap, On call's
 //! Moshi token, minutes and test push, and the Ticket labels: each entry of
 //! config.json's labels, area or modifier, with its skills and guidance.
 
@@ -23,8 +24,9 @@ use super::brand::{CYAN, GREEN, MUTED, ORANGE, RED};
 use super::{NoticeKind, Screen, NOTICE_WINDOW};
 use crate::on_call::{self, OnCall, DEFAULT_MINUTES};
 use crate::orchestrator::app::{
-    self, app, App, Check, Floor, Label, Model, Row, APPS, DEFAULT_MAX_TICKETS, IF_LIMITED,
-    MAX_TICKETS,
+    self, app, App, Check, Count, Floor, Label, Model, Row, Switch, ADDRESS_PR_COMMENTS_AUTO,
+    ADDRESS_PR_COMMENTS_COUNTDOWN, ADDRESS_PR_COMMENTS_RUNS, APPS, IF_LIMITED, MAX_PR_SESSIONS,
+    MAX_TICKETS, REBASE_AUTO,
 };
 use crate::orchestrator::judgment::{PLAN_FLOOR, WAKE_FLOOR};
 use crate::orchestrator::stage::plural;
@@ -146,6 +148,9 @@ pub(crate) const SECTIONS: [(&str, &str, &str); 6] = [
     ),
 ];
 
+/// The Rebase and Address PR comments sections, whose pages have a switch.
+pub(crate) const REBASE_PAGE: usize = 4;
+pub(crate) const ADDRESS_PR_COMMENTS_PAGE: usize = 5;
 /// The Apps page's place on the left, after the Pipeline's sections, and
 /// the Skills, Labels, TypeSafe, Run and On call pages' after it.
 pub(crate) const APPS_PAGE: usize = SECTIONS.len();
@@ -167,6 +172,51 @@ pub(crate) const FLOORS: [&Floor; 2] = [&WAKE_FLOOR, &PLAN_FLOOR];
 pub(crate) fn floor_name(floor: &Floor) -> String {
     floor.key.replace('_', " ")
 }
+
+/// A whole number of config.json a page keeps: its Count, the page it is
+/// on, its label there and the foot's note on it.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Number {
+    pub(crate) count: &'static Count,
+    pub(crate) page: usize,
+    pub(crate) name: &'static str,
+    note: &'static str,
+}
+
+/// The whole numbers the pages keep, in their order on a page; static, so a
+/// Check can borrow a key.
+pub(crate) static NUMBERS: [Number; 4] = [
+    Number {
+        count: &MAX_TICKETS,
+        page: RUN_PAGE,
+        name: "tickets at once",
+        note: "Tickets in the Pipeline at once, in an Epic run or a Ticket run.",
+    },
+    Number {
+        count: &MAX_PR_SESSIONS,
+        page: RUN_PAGE,
+        name: "PR sessions at once",
+        note: "Rebase and Address PR comments sessions at once, together, apart from max_tickets.",
+    },
+    Number {
+        count: &ADDRESS_PR_COMMENTS_COUNTDOWN,
+        page: ADDRESS_PR_COMMENTS_PAGE,
+        name: "countdown minutes",
+        note: "Minutes the approval modal counts down before it approves the checked items; 0 is no countdown: the modal waits.",
+    },
+    Number {
+        count: &ADDRESS_PR_COMMENTS_RUNS,
+        page: ADDRESS_PR_COMMENTS_PAGE,
+        name: "runs per PR",
+        note: "Address PR comments runs per PR; past it new items only get a line, and /address-pr-comments still works by hand.",
+    },
+];
+
+/// Each Stage page's switch: the section and the Switch.
+const SWITCHES: [(usize, &Switch); 2] = [
+    (REBASE_PAGE, &REBASE_AUTO),
+    (ADDRESS_PR_COMMENTS_PAGE, &ADDRESS_PR_COMMENTS_AUTO),
+];
 
 /// What turning TypeSafe off changes, asked first.
 const TYPESAFE_OFF: &str = "Turn TypeSafe off? Every Wake and Plan becomes a Question; disputed Findings are skipped and listed in the PR.";
@@ -192,6 +242,10 @@ pub(crate) enum Field {
     Template,
     /// The open label's Extra review skill.
     ExtraSkill,
+    /// The page's switch, on the Rebase and Address PR comments pages.
+    Switch(&'static Switch),
+    /// A whole number on a Stage's page.
+    Number(&'static Number),
 }
 
 /// Where a pick's row lives: config.json's (the Stage pages), the open
@@ -238,6 +292,8 @@ impl Field {
         match self {
             Field::Plan => "plan model",
             Field::Same => "same model",
+            Field::Switch(switch) => switch.question.trim_end_matches('?'),
+            Field::Number(n) => n.name,
             field => field.key(),
         }
     }
@@ -254,6 +310,8 @@ impl Field {
             Field::Skills => "skills",
             Field::Template => "pr_template",
             Field::ExtraSkill => "skill",
+            Field::Switch(switch) => switch.key,
+            Field::Number(n) => n.count.key,
         }
     }
 }
@@ -365,8 +423,8 @@ pub(crate) enum Typing {
     Key,
     /// A floor, on the TypeSafe page.
     Floor(&'static Floor),
-    /// max_tickets, on the Run page.
-    MaxTickets,
+    /// A whole number, on the Run page or a Stage's.
+    Number(&'static Number),
     /// The Moshi token, shown as dots, on the On call page.
     Token,
     /// On call's minutes.
@@ -500,19 +558,37 @@ fn not_on_path(app: &App) -> String {
     format!("{} is not on PATH: get it at {}", app.bin, app.home)
 }
 
+/// The Run page's whole numbers.
+pub(crate) fn run_numbers() -> impl Iterator<Item = &'static Number> {
+    NUMBERS.iter().filter(|n| n.page == RUN_PAGE)
+}
+
+/// The foot's note on a whole number.
+pub(crate) fn number_note(n: &Number) -> String {
+    format!(
+        "{} Enter types {}, or nothing for the default {}, saved at once, uncommitted: the live run reads it next.",
+        n.note,
+        n.count.rule(),
+        n.count.default
+    )
+}
+
 /// The rows of a section.
 fn rows_of(section: usize) -> impl Iterator<Item = usize> {
     (0..ROWS.len()).filter(move |&r| ROWS[r].section == section)
 }
 
-/// The section a check shows on: its last row's; max_tickets's, the Run
+/// The section a check shows on: its last row's; a whole number's, its
 /// page; a floor's, the TypeSafe page.
 pub(crate) fn section_of(check: &Check) -> usize {
     let key = check.rows[check.rows.len() - 1];
-    match ROWS.iter().find(|r| r.key == key) {
-        Some(r) => r.section,
-        None if key == MAX_TICKETS => RUN_PAGE,
-        None => TYPESAFE_PAGE,
+    match (
+        ROWS.iter().find(|r| r.key == key),
+        NUMBERS.iter().find(|n| n.count.key == key),
+    ) {
+        (Some(r), _) => r.section,
+        (_, Some(n)) => n.page,
+        _ => TYPESAFE_PAGE,
     }
 }
 
@@ -615,10 +691,9 @@ impl Settings {
     }
 
     /// The rules on the rows as they are, each floor that is not a number
-    /// from 0 to 1, and max_tickets when it is not a whole number of at
-    /// least 1; those of a section when given. Neither is a rule a run
-    /// refuses to start on: a floor's Judgments ask instead, and the run
-    /// takes max_tickets's default.
+    /// from 0 to 1, and each whole number that breaks its rule; those of a
+    /// section when given. Neither is a rule a run refuses to start on: a
+    /// floor's Judgments ask instead, and a whole number's default is taken.
     pub(crate) fn checks(&self, section: Option<usize>) -> Vec<Check> {
         let mut checks = app::checks(&self.doc);
         for floor in FLOORS {
@@ -631,13 +706,15 @@ impl Settings {
                 });
             }
         }
-        if let Err(err) = app::max_tickets_in(&self.doc) {
-            checks.push(Check {
-                rows: &[MAX_TICKETS],
-                label: None,
-                holds: false,
-                text: format!("{err}: a run takes {DEFAULT_MAX_TICKETS}"),
-            });
+        for n in &NUMBERS {
+            if let Err(err) = app::count_in(&self.doc, n.count) {
+                checks.push(Check {
+                    rows: std::slice::from_ref(&n.count.key),
+                    label: None,
+                    holds: false,
+                    text: format!("{err}: its default {} is taken", n.count.default),
+                });
+            }
         }
         checks.retain(|c| section.is_none_or(|s| section_of(c) == s));
         checks
@@ -661,7 +738,8 @@ impl Settings {
     }
 
     /// The open section's settings, row by row; Plan + Implement's with
-    /// its toggle, and the plan model on a split.
+    /// its toggle, and the plan model on a split; then its switch and whole
+    /// numbers, and its jobs.
     pub(crate) fn items(&self) -> Vec<(usize, Field)> {
         let mut items: Vec<(usize, Field)> = if self.section == 0 {
             let plan = self.split().map(|_| (0, Field::Plan));
@@ -673,6 +751,12 @@ impl Settings {
                 .flat_map(|r| [Field::App, Field::Model, Field::Effort].map(|f| (r, f)))
                 .collect()
         };
+        if let Some(&(row, _)) = items.first() {
+            let switch = SWITCHES.iter().filter(|(s, _)| *s == self.section);
+            items.extend(switch.map(|&(_, switch)| (row, Field::Switch(switch))));
+            let numbers = NUMBERS.iter().filter(|n| n.page == self.section);
+            items.extend(numbers.map(|n| (row, Field::Number(n))));
+        }
         let jobs = (0..JOBS.len()).map(|j| (job_row_of(j), Field::Job(j)));
         items.extend(jobs.filter(|&(r, _)| ROWS[r].section == self.section));
         items
@@ -824,7 +908,13 @@ impl Settings {
             }
             (_, None)
             | (
-                Field::Same | Field::Job(_) | Field::Skills | Field::Template | Field::ExtraSkill,
+                Field::Same
+                | Field::Job(_)
+                | Field::Skills
+                | Field::Template
+                | Field::ExtraSkill
+                | Field::Switch(_)
+                | Field::Number(_),
                 _,
             ) => {}
             (Field::Plan, Some(app)) => {
@@ -999,6 +1089,8 @@ impl Settings {
                 job_name(j)
             ),
             Field::Skills | Field::Template | Field::ExtraSkill => return self.labels_note(),
+            Field::Switch(_) => "Enter or Space turns it on or off, saved at once, uncommitted; off, the poll only says it in a line and the command still works by hand.",
+            Field::Number(n) => return number_note(n),
             Field::App => "Changing the App leads into its model list; the pair saves together.",
             Field::Same => match self.split() {
                 Some(plan) => {
@@ -1060,19 +1152,19 @@ impl Settings {
         }
     }
 
-    /// The foot's note on the Run page.
-    pub(crate) fn run_note(&self) -> String {
-        "Tickets in the Pipeline at once, in an Epic run or a Ticket run. Enter types a whole number of at least 1, or nothing for the default, saved at once, uncommitted: the live run's next pass reads it.".to_string()
-    }
-
-    /// max_tickets as the Run page shows it: its number, and whether that is
-    /// the default; or config.json's value as written, when it is not a
-    /// whole number of at least 1.
-    pub(crate) fn max_tickets(&self) -> Result<(usize, bool), String> {
-        let set = &self.doc[MAX_TICKETS];
-        app::max_tickets_in(&self.doc)
+    /// A whole number as a page shows it: its number, and whether that is
+    /// the default; or config.json's value as written, when it breaks its
+    /// rule.
+    pub(crate) fn count(&self, count: &Count) -> Result<(usize, bool), String> {
+        let set = &self.doc[count.key];
+        app::count_in(&self.doc, count)
             .map(|n| (n, set.is_null() || set == ""))
             .map_err(|_| set.to_string())
+    }
+
+    /// Whether a switch is on in config.json.
+    pub(crate) fn switch(&self, switch: &Switch) -> bool {
+        app::switch_in(&self.doc, switch)
     }
 
     /// A floor as the TypeSafe page shows it: its number, and whether that
@@ -1625,7 +1717,7 @@ impl Screen {
                     let (typing, text) = st.typing.take().unwrap();
                     match (typing, text.trim()) {
                         (Typing::Floor(floor), text) => self.keep_floor(floor, text.to_string()),
-                        (Typing::MaxTickets, text) => self.keep_max_tickets(text.to_string()),
+                        (Typing::Number(n), text) => self.keep_number(n, text.to_string()),
                         (Typing::Token, token) => self.keep_token(token.to_string()),
                         (Typing::Minutes, text) => self.keep_minutes(text.to_string()),
                         (Typing::Guidance, text) => self.keep_guidance(text.to_string()),
@@ -1769,9 +1861,14 @@ impl Screen {
             return;
         }
         if st.section == RUN_PAGE {
+            let numbers: Vec<&'static Number> = run_numbers().collect();
             match code {
+                KeyCode::Up => st.setting = st.setting.saturating_sub(1),
+                KeyCode::Down => st.setting = (st.setting + 1).min(numbers.len() - 1),
                 KeyCode::Left | KeyCode::Esc => st.open = false,
-                KeyCode::Enter => st.typing = Some((Typing::MaxTickets, String::new())),
+                KeyCode::Enter => {
+                    st.typing = Some((Typing::Number(numbers[st.setting]), String::new()))
+                }
                 _ => {}
             }
             return;
@@ -1819,16 +1916,23 @@ impl Screen {
             KeyCode::Enter | KeyCode::Char(' ') if items[st.setting].1 == Field::Same => {
                 self.toggle()
             }
-            KeyCode::Enter => {
-                let (row, field) = items[st.setting];
-                match st.app(row) {
+            KeyCode::Enter | KeyCode::Char(' ') => match items[st.setting] {
+                (_, Field::Switch(switch)) => {
+                    let on = !st.switch(switch);
+                    self.switch_to(switch, on)
+                }
+                (_, Field::Number(n)) if code == KeyCode::Enter => {
+                    st.typing = Some((Typing::Number(n), String::new()))
+                }
+                (row, field) if code == KeyCode::Enter => match st.app(row) {
                     Some(app) if field == Field::Effort && app.effort.is_empty() => {
                         let text = format!("{} has no effort flag.", app.name);
                         st.note = Some((text, MUTED));
                     }
                     _ => self.open_pick(row, field, None, Scope::Repo),
-                }
-            }
+                },
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -2162,32 +2266,46 @@ impl Screen {
         }
     }
 
-    /// max_tickets typed: a whole number of at least 1 saves at once,
-    /// nothing puts the default back, and the live run's next pass reads it;
-    /// anything else is refused, the text kept to mend.
-    fn keep_max_tickets(&mut self, text: String) {
+    /// A whole number typed: one that keeps its rule saves at once, nothing
+    /// puts the default back, and the live run reads it next; anything else
+    /// is refused, the text kept to mend.
+    fn keep_number(&mut self, n: &'static Number, text: String) {
         let st = self.settings.as_mut().unwrap();
         let value = match text.parse::<usize>() {
             _ if text.is_empty() => None,
-            Ok(n) if n >= 1 => Some(n),
+            Ok(v) if v >= n.count.least => Some(v),
             _ => {
                 let refused = format!(
-                    "Refused: {text} is not a whole number of at least 1. Nothing changed."
+                    "Refused: {text} is not {}. Nothing changed.",
+                    n.count.rule()
                 );
                 st.note = Some((refused, RED));
-                st.typing = Some((Typing::MaxTickets, text));
+                st.typing = Some((Typing::Number(n), text));
                 return;
             }
         };
         let repo = &self.cfg.repo;
-        match app::set_max_tickets(repo, value).and_then(|()| app::read_object(repo)) {
+        match app::set_count(repo, n.count, value).and_then(|()| app::read_object(repo)) {
             Ok((_, doc)) => {
                 self.settings.as_mut().unwrap().doc = doc;
                 let text = match value {
-                    Some(n) => format!("{} at once", plural(n, "Ticket")),
-                    None => format!("{DEFAULT_MAX_TICKETS} Tickets at once, its default"),
+                    Some(v) => format!("{}: {v}", n.name),
+                    None => format!("{}: {}, its default", n.name, n.count.default),
                 };
                 self.done(text, CONFIG);
+            }
+            Err(err) => self.refused(&err),
+        }
+    }
+
+    /// A switch on or off in config.json, which /config reads again.
+    fn switch_to(&mut self, switch: &'static Switch, on: bool) {
+        let repo = &self.cfg.repo;
+        match app::set_switch(repo, switch, on).and_then(|()| app::read_object(repo)) {
+            Ok((_, doc)) => {
+                self.settings.as_mut().unwrap().doc = doc;
+                let name = Field::Switch(switch).name();
+                self.done(format!("{name}: {}", if on { "on" } else { "off" }), CONFIG);
             }
             Err(err) => self.refused(&err),
         }

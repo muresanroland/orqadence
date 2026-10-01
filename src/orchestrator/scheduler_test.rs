@@ -1,4 +1,4 @@
-use super::app::set_max_tickets;
+use super::app::{set_count, MAX_TICKETS};
 use super::stage::{Config, Orchestrator};
 use super::state::{
     acquire_lock, load_state, lock_holder, STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN,
@@ -35,7 +35,7 @@ fn scheduler_runs_every_ready_ticket_but_never_more_than_max_at_once() {
     for max in [3, 2] {
         let tickets = (1..=5).map(|i| BdTicket::new(&format!("hx-{i}"))).collect();
         let (w, o) = new_world(tickets);
-        set_max_tickets(&w.repo, Some(max)).unwrap();
+        set_count(&w.repo, &MAX_TICKETS, Some(max)).unwrap();
         w.lock().merged = true;
         w.session(|p| {
             thread::sleep(Duration::from_millis(2)); // long enough for Tickets to overlap

@@ -11,14 +11,14 @@ use ratatui::Frame;
 use super::modal::{divider, dock, joined, wrap_spans};
 use super::{bold, cut, fg, SPINNER};
 use crate::on_call;
-use crate::orchestrator::app::{self, Check, APPS};
+use crate::orchestrator::app::{self, Check, Count, APPS, MAX_TICKETS};
 use crate::setup;
 use crate::shell::brand::{BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT};
 use crate::shell::config::{
-    distinct, family_label, floor_name, job_name, job_said, label_line, position_name, short,
-    short_commit, Field, LabelItem, Listing, Pick, Scope, Settings, Typing, APPS_PAGE, FLOORS,
-    LABELS_PAGE, ON_CALL_PAGE, REVIEW_ROW, ROWS, RUN_PAGE, SECTIONS, SKILLS_PAGE, SKILL_ROWS,
-    TYPESAFE_PAGE,
+    distinct, family_label, floor_name, job_name, job_said, label_line, number_note, position_name,
+    run_numbers, short, short_commit, Field, LabelItem, Listing, Pick, Scope, Settings, Typing,
+    APPS_PAGE, FLOORS, LABELS_PAGE, ON_CALL_PAGE, REVIEW_ROW, ROWS, RUN_PAGE, SECTIONS,
+    SKILLS_PAGE, SKILL_ROWS, TYPESAFE_PAGE,
 };
 use crate::shell::Screen;
 use crate::skills::manifest::NONE;
@@ -144,12 +144,39 @@ fn item(
         Span::styled(label, if selected { bold(TEXT) } else { fg(TEXT) }),
     ];
     spans.extend(value);
+    push_rows(lines, at, selected, vec![Line::from(spans)], width);
+}
+
+/// A switch's row: its checkbox and label, wrapped under the label where
+/// item would cut it.
+fn switch_item(
+    lines: &mut Vec<Line<'static>>,
+    at: &mut usize,
+    selected: bool,
+    label: String,
+    width: usize,
+) {
+    let style = if selected { bold(TEXT) } else { fg(TEXT) };
+    let marker = if selected { "▸ " } else { "  " };
+    let rows = wrap_spans(vec![(label, style)], width, marker, "      ", fg(PURPLE));
+    push_rows(lines, at, selected, rows, width);
+}
+
+/// Pushes a row's lines, the cursor's filled, at moved to it.
+fn push_rows(
+    lines: &mut Vec<Line<'static>>,
+    at: &mut usize,
+    selected: bool,
+    rows: Vec<Line<'static>>,
+    width: usize,
+) {
     if selected {
         *at = lines.len();
-        lines.push(filled(spans, width, SEL_BG));
-    } else {
-        lines.push(Line::from(spans));
     }
+    lines.extend(rows.into_iter().map(|row| match selected {
+        true => filled(row.spans, width, SEL_BG),
+        false => row,
+    }));
 }
 
 /// The Skills page: where the skills live, read-only, your personal
@@ -392,30 +419,37 @@ fn own_value(st: &Settings, scope: Scope, row: usize, field: Field) -> Vec<Span<
     }
 }
 
-/// The Run page: the Tickets a run takes at once, a bad value in red with
-/// its check.
+/// The Run page: the Tickets and the PR sessions a run takes at once, a
+/// bad value in red with its check.
 fn run_page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
-    let about = "How many Tickets an Epic run or a Ticket run has in the Pipeline at once.";
+    let about = "How many Tickets an Epic run or a Ticket run has in the Pipeline at once, and how many Rebase and Address PR comments sessions.";
     let mut lines = head("Run", run_summary(st), about, width);
     lines.push(Line::default());
-    let value = match st.max_tickets() {
+    let mut at = 0;
+    for (i, n) in run_numbers().enumerate() {
+        let selected = st.open && st.setting == i;
+        let value = count_value(st, n.count);
+        item(&mut lines, &mut at, selected, pad(n.name, 22), value, width);
+    }
+    check_lines(&mut lines, st.checks(Some(RUN_PAGE)), width);
+    (lines, at)
+}
+
+/// A whole number as a page shows it: "3  default", or a bad one in red.
+fn count_value(st: &Settings, count: &Count) -> Vec<Span<'static>> {
+    match st.count(count) {
         Ok((n, true)) => vec![
             Span::styled(n.to_string(), fg(TEXT)),
             Span::styled("  default", fg(MUTED)),
         ],
         Ok((n, false)) => vec![Span::styled(n.to_string(), fg(TEXT))],
         Err(written) => vec![Span::styled(written, fg(RED))],
-    };
-    let mut at = 0;
-    let label = pad("tickets at once", 22);
-    item(&mut lines, &mut at, st.open, label, value, width);
-    check_lines(&mut lines, st.checks(Some(RUN_PAGE)), width);
-    (lines, at)
+    }
 }
 
 /// The Run page's line on the left: "3 at once".
 fn run_summary(st: &Settings) -> String {
-    match st.max_tickets() {
+    match st.count(&MAX_TICKETS) {
         Ok((n, _)) => format!("{n} at once"),
         Err(written) => written,
     }
@@ -616,7 +650,12 @@ fn hint(st: &Settings) -> &'static str {
         _ if st.open && st.section == LABELS_PAGE => {
             "↑↓ label · a add · e edit · r rename · d delete · ← or Esc back"
         }
-        _ if st.open && st.section == 0 => {
+        _ if st.open
+            && st
+                .items()
+                .iter()
+                .any(|(_, f)| matches!(f, Field::Same | Field::Switch(_))) =>
+        {
             "↑↓ setting · Enter changes · Space toggles · ← or Esc back"
         }
         _ if st.open => "↑↓ setting · Enter changes · ← or Esc back",
@@ -708,6 +747,10 @@ fn label(st: &Settings, row: usize, field: Field) -> String {
             let tick = if split { ' ' } else { 'x' };
             format!("[{tick}] Same model for plan and implementation")
         }
+        (Field::Switch(switch), _) => {
+            let tick = if st.switch(switch) { 'x' } else { ' ' };
+            format!("[{tick}] {}", field.name())
+        }
         (Field::Model, _) if row == 0 && split => pad("implement model", 22),
         (Field::Job(j), _) => pad(&job_name(j), 24),
         (_, "") => pad(field.name(), 22),
@@ -740,7 +783,10 @@ fn value(st: &Settings, row: usize, field: Field) -> Vec<Span<'static>> {
             _ => vec![shown],
         },
         Field::App => vec![shown],
-        Field::Same | Field::Skills | Field::Template | Field::ExtraSkill => vec![],
+        Field::Same | Field::Skills | Field::Template | Field::ExtraSkill | Field::Switch(_) => {
+            vec![]
+        }
+        Field::Number(n) => count_value(st, n.count),
         Field::Job(_) if v == NONE => {
             vec![shown, muted("  the Stage skill's own instructions".into())]
         }
@@ -760,7 +806,7 @@ fn page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
     let mut lines = head(title, apps.join(", "), about, width);
     let mut at = 0;
     for (i, &(row, field)) in items.iter().enumerate() {
-        if field == Field::App {
+        if matches!(field, Field::App | Field::Switch(_)) {
             lines.push(Line::default());
         }
         if matches!(field, Field::Job(_)) && !matches!(items[i - 1].1, Field::Job(_)) {
@@ -768,6 +814,10 @@ fn page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
             lines.push(Line::from(Span::styled("DELEGATE SKILLS", bold(MUTED))));
         }
         let selected = st.open && i == st.setting;
+        if let Field::Switch(_) = field {
+            switch_item(&mut lines, &mut at, selected, label(st, row, field), width);
+            continue;
+        }
         item(
             &mut lines,
             &mut at,
@@ -942,10 +992,10 @@ fn foot_lines(s: &Screen, st: &Settings, width: usize) -> Vec<Line<'static>> {
                 text.clone(),
                 "A number from 0 to 1, or nothing for the default, saved at once, uncommitted, to .orqadence/config.json; the next Judgment reads it.".to_string(),
             ),
-            Typing::MaxTickets => (
-                "tickets at once › ".to_string(),
+            Typing::Number(n) => (
+                format!("{} › ", n.name),
                 text.clone(),
-                "A whole number of at least 1, or nothing for the default, saved at once, uncommitted, to .orqadence/config.json; the live run's next pass reads it.".to_string(),
+                format!("Takes {}, or nothing for the default {}, saved at once, uncommitted, to .orqadence/config.json; the live run reads it next.", n.count.rule(), n.count.default),
             ),
             Typing::Token => (
                 "Moshi token › ".to_string(),
@@ -1001,7 +1051,10 @@ fn foot_lines(s: &Screen, st: &Settings, width: usize) -> Vec<Line<'static>> {
         (None, None) if st.open && st.section == TYPESAFE_PAGE => {
             (st.typesafe_note(st.setting), MUTED)
         }
-        (None, None) if st.open && st.section == RUN_PAGE => (st.run_note(), MUTED),
+        (None, None) if st.open && st.section == RUN_PAGE => {
+            let n = run_numbers().nth(st.setting).unwrap();
+            (number_note(n), MUTED)
+        }
         (None, None) if st.open && st.section == ON_CALL_PAGE => {
             (st.on_call_note(st.setting), MUTED)
         }
