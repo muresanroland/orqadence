@@ -8,8 +8,11 @@ a Question waits, and you answer it in the Shell over SSH.
 When a Question has waited 5 minutes unanswered, the Shell goes On call and
 rings your phone through [Moshi](https://getmoshi.app). The minutes are set on
 the On call page of `/config`. When On call starts, every Question already
-waiting is pushed once. While it is on, every Question after it and the end of
-the run are pushed to the phone at once. The status row shows ON CALL.
+waiting, and every PR that MERGE TO UNBLOCK lists, is pushed once. While it is
+on, every Question after it, every PR that joins MERGE TO UNBLOCK and the end
+of the run are pushed to the phone at once. A PR joins MERGE TO UNBLOCK once
+its Rebase and PR comments are done and a Ticket waits on its merge. The status
+row shows ON CALL.
 
 You answer in the Shell, from the phone over SSH. Answering any Question ends
 On call. The next Question rings only after it has itself waited the minutes.

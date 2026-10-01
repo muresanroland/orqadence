@@ -1331,6 +1331,7 @@ fn sections_screen(running: bool) -> Screen {
                 stage: stage.to_string(),
                 round,
                 pr,
+                settled: status == STATUS_PR_OPEN,
                 ..Default::default()
             },
         );
@@ -1841,6 +1842,7 @@ fn merge_to_unblock_lists_each_pr_a_waiting_ticket_depends_on() {
         let ts = s.state.tickets.get_mut(&format!("harness-a.{n}")).unwrap();
         ts.status = STATUS_PR_OPEN.to_string();
         ts.pr = format!("https://github.com/o/r/pull/{}", 28 + n);
+        ts.settled = true;
     };
     pr_open(&mut s, 6);
     pr_open(&mut s, 2);
@@ -1863,6 +1865,17 @@ fn merge_to_unblock_lists_each_pr_a_waiting_ticket_depends_on() {
         ]
     );
     assert!(find(&buf, "pull/30").is_none(), "{:#?}", rows(&buf));
+    // 6's PR not settled, its Rebase or PR comments to do, or its comments
+    // waiting in an approval modal: nothing waits on it yet
+    let six = "harness-a.6".to_string();
+    s.state.tickets.get_mut(&six).unwrap().settled = false;
+    let unsettled = rows(&render(&s, 120, 40)).join("\n");
+    assert!(!unsettled.contains("merge to unblock 8:"), "{unsettled}");
+    s.state.tickets.get_mut(&six).unwrap().settled = true;
+    s.offer(six, Vec::new(), None, false);
+    let approving = rows(&render(&s, 120, 40)).join("\n");
+    assert!(!approving.contains("merge to unblock 8:"), "{approving}");
+    s.approvals.clear();
     // Nothing waits: 3 and 6 merged, or no run live.
     for n in [3, 6] {
         s.state
@@ -1878,6 +1891,61 @@ fn merge_to_unblock_lists_each_pr_a_waiting_ticket_depends_on() {
         find(&buf, "merge to unblock").is_none(),
         "idle, a Ticket blocked on an open PR waits on nothing"
     );
+}
+
+/// A PR Stage at work on a Ticket's open PR: WORKING with what it does,
+/// "comments 2/3", or NEEDS YOU while it asks; done, TO MERGE again.
+#[test]
+fn a_pr_stage_at_work_reads_working_with_its_run_of_the_cap() {
+    let mut s = sections_screen(true);
+    let ts = s.state.tickets.get_mut("harness-a.3").unwrap();
+    ts.pr_work = "comments 2/3".to_string();
+    let buf = render(&s, 120, 40);
+    assert!(
+        row_of(&buf, "3 Status counts").ends_with("comments 2/3  WORKING"),
+        "{:#?}",
+        rows(&buf)
+    );
+
+    s.push(asking(
+        "harness-a.3",
+        "question in address-pr-comments (pane 1-2)",
+        Ask::StageQuestion {
+            pane: "w1:p9".to_string(),
+            question: "which way?".to_string(),
+            options: vec!["left".to_string()],
+        },
+    ));
+    let buf = render(&s, 120, 40);
+    assert!(row_of(&buf, "3 Status counts").ends_with("comments 2/3  NEEDS YOU"));
+
+    s.state
+        .tickets
+        .get_mut("harness-a.3")
+        .unwrap()
+        .pr_work
+        .clear();
+    let buf = render(&s, 120, 40);
+    assert!(row_of(&buf, "3 Status counts").ends_with("PR #31  TO MERGE"));
+}
+
+/// MERGE TO UNBLOCK names the PR's Ticket in place of its url when the
+/// line would not fit the box.
+#[test]
+fn merge_to_unblock_names_the_ticket_when_the_url_does_not_fit() {
+    let s = sections_screen(true);
+    // "merge to unblock 5: https://github.com/o/r/pull/31" is 50 wide, the
+    // box's border and padding 4
+    let line = |width| {
+        let buf = render(&s, width, 40);
+        let (_, y) = find(&buf, "merge to unblock").unwrap();
+        row(&buf, y).trim_matches(['│', ' ']).to_string()
+    };
+    assert_eq!(
+        line(54),
+        "merge to unblock 5: https://github.com/o/r/pull/31"
+    );
+    assert_eq!(line(53), "merge to unblock 5: Ticket 3");
 }
 
 #[test]
@@ -2773,7 +2841,6 @@ fn start_ticket_refuses_one_waiting_on_a_ticket_outside_the_run() {
     assert!(s.run.is_none());
 
     s.command("/start-ticket hx-2 hx-1");
-    await_line(&mut s, "hx-2 waiting for PR #hx-1 to merge (Ticket hx-1)");
     await_line(&mut s, "Ticket run done, every Ticket closed");
     await_end(&mut s);
     let order = w.calls().join("\n");
@@ -6317,6 +6384,72 @@ fn a_question_waiting_its_minutes_goes_on_call_and_rings_once() {
         line(s.events.last().unwrap()),
         "on call: a Question has waited 5 minutes, pushing to your phone"
     );
+}
+
+/// On call pushes each PR MERGE TO UNBLOCK lists when it starts: its
+/// Ticket, the Tickets it unblocks and its title.
+#[test]
+fn on_call_rings_each_pr_to_merge_to_unblock_as_it_starts() {
+    let mut s = sections_screen(true);
+    let (bell, _) = on_call(&mut s, after(6));
+    s.tick();
+    settle(&mut s);
+    let mut rang = messages(&bell);
+    rang.sort();
+    assert_eq!(
+        rang,
+        [
+            "harness-a.3 · Merge to unblock 5 · Status counts",
+            "harness-a.4 · Blocked session · The / list",
+        ]
+    );
+}
+
+/// While On call, the poll reads the live run's state and pushes a PR as it
+/// joins MERGE TO UNBLOCK, once: hx-1's PR settles once its head is quiet,
+/// and hx-2 waits on it.
+#[test]
+fn on_call_rings_a_pr_as_it_joins_merge_to_unblock_once() {
+    let (w, _) = new_world(vec![
+        BdTicket::new("hx-1"),
+        BdTicket {
+            deps: vec!["hx-1".to_string()],
+            ..BdTicket::new("hx-2")
+        },
+    ]);
+    w.lock().prs.insert(
+        "https://example.test/pr/hx-1".to_string(),
+        r#"{"state":"OPEN","mergeable":"MERGEABLE","headRefOid":"a"}"#.to_string(),
+    );
+    let mut s = shell(&w);
+    let (bell, clock) = on_call(&mut s, chrono::Local::now());
+    s.calling = true;
+    s.command("/start-epic hx");
+    await_line(&mut s, "hx-1 PR #hx-1 opened after 1 round");
+    for _ in 0..20 {
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(messages(&bell).is_empty(), "rang before the head was quiet");
+
+    *clock.lock().unwrap() += chrono::Duration::seconds(61);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while messages(&bell).is_empty() {
+        assert!(Instant::now() < deadline, "the settled PR never rang");
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
+    for _ in 0..20 {
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
+    settle(&mut s);
+    assert_eq!(
+        messages(&bell),
+        ["hx-1 · Merge to unblock hx-2 · Ticket hx-1"]
+    );
+    s.command("/stop-work");
+    await_end(&mut s);
 }
 
 /// Away, or no token, never goes On call.

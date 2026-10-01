@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex};
 
 use super::app::{set_switch, REBASE_AUTO};
 use super::pr::{Item, Pr};
-use super::stage::{Orchestrator, AWAY, REBASE};
+use super::scheduler_test::with_deps;
+use super::stage::{Orchestrator, ADDRESS_PR_COMMENTS, AWAY, REBASE};
 use super::state::{STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 use super::world::{new_world, set_clock, BdTicket, World};
 
@@ -601,4 +602,62 @@ fn a_ticket_parked_during_the_poll_is_offered_nothing_nor_rebased() {
     let ts = o.ticket("hx-1");
     assert!(!ts.conflict && !ts.conflicting, "conflict recorded");
     assert!(o.commands().is_empty(), "{:?}", o.commands());
+}
+
+/// Its dependents wait on its merge, said once, only when the PR is
+/// settled: a quiet head, no conflict, nothing new offered, no Address PR
+/// comments approved or running.
+#[test]
+fn dependents_wait_on_the_merge_once_the_pr_is_settled() {
+    let (w, mut o) = new_world(vec![BdTicket::new("hx-1"), with_deps("hx-2", &["hx-1"])]);
+    let clock = set_clock(
+        &mut o.cfg,
+        Local.with_ymd_and_hms(2026, 9, 30, 12, 0, 0).unwrap(),
+    );
+    o.update("hx-1", |ts| {
+        ts.status = STATUS_PR_OPEN.to_string();
+        ts.pr = URL.to_string();
+    });
+    o.change_state(|s| s.queue = vec!["hx-1".to_string(), "hx-2".to_string()]);
+    let settled = || o.ticket("hx-1").settled;
+    let waiting = || {
+        (w.lines().iter())
+            .filter(|l| l.starts_with("hx-2 waiting for PR #hx-1 to merge"))
+            .count()
+    };
+
+    let mut pr = open(PR65, "a");
+    thread(&mut pr, 0)["isResolved"] = json!(false);
+    serve(&w, &pr);
+    poll(&o);
+    assert!(!settled(), "a head first seen");
+    later(&clock, 60);
+    assert_eq!(poll(&o).map(|ids| ids.len()), Some(1));
+    assert!(!settled(), "a thread just offered");
+    o.approve_comments("hx-1", Vec::new(), Vec::new(), false);
+    poll(&o);
+    assert!(!settled(), "Address PR comments approved");
+    o.approved.lock().unwrap().clear();
+    let active = || o.active.lock().unwrap();
+    active().insert("hx-1".to_string(), Some(ADDRESS_PR_COMMENTS.name));
+    poll(&o);
+    assert!(!settled(), "Address PR comments running");
+    active().clear();
+    assert_eq!(waiting(), 0);
+
+    // its push resolved the thread
+    serve(&w, &open(PR65, "b"));
+    poll(&o);
+    assert!(!settled(), "b is new");
+    later(&clock, 60);
+    poll(&o);
+    poll(&o);
+    assert!(settled());
+    assert_eq!(waiting(), 1, "{:#?}", w.lines());
+
+    pr = open(PR65, "b");
+    pr["mergeable"] = json!("CONFLICTING");
+    serve(&w, &pr);
+    poll(&o);
+    assert!(!settled(), "conflicting");
 }

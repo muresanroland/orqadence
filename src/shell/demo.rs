@@ -397,6 +397,7 @@ fn play(s: &mut Screen, (n, text, then): &(usize, &str, Then)) {
             Pr(pr) => {
                 ts.status = STATUS_PR_OPEN.to_string();
                 ts.pr = format!("https://github.com/you/uploads/pull/{pr}");
+                ts.settled = true; // the demo's PRs have nothing to address
             }
             Merged => ts.status = STATUS_MERGED.to_string(),
             Limit => {

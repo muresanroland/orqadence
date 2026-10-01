@@ -108,7 +108,7 @@ fn blocked_ticket_starts_only_after_its_dependency_is_merged_and_closed() {
 
     run_epic(&o);
 
-    w.await_line("hx-2 waiting for PR #hx-1 to merge (Ticket hx-1)");
+    w.await_line("hx-1 merged, Ticket closed");
     let order = w.calls().join("\n");
     let closed = order.find("bd close hx-1");
     let started = order.find(&format!(
@@ -397,6 +397,7 @@ fn rebase_command_on_a_conflicting_pr_starts_rebase_in_the_kept_worktree() {
     w.await_line("hx-1 PR #hx-1 conflicts with main, /rebase resolves it");
 
     o.command("rebase-hx-1");
+    w.await_line("hx-1 rebasing PR #hx-1");
     w.await_line("hx-1 rebased PR #hx-1");
     o.stop();
     run.wait();
@@ -515,6 +516,47 @@ fn address_pr_comments_command_starts_it_with_the_pr_and_the_gh_json() {
         o.ticket("hx-1").status,
         STATUS_PR_OPEN,
         "status after address-pr-comments, want it still pr-open"
+    );
+}
+
+/// While Address PR comments runs, its Ticket says which run of the cap it
+/// is, for TICKETS, and RECENT says it as it starts; once it is done,
+/// nothing.
+#[test]
+fn address_pr_comments_says_its_run_of_the_cap_while_it_runs() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.lock().prs.insert(
+        "https://example.test/pr/hx-1".to_string(),
+        r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#.to_string(),
+    );
+    let o = Arc::new(o);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (orq, saw) = (Arc::downgrade(&o), seen.clone());
+    w.session(move |p| {
+        if let (Some(o), "address-pr-comments") = (orq.upgrade(), p.stage.as_str()) {
+            saw.lock().unwrap().push(o.ticket("hx-1").pr_work);
+        }
+        succeed(p)
+    });
+    let mut run = spawn_epic(o.clone(), "hx");
+    w.await_line("hx-1 PR #hx-1 opened");
+
+    o.command("address-pr-comments-hx-1");
+    w.await_line("hx-1 addressed PR #hx-1");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+    assert_eq!(*seen.lock().unwrap(), ["comments 1/3"]);
+    assert_eq!(o.ticket("hx-1").pr_work, "");
+    let lines = w.lines();
+    let at = |want: &str| lines.iter().position(|l| l.starts_with(want));
+    let (doing, started) = (
+        at("hx-1 addressing PR #hx-1 (comments 1/3)"),
+        at("hx-1 address pr comments started: "),
+    );
+    assert!(
+        matches!((doing, started), (Some(d), Some(s)) if d < s),
+        "{lines:#?}"
     );
 }
 

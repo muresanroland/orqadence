@@ -48,10 +48,10 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 | below the floor, or no TypeSafe | asking you: stuck in fix 1 *(below the floor the judged line goes to the log alone)* |
 | only park left (nudge and retry spent) | parked: fix 1 `reason` again after a retry *(no Judgment asked)* |
 | retry command | retrying fix 1 with a fresh session (pane 2-3) |
-| rebase | rebased PR #12 · rebase gave up: `err` · rebase refused: no open PR · refused: PR #12 does not conflict with main |
+| rebase | rebasing PR #12 *(as it starts, before its started line)* · rebased PR #12 · rebase gave up: `err` · rebase refused: no open PR · refused: PR #12 does not conflict with main |
 | PR comments | *a quiet head's new items, with address_pr_comments_auto off:* PR #12: 2 PR comments, /address-pr-comments opens them · *past the runs cap:* PR #12: 2 PR comments, past the cap of 3 Address PR comments runs, /address-pr-comments opens them · *under Away, Address PR comments starting:* PR #12: 2 PR comments approved while away *(otherwise the approval modal opens, log only:* PR #12: 2 PR comments to approve*)* |
 | approval modal | you approved 1 of 2 PR comments · the countdown approved 2 of 2 PR comments · you cancelled 2 PR comments, /address-pr-comments opens them |
-| address-pr-comments | addressed PR #12 · address pr comments failed: `err` · address pr comments gave up: `err` · address pr comments refused: no open PR · *(orqadence)* refused: hx-1 has no open PR comments |
+| address-pr-comments | addressing PR #12 (comments 2/3) *(as it starts, its run of the address_pr_comments_runs cap, or (comments 4) by hand past it)* · addressed PR #12 · address pr comments failed: `err` · address pr comments gave up: `err` · address pr comments refused: no open PR · *(orqadence)* refused: hx-1 has no open PR comments |
 | retry or park refused | ignored: not waiting on a Wake · refused: not a Ticket of this run |
 | Away | *(orqadence)* away: on, a Stage's question parks its Ticket · away: off *(/away again, or /continue @ticket)* |
 | /continue @ticket refused | *(orqadence)* refused: Ticket 5 is not parked |

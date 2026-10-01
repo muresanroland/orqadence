@@ -541,44 +541,76 @@ impl Orchestrator {
                 continue;
             }
 
-            let now = (self.cfg.clock)();
-            if pr.head_ref_oid != ts.head {
+            let fresh = self.quiet_items(&ticket, &ts, &pr);
+            // done: its Rebase and PR comments too, so a merge is all its
+            // dependents wait on, said once
+            let pr_stage = self
+                .active
+                .lock()
+                .unwrap()
+                .get(&ticket)
+                .is_some_and(Option::is_some);
+            // decided and written under the approved lock, which an approval
+            // takes before it clears settled: a stale true never lands after
+            let approved = self.approved.lock().unwrap();
+            let settled = fresh.as_ref().is_some_and(Vec::is_empty)
+                && !pr_stage
+                && !approved.contains_key(&ticket);
+            let mut flipped = false;
+            if settled != ts.settled {
                 self.update(&ticket, |ts| {
-                    ts.head = pr.head_ref_oid.clone();
-                    ts.head_at = Some(now);
+                    flipped = settled && !ts.settled;
+                    ts.settled = settled;
                 });
-                continue;
             }
-            if pr.busy() || ts.head_at.is_none_or(|at| now - at < QUIET) {
-                continue;
+            drop(approved);
+            if flipped {
+                self.wait_dependents(&ticket, &ts.pr);
             }
-            // Rebase goes first: a PR that conflicts, or has a Rebase queued
-            // or running, is offered nothing until it is done
-            let rebasing = self.active.lock().unwrap().get(&ticket) == Some(&Some(REBASE.name));
-            let queued = self.commands().contains(&format!("rebase-{ticket}"));
-            if pr.mergeable == "CONFLICTING" || rebasing || queued {
-                continue;
-            }
-            // what is no longer open leaves the set, so it is offered
-            // again if it comes back
-            let items = pr.items();
-            let ids: BTreeSet<String> = items.iter().map(|i| i.id.clone()).collect();
-            if ids != ts.offered {
-                let mut open = false;
-                self.update(&ticket, |ts| {
-                    open = ts.status == STATUS_PR_OPEN;
-                    if open {
-                        ts.offered = ids;
-                    }
-                });
-                if !open {
-                    continue;
-                }
-            }
-            let fresh = items.into_iter().filter(|i| !ts.offered.contains(&i.id));
-            quiet.push((ticket, fresh.collect()));
+            quiet.extend(fresh.map(|items| (ticket, items)));
         }
         quiet
+    }
+
+    /// An open PR's items not offered before, once its head is quiet and
+    /// nothing is to rebase; None before that.
+    fn quiet_items(&self, ticket: &str, ts: &TicketState, pr: &Pr) -> Option<Vec<Item>> {
+        let now = (self.cfg.clock)();
+        if pr.head_ref_oid != ts.head {
+            self.update(ticket, |ts| {
+                ts.head = pr.head_ref_oid.clone();
+                ts.head_at = Some(now);
+            });
+            return None;
+        }
+        if pr.busy() || ts.head_at.is_none_or(|at| now - at < QUIET) {
+            return None;
+        }
+        // Rebase goes first: a PR that conflicts, or has a Rebase queued
+        // or running, is offered nothing until it is done
+        let rebasing = self.active.lock().unwrap().get(ticket) == Some(&Some(REBASE.name));
+        let queued = self.commands().contains(&format!("rebase-{ticket}"));
+        if pr.mergeable == "CONFLICTING" || rebasing || queued {
+            return None;
+        }
+        // what is no longer open leaves the set, so it is offered
+        // again if it comes back
+        let items = pr.items();
+        let ids: BTreeSet<String> = items.iter().map(|i| i.id.clone()).collect();
+        if ids != ts.offered {
+            let mut open = false;
+            self.update(ticket, |ts| {
+                open = ts.status == STATUS_PR_OPEN;
+                if open {
+                    ts.offered = ids;
+                }
+            });
+            if !open {
+                return None;
+            }
+        }
+        let fresh = items.into_iter().filter(|i| !ts.offered.contains(&i.id));
+        Some(fresh.collect())
     }
 
     /// Removes the worktree, then the branch, of a Ticket whose PR merged,
@@ -652,6 +684,7 @@ impl Orchestrator {
         lists.1.extend(skip);
         lists.2 |= by_hand;
         drop(approved);
+        self.update(ticket, |ts| ts.settled = false);
         if !waiting {
             self.command(&format!("address-pr-comments-{ticket}"));
         }
@@ -790,6 +823,7 @@ impl Orchestrator {
         if let Some(template) = &template {
             inputs.push(("PR template", template));
         }
+        let cap = app::count(&self.cfg.repo, &app::ADDRESS_PR_COMMENTS_RUNS);
         // the poll may have merged or closed it while the input was fetched:
         // checked under the lock, before the stage it reads is cleared
         let mut live = false;
@@ -806,16 +840,32 @@ impl Orchestrator {
             if lists.is_some() {
                 ts.address_runs += 1;
             }
+            ts.pr_work = match (rebase, ts.address_runs) {
+                (true, _) => REBASE.name.to_string(),
+                (false, n) if n > cap => format!("comments {n}"), // by hand past the cap
+                (false, n) => format!("comments {n}/{cap}"),
+            };
             ts.status = STATUS_PR_OPEN.to_string();
+            ts.settled = false;
             ts.reason.clear();
         });
         if !live {
             return;
         }
+        let doing = match rebase {
+            true => format!("rebasing {}", pr_ref(&pr)),
+            false => format!(
+                "addressing {} ({})",
+                pr_ref(&pr),
+                self.ticket(ticket).pr_work
+            ),
+        };
+        self.report(ticket, &doing);
         if !resumed {
             let _ = fs::remove_file(self.run_dir(ticket).join(result_name(st, 0)));
         }
         let result = self.run_stage(ticket, st, 0, &inputs, ResultRequirements::default());
+        self.update(ticket, |ts| ts.pr_work.clear());
         match result {
             // a long usage limit ended the run: running, as every Stage
             Err(StageError::Stopped) if self.closed() => {

@@ -79,6 +79,16 @@ pub(crate) struct TicketState {
     /// the Stage. Live only, never saved.
     #[serde(skip)]
     pub(crate) fetching: bool,
+    /// The poll last found its open PR done: a quiet head, no conflict,
+    /// nothing new to offer, no PR Stage approved or running. Only then do
+    /// its dependents wait on its merge alone. Live only, never saved.
+    #[serde(skip)]
+    pub(crate) settled: bool,
+    /// What its PR Stage does while it runs, as TICKETS shows it: "rebase",
+    /// or "comments 2/3", its Address PR comments run of the cap. Live
+    /// only, never saved.
+    #[serde(skip)]
+    pub(crate) pr_work: String,
 }
 
 /// The run's Release, once the run ended in one: a Stage of the run, not of

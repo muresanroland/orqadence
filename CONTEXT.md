@@ -192,7 +192,7 @@ What the user declares in the Shell when nobody will answer for a while, such as
 _Avoid_: AFK, offline, unattended mode
 
 **On call**:
-What the Shell turns on by itself when a Question has waited five minutes unanswered and the user is not Away: they are away from the desk but their phone reaches them. That Question, every Question after it and the end of the run are pushed to the phone at once, and the user answers in the Shell. Answering any Question ends it, from wherever it was typed. Unlike Away, nothing parks for it.
+What the Shell turns on by itself when a Question has waited five minutes unanswered and the user is not Away: they are away from the desk but their phone reaches them. That Question, every Question after it, each PR whose merge would unblock a Ticket once its Rebase and PR comments are done, and the end of the run are pushed to the phone at once, and the user answers in the Shell. Answering any Question ends it, from wherever it was typed. Unlike Away, nothing parks for it.
 _Avoid_: Away by phone, remote mode, paged
 
 **Limited**:

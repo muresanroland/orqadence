@@ -629,9 +629,11 @@ impl Screen {
                 }
             }
         }
-        let run = self.run.as_ref().unwrap();
-        self.state = run.o.state.lock().unwrap().clone();
+        let before = self.to_unblock();
+        self.state = self.run.as_ref().unwrap().o.state.lock().unwrap().clone();
+        self.ring_unblock(&before);
         // the cache again once it says done: a Ticket added since has no PR
+        let run = self.run.as_ref().unwrap();
         if !run.summarized && self.all_prs_open() && self.reload_epics() && self.all_prs_open() {
             let release = self.ends_in_release();
             let run = self.run.as_mut().unwrap();
@@ -821,6 +823,7 @@ impl Screen {
         for i in 0..self.questions.len() {
             self.ring_question(i);
         }
+        self.ring_unblock(&[]);
     }
 
     /// Pushes Question `i` when it counts: its Ticket, kind and Ticket
@@ -847,6 +850,31 @@ impl Screen {
             message = format!("{message} · {title}");
         }
         self.ring(message);
+    }
+
+    /// The Tickets whose PR MERGE TO UNBLOCK lists.
+    fn to_unblock(&self) -> Vec<String> {
+        let prs = draw::to_unblock(self).into_iter();
+        prs.map(|(id, _, _)| id.to_string()).collect()
+    }
+
+    /// While On call, pushes each PR MERGE TO UNBLOCK lists but `before`
+    /// did: its Ticket, the Tickets it unblocks and its title.
+    fn ring_unblock(&mut self, before: &[String]) {
+        if !self.calling {
+            return;
+        }
+        let new: Vec<(String, String)> = (draw::to_unblock(self).into_iter())
+            .filter(|(id, _, _)| !before.iter().any(|b| b == id))
+            .map(|(id, _, waiting)| (id.to_string(), waiting.join(", ")))
+            .collect();
+        for (id, waiting) in new {
+            let mut message = format!("{id} · Merge to unblock {waiting}");
+            if let Some(title) = self.title(&id) {
+                message = format!("{message} · {title}");
+            }
+            self.ring(message);
+        }
     }
 
     /// Ends On call with a RECENT line saying why; the clock starts again.
