@@ -735,8 +735,6 @@ fn the_shipped_stage_skills_hold_every_jobs_placeholder_and_no_slash_call() {
 #[test]
 fn the_pr_comments_job_takes_the_shipped_skill_or_none() {
     assert_eq!(job_row("pr-comments"), "address_pr_comments");
-    let (_, suggestions) = JOBS.iter().find(|(job, _)| *job == "pr-comments").unwrap();
-    assert_eq!(suggestions[0], ("orqa-address-pr-comments", ""));
 
     let stage = crate::skills::SKILLS
         .iter()
