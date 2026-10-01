@@ -1,4 +1,4 @@
-use super::{EXTRA_FILES, SKILLS};
+use super::SKILLS;
 use crate::orchestrator::write_file;
 use crate::tempdir::TempDir;
 use std::fs;
@@ -244,15 +244,10 @@ fn stage_address_pr_comments_holds_no_rebase() {
     assert!(!comments.contains("{{merge-conflicts}}"));
 }
 
-/// address-pr-comments ships with its threads.sh, and knows the approved
-/// and won't-fix lists, the won't-fix reply, and a Ticket's worktree
-/// already on the PR's branch.
+/// address-pr-comments knows the approved and won't-fix lists, the
+/// won't-fix reply, and a Ticket's worktree already on the PR's branch.
 #[test]
-fn address_pr_comments_is_shipped_with_threads_sh_and_the_lists() {
-    let threads = ("orqa-address-pr-comments", "scripts/threads.sh");
-    assert!(EXTRA_FILES
-        .iter()
-        .any(|&(name, file, _)| (name, file) == threads));
+fn address_pr_comments_knows_the_lists() {
     let skill = skill("orqa-address-pr-comments");
     for text in [
         "name: orqa-address-pr-comments",

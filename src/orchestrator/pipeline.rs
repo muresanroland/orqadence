@@ -289,12 +289,11 @@ impl Orchestrator {
     /// "origin/main"; origin/main when origin/HEAD is unset.
     pub(super) fn origin_head(&self, ticket: &str) -> String {
         let origin = ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"];
-        let head = self.cfg.tools.run(&self.worktree(ticket), &origin);
-        let head = head.map(|head| head.trim().to_string()).unwrap_or_default();
-        if head.is_empty() {
-            "origin/main".to_string()
-        } else {
-            head
+        let worktree = self.worktree(ticket);
+        let head = self.cfg.tools.run(&worktree, &origin).unwrap_or_default();
+        match head.trim() {
+            "" => "origin/main".into(),
+            h => h.into(),
         }
     }
 

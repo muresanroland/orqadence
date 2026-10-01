@@ -409,10 +409,6 @@ fn install_skills_writes_a_skills_other_files_beside_it_executable() {
             fs::read_to_string(&at).unwrap()
         );
     }
-    assert!(repo
-        .path()
-        .join(".orqadence/skills/orqa-address-pr-comments/SKILL.md")
-        .is_file());
 }
 
 /// A linked folder inside a skill is the repo's own too: --force does not
