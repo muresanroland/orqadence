@@ -496,7 +496,7 @@ fn address_pr_comments_command_starts_it_with_the_pr_and_the_gh_json() {
     for want in [
         "# Address PR comments Stage",
         "- PR: https://example.test/pr/hx-1",
-        "- PR comments (gh JSON): ",
+        "- PR metadata (gh JSON): ",
         "rename this",
     ] {
         assert!(
@@ -504,6 +504,8 @@ fn address_pr_comments_command_starts_it_with_the_pr_and_the_gh_json() {
             "address-pr-comments prompt lacks {want:?}:\n{text}"
         );
     }
+    let view = "gh pr view https://example.test/pr/hx-1 --json reviews,comments,statusCheckRollup";
+    assert!(!w.called(view).is_empty(), "no failing checks asked of gh");
     assert_eq!(
         o.ticket("hx-1").status,
         STATUS_PR_OPEN,

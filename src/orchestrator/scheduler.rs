@@ -516,13 +516,14 @@ impl Orchestrator {
     }
 
     /// Runs Address PR comments for a Ticket with an open PR, on the user's
-    /// command only, fed gh's view of the PR's reviews and comments.
+    /// command only, fed gh's view of the PR's reviews, comments and checks.
     fn address_pr_comments(&self, ticket: &str) {
         let ts = self.ticket(ticket);
         if ts.status != STATUS_PR_OPEN {
             return self.report(ticket, "address pr comments refused: no open PR");
         }
-        let argv = ["gh", "pr", "view", &ts.pr, "--json", "reviews,comments"];
+        let fields = "reviews,comments,statusCheckRollup";
+        let argv = ["gh", "pr", "view", &ts.pr, "--json", fields];
         let comments = match self.cfg.tools.run(&self.cfg.repo, &argv) {
             Ok(comments) => comments,
             Err(err) => {
@@ -532,7 +533,7 @@ impl Orchestrator {
         };
         let inputs = [
             ("PR", ts.pr.as_str()),
-            ("PR comments (gh JSON)", comments.trim()),
+            ("PR metadata (gh JSON)", comments.trim()),
         ];
         self.on_pr(ticket, &ADDRESS_PR_COMMENTS, &inputs, "addressed");
     }

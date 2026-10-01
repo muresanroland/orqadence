@@ -9,7 +9,7 @@ You are in a fresh session inside the kept worktree of a Ticket whose pull reque
 
 ## Do
 
-1. Read the feedback. **PR comments (gh JSON)** holds the PR's reviews and conversation comments. Inline review comments are not in it; fetch them with `gh api repos/{owner}/{repo}/pulls/<number>/comments --paginate` (`{owner}` and `{repo}` are filled in by gh). Read each failing check the Inputs list with `gh run view <run id> --log-failed`. The **Ticket file** reminds you what the change is for; its `## Epic context` is the parent Epic's description: context, not scope. Load every skill under **Label skills** by name in this session, and follow **Label guidance**.
+1. Read the feedback. **PR metadata (gh JSON)** holds the PR's reviews, conversation comments and checks (`statusCheckRollup`). Inline review comments are not in it; fetch them with `gh api repos/{owner}/{repo}/pulls/<number>/comments --paginate` (`{owner}` and `{repo}` are filled in by gh). Read each failing check in `statusCheckRollup` with `gh run view <run id> --log-failed`; the run id is in its `detailsUrl` (`.../actions/runs/<run id>/...`). The **Ticket file** reminds you what the change is for; its `## Epic context` is the parent Epic's description: context, not scope. Load every skill under **Label skills** by name in this session, and follow **Label guidance**.
 2. Apply each requested change, and fix what each failing check reports. A comment that asks a question, or that you judge wrong, gets no code change: answer it in the result file instead and let the human decide.
 3. Run the repo's tests until they pass. Commit.
 4. Push to the same PR with `git push`. Never open a second PR, never merge, never close the Ticket.
