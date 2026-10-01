@@ -5915,6 +5915,14 @@ fn summary_at_an_epic_shows_that_epics_and_one_with_no_evidence_is_a_notice() {
     assert!(s.summary.is_none());
 }
 
+/// Polls the Shell a little, for a test that checks nothing happened.
+fn poll_awhile(s: &mut Screen) {
+    for _ in 0..20 {
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
 /// Polls the Shell until the summary is open.
 fn await_summary(s: &mut Screen) {
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -5939,10 +5947,7 @@ fn the_summary_opens_by_itself_once_when_the_last_pr_opens() {
     let mut s = shell(&w);
     s.command("/start-epic hx");
     await_line(&mut s, "hx-1 PR #hx-1 opened after 1 round");
-    for _ in 0..20 {
-        s.poll();
-        thread::sleep(Duration::from_millis(1));
-    }
+    poll_awhile(&mut s);
     assert!(s.summary.is_none(), "opened while hx-2 waits on the merge");
 
     w.lock().prs.insert(
@@ -5957,10 +5962,7 @@ fn the_summary_opens_by_itself_once_when_the_last_pr_opens() {
     assert!(row_of(&buf, "hx-2 Ticket hx-2 ─").ends_with("─ to merge"));
 
     s.key(key(KeyCode::Esc));
-    for _ in 0..20 {
-        s.poll();
-        thread::sleep(Duration::from_millis(1));
-    }
+    poll_awhile(&mut s);
     assert!(s.summary.is_none(), "it opened again");
     s.command("/stop-work");
     await_end(&mut s);
@@ -5995,10 +5997,7 @@ fn only_a_run_ending_in_a_release_holds_its_summary_when_every_pr_is_open() {
         if opens {
             await_summary(&mut s);
         } else {
-            for _ in 0..20 {
-                s.poll();
-                thread::sleep(Duration::from_millis(1));
-            }
+            poll_awhile(&mut s);
             assert!(
                 s.summary.is_none(),
                 "{command} opened it before its Release"
@@ -6047,10 +6046,7 @@ fn a_resumed_release_holds_the_summary_with_releases_off_and_no_label() {
         s.key(key(KeyCode::Enter)); // the checklist of saved Tickets
     }
     assert!(s.running, "/continue did not start: {:?}", s.notice);
-    for _ in 0..20 {
-        s.poll();
-        thread::sleep(Duration::from_millis(1));
-    }
+    poll_awhile(&mut s);
     assert!(s.summary.is_none(), "opened while the version PR waits");
     s.command("/stop-work");
     await_end(&mut s);
@@ -6070,10 +6066,7 @@ fn a_ticket_added_mid_run_holds_the_summary_until_its_pr_opens() {
         ..BdTicket::new("hx-2")
     });
     await_line(&mut s, "hx-1 PR #hx-1 opened after 1 round");
-    for _ in 0..20 {
-        s.poll();
-        thread::sleep(Duration::from_millis(1));
-    }
+    poll_awhile(&mut s);
     assert!(s.summary.is_none(), "opened before hx-2 has its PR");
 
     w.lock().prs.insert(
