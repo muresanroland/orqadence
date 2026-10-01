@@ -83,15 +83,15 @@ impl Orchestrator {
         epic_input: &str,
         children: &[BdIssue],
     ) -> (String, Result<(), StageError>) {
-        let staged = {
+        let (staged, fresh) = {
             let state = self.state.lock().unwrap();
-            let release = state.release.as_ref().filter(|r| !r.version.is_empty());
-            release.map(|r| r.id.clone())
+            let release = state.release.as_ref();
+            let staged = release.filter(|r| !r.version.is_empty());
+            (staged.map(|r| r.id.clone()), release.is_none())
         };
         if let Some(id) = staged {
             return (id, Ok(()));
         }
-        let fresh = self.state.lock().unwrap().release.is_none();
         let stamp = (self.cfg.clock)().format("%Y-%m-%d-%H%M%S");
         let (mut id, bump) = if epic.is_empty() {
             (format!("release-{stamp}"), "patch")
@@ -158,8 +158,9 @@ impl Orchestrator {
     }
 
     /// After the Release's result: its version PR polled until it merges,
-    /// then the tag Question; with no version PR, a repo that keeps its
-    /// version only in tags, the Question at once. The PR closed unmerged,
+    /// then the tag Question, unless a resumed Release is already tagged;
+    /// with no version PR, a repo that keeps its version only in tags, the
+    /// Question at once. The PR closed unmerged,
     /// a Question: true to run the Release again, its worktree, branch and
     /// record gone; false to end without one.
     fn version_pr(&self, id: &str) -> Result<bool, StageError> {
@@ -179,7 +180,9 @@ impl Orchestrator {
             }
             return Ok(again);
         }
-        self.ask_tag(id)?;
+        if !release.tagged {
+            self.ask_tag(id)?;
+        }
         Ok(false)
     }
 

@@ -712,6 +712,31 @@ fn continue_on_a_saved_run_whose_version_pr_is_open_polls_it_again() {
 }
 
 #[test]
+fn continue_on_a_saved_run_whose_release_is_tagged_asks_no_tag_question() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    stopped_in_release(&w, &o);
+    {
+        let mut state = o.state.lock().unwrap();
+        let release = state.release.as_mut().unwrap();
+        release.version = "v1.5.0".to_string();
+        release.ts.pr = VERSION_PR.to_string();
+        release.ts.sessions.clear();
+        release.merged = true;
+        release.tagged = true;
+    }
+    let o = Arc::new(o);
+
+    spawn_epic(o.clone(), "hx").wait();
+
+    assert!(
+        w.events().iter().all(|e| e.ask.is_none()),
+        "{:?}",
+        w.events()
+    );
+    assert!(w.called("git tag").is_empty());
+}
+
+#[test]
 fn a_release_result_without_its_version_wakes() {
     let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
     w.lock().epic_labels = label();
