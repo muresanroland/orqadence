@@ -397,6 +397,7 @@ fn rebase_command_on_a_conflicting_pr_starts_rebase_in_the_kept_worktree() {
     w.await_line("hx-1 PR #hx-1 conflicts with main, /rebase resolves it");
 
     o.command("rebase-hx-1");
+    w.await_line("hx-1 rebasing PR #hx-1");
     w.await_line("hx-1 rebased PR #hx-1");
     o.stop();
     run.wait();
@@ -519,7 +520,8 @@ fn address_pr_comments_command_starts_it_with_the_pr_and_the_gh_json() {
 }
 
 /// While Address PR comments runs, its Ticket says which run of the cap it
-/// is, for TICKETS; once it is done, nothing.
+/// is, for TICKETS, and RECENT says it as it starts; once it is done,
+/// nothing.
 #[test]
 fn address_pr_comments_says_its_run_of_the_cap_while_it_runs() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
@@ -546,6 +548,16 @@ fn address_pr_comments_says_its_run_of_the_cap_while_it_runs() {
     o.wait_in_flight();
     assert_eq!(*seen.lock().unwrap(), ["comments 1/3"]);
     assert_eq!(o.ticket("hx-1").pr_work, "");
+    let lines = w.lines();
+    let at = |want: &str| lines.iter().position(|l| l.starts_with(want));
+    let (doing, started) = (
+        at("hx-1 addressing PR #hx-1 (comments 1/3)"),
+        at("hx-1 address pr comments started: "),
+    );
+    assert!(
+        matches!((doing, started), (Some(d), Some(s)) if d < s),
+        "{lines:#?}"
+    );
 }
 
 #[test]

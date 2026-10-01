@@ -821,6 +821,15 @@ impl Orchestrator {
         if !live {
             return;
         }
+        let doing = match rebase {
+            true => format!("rebasing {}", pr_ref(&pr)),
+            false => format!(
+                "addressing {} ({})",
+                pr_ref(&pr),
+                self.ticket(ticket).pr_work
+            ),
+        };
+        self.report(ticket, &doing);
         if !resumed {
             let _ = fs::remove_file(self.run_dir(ticket).join(result_name(st, 0)));
         }
