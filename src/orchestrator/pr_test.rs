@@ -4,6 +4,7 @@
 use chrono::{DateTime, Local, TimeDelta, TimeZone};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::app::{set_switch, REBASE_AUTO};
@@ -563,4 +564,41 @@ fn a_ticket_parked_because_its_pr_closed_is_not_polled_again() {
     });
     poll(&o);
     assert_eq!(w.called("gh ").len(), asked, "polled in its Pipeline");
+}
+
+/// A Ticket parked at its PR Stage while gh is asked about its PR is
+/// taken as parked: nothing offered, its conflict neither said nor rebased.
+#[test]
+fn a_ticket_parked_during_the_poll_is_offered_nothing_nor_rebased() {
+    let (w, o, clock) = polled();
+    set_switch(&w.repo, &REBASE_AUTO, true).unwrap();
+    let o = Arc::new(o);
+    let armed = Arc::new(AtomicBool::new(false));
+    let (orq, arm) = (Arc::downgrade(&o), armed.clone());
+    w.hook(move |_, argv| {
+        if argv.starts_with(&["gh", "api", "graphql"]) && arm.swap(false, Ordering::SeqCst) {
+            orq.upgrade()?.update("hx-1", |ts| {
+                ts.status = STATUS_PARKED.to_string();
+                ts.stage = REBASE.name.to_string();
+            });
+        }
+        None
+    });
+    let mut pr = open(PR65, "a");
+    thread(&mut pr, 0)["isResolved"] = json!(false);
+    serve(&w, &pr);
+    poll(&o);
+    later(&clock, 60);
+    armed.store(true, Ordering::SeqCst);
+    assert_eq!(poll(&o), None, "offered while parked");
+    assert!(o.ticket("hx-1").offered.is_empty());
+
+    o.update("hx-1", |ts| ts.status = STATUS_PR_OPEN.to_string());
+    pr["mergeable"] = json!("CONFLICTING");
+    serve(&w, &pr);
+    armed.store(true, Ordering::SeqCst);
+    poll(&o);
+    let ts = o.ticket("hx-1");
+    assert!(!ts.conflict && !ts.conflicting, "conflict recorded");
+    assert!(o.commands().is_empty(), "{:?}", o.commands());
 }

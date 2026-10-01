@@ -928,6 +928,45 @@ fn a_pr_merged_while_its_rebase_runs_stays_merged_when_it_asks() {
     assert_eq!(w.called("bd close hx-1 ").len(), 1);
 }
 
+/// A PR merged while /continue fetches its comments again, the fetch
+/// failing, stays merged: not Parked, not closed twice.
+#[test]
+fn a_pr_merged_while_a_continued_fetch_fails_stays_merged() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    pr_open(&w, &o, "hx-1", MERGEABLE);
+    o.update("hx-1", |ts| {
+        ts.status = STATUS_PARKED.to_string();
+        ts.stage = "address-pr-comments".to_string();
+        ts.reason = AWAY.to_string();
+    });
+    let o = Arc::new(o);
+    let (world, orq) = (Arc::downgrade(&w), Arc::downgrade(&o));
+    w.hook(move |_, argv| {
+        if argv.contains(&"reviews,comments,statusCheckRollup") {
+            let merged = r#"{"state":"MERGED","mergeable":"UNKNOWN"}"#.to_string();
+            let w = world.upgrade()?;
+            w.lock()
+                .prs
+                .insert("https://example.test/pr/hx-1".to_string(), merged);
+            let o = orq.upgrade()?;
+            wait_until("the merge", || o.ticket("hx-1").status == STATUS_MERGED);
+            return Some(Err("gh: boom".to_string()));
+        }
+        None
+    });
+    o.command("continue-hx-1");
+    let mut run = spawn_epic(o.clone(), "hx");
+    w.await_line("hx-1 address pr comments failed: ");
+    thread::sleep(Duration::from_millis(30)); // many more polls
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+    assert_eq!(o.ticket("hx-1").status, STATUS_MERGED);
+    assert_eq!(w.called("bd close hx-1 ").len(), 1);
+    let said = w.lines();
+    assert!(!said.iter().any(|l| l.contains("parked")), "{said:#?}");
+}
+
 /// A PR the poll sees merged while /address-pr-comments fetches its
 /// comments stays merged: no session starts in the removed worktree.
 #[test]

@@ -458,12 +458,14 @@ impl Orchestrator {
 
         let mut quiet = Vec::new();
         for (ticket, ts) in open {
-            let returning = ts.status != STATUS_PR_OPEN;
             let url = format!("url={}", ts.pr);
             let reply = tools
                 .run(repo, &["gh", "api", "graphql", "-f", &query, "-f", &url])
                 .map_err(|err| err.to_string())
                 .and_then(|out| pr::parse(&out));
+            // read again: it may have parked at its PR Stage during the call
+            let ts = self.ticket(&ticket);
+            let returning = ts.status != STATUS_PR_OPEN;
             let pr = match reply {
                 Ok(pr) => pr,
                 Err(err) => {
@@ -564,7 +566,16 @@ impl Orchestrator {
             let items = pr.items();
             let ids: BTreeSet<String> = items.iter().map(|i| i.id.clone()).collect();
             if ids != ts.offered {
-                self.update(&ticket, |ts| ts.offered = ids);
+                let mut open = false;
+                self.update(&ticket, |ts| {
+                    open = ts.status == STATUS_PR_OPEN;
+                    if open {
+                        ts.offered = ids;
+                    }
+                });
+                if !open {
+                    continue;
+                }
             }
             let fresh = items.into_iter().filter(|i| !ts.offered.contains(&i.id));
             quiet.push((ticket, fresh.collect()));
@@ -623,10 +634,10 @@ impl Orchestrator {
                 Err(err) => {
                     let text = format!("address pr comments failed: {err}");
                     // taken back, it stays Parked for the next /continue
-                    return match resumed {
-                        true => self.park(ticket, &text),
-                        false => self.report(ticket, &text),
-                    };
+                    if !resumed || !self.park_live(ticket, &text) {
+                        self.report(ticket, &text);
+                    }
+                    return;
                 }
             }
         };
@@ -654,9 +665,6 @@ impl Orchestrator {
             let _ = fs::remove_file(self.run_dir(ticket).join(result_name(st, 0)));
         }
         let result = self.run_stage(ticket, st, 0, &inputs, ResultRequirements::default());
-        // ponytail: read, then parked below, not under one lock; the poll
-        // that may merge or close it meanwhile comes every 30s
-        let open = self.ticket(ticket).status == STATUS_PR_OPEN;
         match result {
             // a long usage limit ended the run: running, as every Stage
             Err(StageError::Stopped) if self.closed() => {
@@ -681,13 +689,31 @@ impl Orchestrator {
                 let done = if rebase { "rebased" } else { "addressed" };
                 self.report(ticket, &format!("{done} {}", pr_ref(&ts.pr)));
             }
-            Err(StageError::Parked(reason)) if reason == AWAY && open => self.park(ticket, &reason),
             Err(StageError::Parked(reason)) => {
-                let text = format!("{} gave up: {reason}", stage_label(st, 0));
-                self.report(ticket, &text);
+                if reason != AWAY || !self.park_live(ticket, &reason) {
+                    let text = format!("{} gave up: {reason}", stage_label(st, 0));
+                    self.report(ticket, &text);
+                }
             }
             Err(StageError::Stopped) => {} // only while stopping, above
         }
+    }
+
+    /// Parks a Ticket at its PR Stage unless the poll merged or closed it
+    /// meanwhile: checked and parked under one lock. Whether it parked.
+    fn park_live(&self, ticket: &str, reason: &str) -> bool {
+        let mut live = false;
+        self.update(ticket, |ts| {
+            live = ts.status == STATUS_PR_OPEN || pr_stage(ts).is_some();
+            if live {
+                ts.status = STATUS_PARKED.to_string();
+                ts.reason = reason.to_string();
+            }
+        });
+        if live {
+            self.report(ticket, &format!("parked: {reason}"));
+        }
+        live
     }
 }
 
