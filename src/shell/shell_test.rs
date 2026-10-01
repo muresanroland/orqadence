@@ -208,6 +208,7 @@ fn event(ticket: Option<&str>, text: &str, panel: bool) -> Event {
         text: text.to_string(),
         panel,
         ask: None,
+        offer: Vec::new(),
     }
 }
 

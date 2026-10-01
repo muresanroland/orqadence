@@ -24,9 +24,13 @@ use ratatui::layout::{Position, Rect};
 use ratatui::DefaultTerminal;
 
 use crate::on_call::{self, Doorbell, OnCall};
+use crate::orchestrator::app::{self, ADDRESS_PR_COMMENTS_COUNTDOWN};
 use crate::orchestrator::judgment::{self, Action};
+use crate::orchestrator::pr::Item;
 use crate::orchestrator::scheduler::BdIssue;
-use crate::orchestrator::stage::{log_line, Answer, Ask, Config, Event, Orchestrator};
+use crate::orchestrator::stage::{
+    log_line, plural, pr_ref, Answer, Ask, Config, Event, Orchestrator,
+};
 use crate::orchestrator::state::{
     acquire_lock, load_state, local_dir, Lock, Review, State, TicketState, LOCAL, STATUS_MERGED,
     STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING,
@@ -87,7 +91,7 @@ const COMMANDS: [(&str, &str, &str); 16] = [
     (
         "/address-pr-comments",
         "<ticket>",
-        "act on a PR's comments and failing checks",
+        "open a PR's comments and failing checks for approval",
     ),
     ("/questions", "", "show the hidden Questions"),
     (
@@ -208,6 +212,22 @@ pub(crate) struct Notice {
     pub(crate) scroll: Cell<usize>,
 }
 
+/// The approval modal: a Ticket's PR comments and failing checks, each
+/// row checked or not, for Address PR comments to fix or answer as won't
+/// fix. Not a Question: it never joins their queue, nor rings On call.
+pub(crate) struct Approval {
+    pub(crate) ticket: String,
+    /// "PR #12".
+    pub(crate) pr: String,
+    pub(crate) rows: Vec<(Item, bool)>,
+    pub(crate) cursor: usize,
+    /// How long it counts down once it shows, if it approves itself.
+    countdown: Option<Duration>,
+    /// When it approves the rows as they stand: set as it shows, cleared
+    /// for good by any key.
+    pub(crate) approves: Option<chrono::DateTime<chrono::Local>>,
+}
+
 /// What the screen shows, with no terminal in it.
 pub(crate) struct Screen {
     pub(crate) folder: String,
@@ -258,6 +278,9 @@ pub(crate) struct Screen {
     run: Option<Run>,
     /// The Questions waiting, oldest first; the first shows unless hidden.
     pub(crate) questions: Vec<Question>,
+    /// The approval modals waiting, one PR's each, oldest first; the first
+    /// shows ahead of any Question and takes its keys.
+    pub(crate) approvals: Vec<Approval>,
     /// Esc hid the Question; /questions or Esc on an empty input line brings it back.
     pub(crate) hidden: bool,
     /// The input line is a prompt of the user's own for the front Question.
@@ -350,6 +373,7 @@ impl Screen {
             receiver,
             run: None,
             questions: Vec::new(),
+            approvals: Vec::new(),
             hidden: false,
             composing: false,
             settings: None,
@@ -615,6 +639,8 @@ impl Screen {
         }
         self.running = false;
         self.questions.retain(|q| q.ticket.is_none()); // never saved: derived again on resume
+        let items = |a: Approval| (a.ticket, a.rows.into_iter().map(|(i, _)| i).collect());
+        run.o.withdraw(self.approvals.drain(..).map(items)); // the next run's poll offers them
         self.composing = false;
         self.first = None;
         if run.o.stopping() {
@@ -702,6 +728,11 @@ impl Screen {
             .is_some_and(|at| (self.cfg.clock)() >= at)
         {
             self.close_notice();
+        }
+        if (self.approvals.first().and_then(|a| a.approves))
+            .is_some_and(|at| (self.cfg.clock)() >= at)
+        {
+            self.decide(true, "the countdown");
         }
         if self.run.is_none() && self.update.is_some() && Instant::now() >= self.retry {
             self.install(true);
@@ -804,6 +835,12 @@ impl Screen {
     /// answer sent to it meanwhile is dropped. A line that asks, or an ask
     /// with no line of its own, raises the Ticket's Question anew.
     pub(crate) fn push(&mut self, event: Event) {
+        if !event.offer.is_empty() {
+            let minutes = app::count(&self.cfg.repo, &ADDRESS_PR_COMMENTS_COUNTDOWN) as u64;
+            let countdown = (minutes > 0).then(|| Duration::from_secs(60 * minutes));
+            let ticket = event.ticket.unwrap_or_default();
+            return self.offer(ticket, event.offer, countdown);
+        }
         if !event.panel && event.ask.is_none() {
             return;
         }
@@ -912,6 +949,7 @@ impl Screen {
             text: text.to_string(),
             panel: true,
             ask: None,
+            offer: Vec::new(),
         });
     }
 
@@ -1155,10 +1193,10 @@ impl Screen {
         self.back = self.back.min(self.input.chars().count());
         let ctrl_c =
             key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
-        // A Notice modal takes every key before the summary, /config, a
-        // Question or the input: Enter or Esc closes it, ↑↓ scroll a long
-        // one; any other key stops its countdown for good and is swallowed,
-        // but Ctrl-C goes on to exit.
+        // A Notice modal takes every key before the approval modal, the
+        // summary, /config, a Question or the input: Enter or Esc closes it,
+        // ↑↓ scroll a long one; any other key stops its countdown for good
+        // and is swallowed, but Ctrl-C goes on to exit.
         if let Some(n) = self.notices.first_mut() {
             match key.code {
                 KeyCode::Enter | KeyCode::Esc => return self.close_notice(),
@@ -1167,6 +1205,25 @@ impl Screen {
                 _ => {}
             }
             n.closes = None;
+            if !ctrl_c {
+                return;
+            }
+        }
+        // The approval modal takes every key before the summary, /config, a
+        // Question or the input: ↑↓ move, Space toggles a row, Enter fixes
+        // the checked ones, Esc cancels. Any key stops its countdown for
+        // good; Ctrl-C goes on to exit.
+        if let Some(a) = self.approvals.first_mut() {
+            a.approves = None;
+            match key.code {
+                _ if ctrl_c => {}
+                KeyCode::Up => a.cursor = a.cursor.saturating_sub(1),
+                KeyCode::Down => a.cursor = (a.cursor + 1).min(a.rows.len() - 1),
+                KeyCode::Char(' ') => a.rows[a.cursor].1 ^= true,
+                KeyCode::Enter => return self.decide(true, "you"),
+                KeyCode::Esc => return self.decide(false, "you"),
+                _ => {}
+            }
             if !ctrl_c {
                 return;
             }
@@ -1802,6 +1859,16 @@ impl Screen {
                         "refused: Ticket {} has a Question waiting",
                         suffix(query)
                     )),
+                    // by hand: every item still open, no countdown
+                    // ponytail: gh is asked on the Shell's thread, which
+                    // stalls the screen that long, as bd's calls here do
+                    Some(o) if name == "/address-pr-comments" => match o.open_items(query) {
+                        Ok(items) if items.is_empty() => {
+                            self.refuse(&format!("refused: {query} has no open PR comments"))
+                        }
+                        Ok(items) => self.offer(query.to_string(), items, None),
+                        Err(err) => self.refuse(&err),
+                    },
                     Some(o) => o.command(&format!("{}-{query}", &name[1..])),
                 }
             }
@@ -2175,6 +2242,53 @@ impl Screen {
         }
     }
 
+    /// Raises the approval modal for a Ticket's PR comments, every row
+    /// checked; one raised while another shows waits behind it.
+    fn offer(&mut self, ticket: String, items: Vec<Item>, countdown: Option<Duration>) {
+        let pr = self.state.tickets.get(&ticket).map(|ts| pr_ref(&ts.pr));
+        self.approvals.push(Approval {
+            ticket,
+            pr: pr.unwrap_or_default(),
+            rows: items.into_iter().map(|item| (item, true)).collect(),
+            cursor: 0,
+            countdown,
+            approves: None,
+        });
+        if self.approvals.len() == 1 {
+            self.show_approval();
+        }
+    }
+
+    /// The front approval modal shows: its countdown, if any, runs from now.
+    fn show_approval(&mut self) {
+        let now = (self.cfg.clock)();
+        if let Some(a) = self.approvals.first_mut() {
+            a.approves = a.countdown.map(|length| now + length);
+        }
+    }
+
+    /// The front approval modal answered, by `who`: fix queues Address PR
+    /// comments with the checked rows approved and the rest won't fix;
+    /// cancel starts nothing. Its items stay offered either way, so the
+    /// poll does not reopen them. The next one shows.
+    fn decide(&mut self, fix: bool, who: &str) {
+        let a = self.approvals.remove(0);
+        let n = plural(a.rows.len(), "PR comment");
+        if fix {
+            let (on, off): (Vec<_>, Vec<_>) = a.rows.into_iter().partition(|(_, on)| *on);
+            let text = format!("{who} approved {} of {n}", on.len());
+            self.tell(Some(&a.ticket), &text);
+            let items = |rows: Vec<(Item, bool)>| rows.into_iter().map(|(item, _)| item).collect();
+            if let Some(run) = &self.run {
+                run.o.approve_comments(&a.ticket, items(on), items(off));
+            }
+        } else {
+            let text = format!("{who} cancelled {n}, /address-pr-comments opens them");
+            self.tell(Some(&a.ticket), &text);
+        }
+        self.show_approval();
+    }
+
     /// The title of a Ticket on the idle tree, for the RECENT Ticket column.
     pub(crate) fn title(&self, id: &str) -> Option<&str> {
         self.epics
@@ -2359,6 +2473,8 @@ fn run(terminal: &mut DefaultTerminal, screen: &mut Screen) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod approval_test;
 #[cfg(test)]
 mod config_test;
 #[cfg(test)]

@@ -68,6 +68,10 @@ pub(crate) struct TicketState {
     /// was offered once.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(crate) offered: BTreeSet<String>,
+    /// The Address PR comments runs started on its PR, which
+    /// address_pr_comments_runs caps for the poll.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub(crate) address_runs: usize,
     /// The App whose usage limit holds the Ticket, while it holds.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) limited: String,

@@ -420,6 +420,7 @@ fn play(s: &mut Screen, (n, text, then): &(usize, &str, Then)) {
         // a plan and the Review's limit ask with no line of their own
         panel: !matches!(then, Asks(Kind::Plan | Kind::Limited)),
         ask,
+        offer: Vec::new(),
     });
 }
 
@@ -505,6 +506,7 @@ pub(super) fn answered(s: &mut Screen, id: &str, about: &About, answer: Answer) 
         text,
         panel: true,
         ask: None,
+        offer: Vec::new(),
     });
 }
 
