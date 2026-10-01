@@ -117,6 +117,24 @@ fn an_epic_carrying_orqa_release_ends_in_a_release_with_bump_minor_and_each_prs_
     );
 }
 
+#[test]
+fn an_earlier_releases_worktree_gives_a_new_epic_release_an_id_of_its_own() {
+    let (w, mut o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    set_clock(&mut o.cfg, now());
+    std::fs::create_dir_all(o.worktree("release-hx")).unwrap(); // its record discarded
+    let o = Arc::new(o);
+
+    run_epic(&o);
+
+    w.await_line("release done: v1.5.0");
+    let id = o.state.lock().unwrap().release.clone().unwrap().id;
+    assert_eq!(id, "release-hx-2026-09-25-140000");
+    let worktree = o.worktree(&id).display().to_string();
+    let create = format!("bd worktree create {worktree} --branch {id}");
+    assert_eq!(w.called(&create).len(), 1, "a worktree off today's main");
+}
+
 /// A Ticket run, as /start-ticket begins one, over `tickets`, to its end.
 fn run_tickets(w: &World, o: &Arc<Orchestrator>, tickets: &[&str]) {
     let ids: Vec<String> = tickets.iter().map(|t| t.to_string()).collect();

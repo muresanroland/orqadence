@@ -85,8 +85,9 @@ pub(crate) struct TicketState {
 /// a Ticket, its record apart from the Tickets'.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Release {
-    /// release-<epic>, or release-<date>-<time> in a Ticket run: its
-    /// worktree, Run directory, branch and tab go by it.
+    /// release-<epic> (release-<epic>-<date>-<time> when an earlier
+    /// Release's worktree has that name), or release-<date>-<time> in a
+    /// Ticket run: its worktree, Run directory, branch and tab go by it.
     pub(crate) id: String,
     /// Its Stage's record, kept as a Ticket's is: pane, session, its PR.
     #[serde(flatten)]

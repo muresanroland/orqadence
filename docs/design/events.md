@@ -82,7 +82,7 @@ Decided on the map tickets "Limited" (harness-0sx.8) and "Apps per Stage" (harne
 
 ## Release
 
-Decided on the map ticket for the Release label (harness-bsg.22). A run carrying orqa:release, with release_on set, ends in the Release once every Ticket is closed and one at least merged its PR: an Epic's own label, or any queued Ticket's in a Ticket run, read at that moment. The Release belongs to the run, not to a Ticket: its lines below are run-level. Its other lines (holds, stuck, a question, waiting at a prompt, parked) are a Stage's as above, named by the Release's id, `release-<epic>` or `release-<date>-<time>` in a Ticket run, as RECENT names a Ticket, so its Questions are answered as a Ticket's are.
+Decided on the map ticket for the Release label (harness-bsg.22). A run carrying orqa:release, with release_on set, ends in the Release once every Ticket is closed and one at least merged its PR: an Epic's own label, or any queued Ticket's in a Ticket run, read at that moment. The Release belongs to the run, not to a Ticket: its lines below are run-level. Its other lines (holds, stuck, a question, waiting at a prompt, parked) are a Stage's as above, named by the Release's id, `release-<epic>` (`release-<epic>-<date>-<time>` when an earlier Release's worktree has that name) or `release-<date>-<time>` in a Ticket run, as RECENT names a Ticket, so its Questions are answered as a Ticket's are.
 
 | Moment | Wording |
 |---|---|

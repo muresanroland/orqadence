@@ -1,9 +1,10 @@
 //! The Release: the Stage a run carrying orqa:release ends in, once every
 //! Ticket of the run is merged. It belongs to the run, not to a Ticket: its
 //! record is the State's release, apart from the Tickets', and its id
-//! (release-<epic>, or release-<date>-<time> in a Ticket run, of which a
-//! day may have several) names its worktree, Run directory, branch and tab
-//! as a Ticket's id names its own.
+//! (release-<epic>, release-<epic>-<date>-<time> when an earlier Release's
+//! worktree has that name, or release-<date>-<time> in a Ticket run, of
+//! which a day may have several) names its worktree, Run directory, branch
+//! and tab as a Ticket's id names its own.
 
 use std::fs;
 
@@ -57,15 +58,17 @@ impl Orchestrator {
     /// limit leaves its session saved; a park stops the run as /stop-work
     /// does, the Release saved for /continue.
     pub(super) fn release(&self, epic: &str, epic_input: &str, children: &[BdIssue]) {
+        let fresh = self.state.lock().unwrap().release.is_none();
+        let stamp = (self.cfg.clock)().format("%Y-%m-%d-%H%M%S");
         let (mut id, bump) = if epic.is_empty() {
-            let id = (self.cfg.clock)().format("release-%Y-%m-%d-%H%M%S");
-            (id.to_string(), "patch")
+            (format!("release-{stamp}"), "patch")
+        } else if fresh && self.worktree(&format!("release-{epic}")).exists() {
+            // an earlier Release's worktree, its branch off an older main
+            (format!("release-{epic}-{stamp}"), "minor")
         } else {
             (format!("release-{epic}"), "minor")
         };
-        let mut fresh = false;
         self.change_state(|state| {
-            fresh = state.release.is_none();
             let release = state.release.get_or_insert_with(|| {
                 Box::new(Release {
                     id: id.clone(),
