@@ -592,9 +592,10 @@ impl Orchestrator {
     /// The id a line about `ticket` goes by: none for the Release, whose
     /// started and resumed lines are the run's.
     fn line_id<'a>(&self, ticket: &'a str) -> &'a str {
-        match self.is_release(ticket) {
-            true => "",
-            false => ticket,
+        if self.is_release(ticket) {
+            ""
+        } else {
+            ticket
         }
     }
 }
