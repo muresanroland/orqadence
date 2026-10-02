@@ -235,6 +235,7 @@ fn open_pr_prunes_build_scratch_and_keeps_evidence() {
         "verdict-1.md",
         "fix-1.md",
         "diff-1.patch",
+        "manual-work/1/manual-work.md",
     ] {
         assert!(run_dir.join(kept).exists(), "evidence pruned: {kept}");
     }

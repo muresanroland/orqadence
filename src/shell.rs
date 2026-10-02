@@ -26,6 +26,7 @@ use ratatui::DefaultTerminal;
 use crate::on_call::{self, Doorbell, OnCall};
 use crate::orchestrator::app::{self, ADDRESS_PR_COMMENTS_COUNTDOWN, RELEASE_ON};
 use crate::orchestrator::judgment::{self, Action};
+use crate::orchestrator::manual;
 use crate::orchestrator::pr::Item;
 use crate::orchestrator::release;
 use crate::orchestrator::scheduler::BdIssue;
@@ -60,7 +61,7 @@ const KEPT_EVENTS: usize = 1000;
 const RETRY: Duration = Duration::from_secs(60);
 /// Every command the Shell takes: its name, arguments and what it does. The
 /// / list shows it, and the README's table.
-const COMMANDS: [(&str, &str, &str); 16] = [
+const COMMANDS: [(&str, &str, &str); 17] = [
     ("/start-epic", "<epic>", "run every Ticket of an open Epic"),
     (
         "/start-ticket",
@@ -95,6 +96,11 @@ const COMMANDS: [(&str, &str, &str); 16] = [
         "open a PR's comments and failing checks for approval",
     ),
     ("/questions", "", "show the hidden Questions"),
+    (
+        "/manual-work",
+        "",
+        "the Manual work still open, to mark done",
+    ),
     (
         "/config",
         "",
@@ -235,6 +241,16 @@ pub(crate) struct Approval {
     by_hand: bool,
 }
 
+/// The /manual-work modal: every Run directory's open Manual work, each
+/// row checked or not, to mark done. A blocking row is never checked: only
+/// its Question marks it done, since its session waits for the facts.
+pub(crate) struct ManualWork {
+    /// The Ticket or Waypoint (its Run directory's name), the item, checked.
+    pub(crate) rows: Vec<(String, manual::Item, bool)>,
+    /// The row the cursor is on.
+    pub(crate) cursor: usize,
+}
+
 /// What the screen shows, with no terminal in it.
 pub(crate) struct Screen {
     pub(crate) folder: String,
@@ -296,6 +312,8 @@ pub(crate) struct Screen {
     /// The approval modals waiting, one PR's each, oldest first; the first
     /// shows ahead of any Question and takes its keys.
     pub(crate) approvals: Vec<Approval>,
+    /// /manual-work, while it is open: it takes every key but Ctrl-C.
+    pub(crate) manual_work: Option<ManualWork>,
     /// Esc hid the Question; /questions or Esc on an empty input line brings it back.
     pub(crate) hidden: bool,
     /// The input line is a prompt of the user's own for the front Question.
@@ -392,6 +410,7 @@ impl Screen {
             run: None,
             questions: Vec::new(),
             approvals: Vec::new(),
+            manual_work: None,
             hidden: false,
             composing: false,
             settings: None,
@@ -1352,6 +1371,25 @@ impl Screen {
                 return;
             }
         }
+        // The /manual-work modal, as the /continue checklist: ↑↓ move,
+        // Space checks a row that does not block, Enter marks the checked
+        // done, Esc closes; Ctrl-C goes on.
+        if let Some(m) = &mut self.manual_work {
+            match key.code {
+                KeyCode::Up => m.cursor = m.cursor.saturating_sub(1),
+                KeyCode::Down => m.cursor = (m.cursor + 1).min(m.rows.len() - 1),
+                KeyCode::Char(' ') => match m.rows.get_mut(m.cursor) {
+                    Some((_, item, on)) if !item.blocks => *on = !*on,
+                    _ => {}
+                },
+                KeyCode::Enter => return self.mark_done(),
+                KeyCode::Esc => self.manual_work = None,
+                _ => {}
+            }
+            if !ctrl_c {
+                return;
+            }
+        }
         if ctrl_c {
             if self.ctrl_c.is_some_and(|at| at.elapsed() < CTRL_C_WINDOW) {
                 self.quit();
@@ -2016,6 +2054,7 @@ impl Screen {
                 };
                 self.summarize(&state, &epic);
             }
+            "/manual-work" => self.open_manual_work(),
             "/questions" => match self.questions.is_empty() {
                 true => self.notice("no questions waiting", NOTICE_WINDOW),
                 false => self.hidden = false,
@@ -2518,6 +2557,80 @@ impl Screen {
             run.o.decided(&ticket);
         }
         self.show_approval();
+    }
+
+    /// Opens the /manual-work modal over the open items of every Run
+    /// directory under .orqadence-local/runs, a Ticket's or a Waypoint's,
+    /// live run or none; a notice when there are none.
+    fn open_manual_work(&mut self) {
+        let runs = self.cfg.repo.join(LOCAL).join("runs");
+        let mut dirs: Vec<_> = fs::read_dir(runs)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| {
+                let name = entry.file_name().to_string_lossy().to_string();
+                // a /continue reset's <id>.reset-<n> keeps its items under <id>
+                let id = name.split(".reset-").next().unwrap_or_default();
+                (id.to_string(), entry.path())
+            })
+            .collect();
+        dirs.sort();
+        let rows: Vec<_> = dirs
+            .iter()
+            .flat_map(|(id, dir)| {
+                manual::open(dir).into_iter().map(|mut item| {
+                    item.blocks |= self.waited_on(&item.folder);
+                    (id.clone(), item, false)
+                })
+            })
+            .collect();
+        match rows.is_empty() {
+            true => self.notice("no Manual work open", NOTICE_WINDOW),
+            false => self.manual_work = Some(ManualWork { rows, cursor: 0 }),
+        }
+    }
+
+    /// A Manual work Question waits on `folder`: its session blocks on it,
+    /// whatever its first line says.
+    fn waited_on(&self, folder: &Path) -> bool {
+        let Ok(real) = folder.canonicalize() else {
+            return false;
+        };
+        self.questions.iter().any(|q| match &q.about {
+            About::Asked(Ask::Manual { item, .. }) => {
+                item.folder.canonicalize().ok() == Some(real.clone())
+            }
+            _ => false,
+        })
+    }
+
+    /// Mark done on the /manual-work modal: each checked item's bd comment
+    /// with its What, its folder deleted, said on RECENT; the modal closes.
+    /// Each is read again first: one that came to block while the modal was
+    /// open is left to its Question, so its session still hears it is done.
+    fn mark_done(&mut self) {
+        let Some(m) = self.manual_work.take() else {
+            return;
+        };
+        for (id, item, _) in m.rows.into_iter().filter(|(_, _, on)| *on) {
+            let n = manual::number(&item.folder);
+            // its own Run directory, a reset's archive too: <dir>/manual-work/<n>
+            let dir = item.folder.ancestors().nth(2).unwrap_or(&item.folder);
+            let now = manual::read(dir, &item.folder);
+            let marked = match now {
+                Ok(item) if item.blocks || self.waited_on(&item.folder) => {
+                    Err("it blocks now, its Question marks it done".to_string())
+                }
+                Ok(item) => manual::done(&*self.cfg.tools, &self.cfg.repo, &id, &item, ""),
+                Err(err) => Err(err),
+            };
+            let text = match marked {
+                Ok(()) => format!("marked Manual work {n} done: {}", item.what),
+                Err(err) => format!("Manual work {n} not marked done: {err}"),
+            };
+            self.tell(Some(&id), &text);
+        }
     }
 
     /// The title of a Ticket on the idle tree, for the RECENT Ticket column.

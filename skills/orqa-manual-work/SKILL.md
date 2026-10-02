@@ -1,6 +1,6 @@
 ---
 name: orqa-manual-work
-description: File Manual work for the user, never do it - anything a session needs that takes a credential or a human action it cannot do (repo secrets and variables, workflow runs, dashboards, cloud accounts, terraform against real state). Writes a folder in the Run directory with written steps and, as the task needs, a wizard or a prompt for a separate session. Planned for loading by Orqadence's Stage and Brainstorm sessions once Manual work support ships, not by hand.
+description: File Manual work for the user, never do it - anything a session needs that takes a credential or a human action it cannot do (repo secrets and variables, workflow runs, dashboards, cloud accounts, terraform against real state). Writes a folder in the Run directory with written steps and, as the task needs, a wizard or a prompt for a separate session. For Orqadence's sessions, not for use by hand.
 ---
 
 # Manual work

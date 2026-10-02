@@ -2,7 +2,7 @@
 //! Shell keeps the left 42% and the plan takes the right 58%, its markdown
 //! styled; under 110 columns it folds to a box over the dimmed Shell. A Wake
 //! and a Stage's own question dock in the same frame (harness-crk), and so
-//! does the approval modal.
+//! do the approval modal and /manual-work.
 
 use std::cell::Cell;
 use std::fs;
@@ -214,6 +214,85 @@ pub(super) fn approval(f: &mut Frame, s: &Screen) {
         Span::styled("[ Fix comments ]", bold(Color::Black).bg(GREEN)),
         Span::raw("  "),
         Span::styled("[ Cancel ]", bold(Color::Black).bg(RED)),
+    ]);
+    f.render_widget(line, buttons);
+}
+
+/// The /manual-work modal in the dock: one row per open item (the
+/// cursor's marked, scrolled into sight) with its checkbox, Ticket, What and
+/// folder, a blocking one's box [-] and "blocking" after it; the cursor
+/// row's whole folder, cut at the width; then [ Mark done ] and [ Close ]; the keys
+/// at its foot.
+pub(super) fn manual_work(f: &mut Frame, s: &Screen) {
+    let Some(m) = &s.manual_work else {
+        return;
+    };
+    let (rect, block) = dock(f, s);
+    let foot = " ↑↓ Space checks · Enter marks done · Esc closes ";
+    let block = block
+        .title(Span::styled(" MANUAL WORK ", bold(TEXT)))
+        .title_bottom(Span::styled(foot, fg(MUTED)));
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let shown = |folder: &std::path::Path| {
+        let folder = folder.strip_prefix(&s.cfg.repo).unwrap_or(folder);
+        folder.display().to_string()
+    };
+    // the row cuts its folder first, so the cursor's shows whole under them
+    let detail: Vec<char> = format!("Folder: {}", shown(&m.rows[m.cursor].1.folder))
+        .chars()
+        .collect();
+    // cut at the width, not on words: a path has no spaces to wrap at
+    let lines: Vec<Line> = (detail.chunks(inner.width.max(1) as usize))
+        .map(|piece| Line::from(Span::styled(String::from_iter(piece), fg(MUTED))))
+        .collect();
+    let [head, _, body, folder, rule, buttons] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(lines.len() as u16),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    let open = Span::styled(format!("{} open", m.rows.len()), fg(TEXT));
+    f.render_widget(Line::from(open), head);
+
+    let w = body.width as usize;
+    let from = m
+        .cursor
+        .saturating_sub((body.height as usize).saturating_sub(1));
+    let rows: Vec<Line> = (m.rows.iter().enumerate().skip(from))
+        .map(|(i, (id, item, on))| {
+            let (mark, style) = match i == m.cursor {
+                true => ("›", bold(PURPLE)),
+                false => (" ", fg(TEXT)),
+            };
+            let (check, blocking) = match (item.blocks, on) {
+                (true, _) => ("[-]", "  blocking"),
+                (false, true) => ("[x]", ""),
+                (false, false) => ("[ ]", ""),
+            };
+            let room = w.saturating_sub(blocking.chars().count());
+            let text = format!(
+                "{mark} {check} {id}  {}  {}",
+                item.what,
+                shown(&item.folder)
+            );
+            Line::from(vec![
+                Span::styled(cut(&text, room), style),
+                Span::styled(blocking, fg(ORANGE)),
+            ])
+        })
+        .collect();
+    f.render_widget(Paragraph::new(rows), body);
+    f.render_widget(Paragraph::new(lines), folder);
+    f.render_widget(divider(rule.width as usize), rule);
+    let line = Line::from(vec![
+        Span::styled("[ Mark done ]", bold(Color::Black).bg(GREEN)),
+        Span::raw("  "),
+        Span::styled("[ Close ]", bold(Color::Black).bg(RED)),
     ]);
     f.render_widget(line, buttons);
 }
