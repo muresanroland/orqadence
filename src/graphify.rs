@@ -12,7 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::orchestrator::app::{self, DOCS_PASS, ROWS};
-use crate::orchestrator::herdr::{agent_name, herdr, locate};
+use crate::orchestrator::herdr::{agent_name, herdr, locate, start_agent};
 use crate::orchestrator::stage::SETTLE_TICKS;
 use crate::orchestrator::state::{local_dir, LOCAL};
 use crate::tools::{RunError, Tools};
@@ -116,14 +116,10 @@ pub(crate) fn pass(tools: &dyn Tools, repo: &Path) -> Pass {
     }
     // offline, the local tags still count
     let _ = run(&["git", "fetch", "origin", "--tags"]);
-    let merged = ["git", "tag", "--merged", "origin/HEAD", "--list", "v*"];
-    let tags = match tools.run(repo, &merged) {
-        Ok(tags) => Ok(tags),
-        // origin/HEAD unset: set it once from the remote and read again
-        Err(_) => {
-            run(&["git", "remote", "set-head", "origin", "--auto"]).and_then(|_| run(&merged))
-        }
-    };
+    // follows the remote's default branch; offline it fails as the fetch
+    // did, and the local origin/HEAD still serves
+    let _ = tools.run(repo, &["git", "remote", "set-head", "origin", "--auto"]);
+    let tags = run(&["git", "tag", "--merged", "origin/HEAD", "--list", "v*"]);
     let tag = tags.ok().and_then(|tags| latest(&tags));
     let new = is_new(handled(repo), tag.as_deref())
         .then_some(tag)
@@ -148,7 +144,8 @@ fn platforms(repo: &Path) -> BTreeSet<&'static str> {
 /// graph.json newer than the pass: the X.Y is recorded and the tab closes.
 /// Anything else records nothing, so the next check asks again, and leaves
 /// the tab open to read why. `say` takes the started line and a start's
-/// error; the pass's last RECENT line comes back.
+/// error, `opened` the tab once made; the pass's last RECENT line comes
+/// back.
 pub(crate) fn docs_pass(
     tools: &dyn Tools,
     repo: &Path,
@@ -156,11 +153,12 @@ pub(crate) fn docs_pass(
     tag: &str,
     tick: Duration,
     say: &dyn Fn(String),
+    opened: &dyn Fn(&str),
 ) -> String {
     let unfinished =
         format!("graphify docs pass on {tag} did not finish: asked again at the next check");
     let since = SystemTime::now();
-    let (tab, pane) = match start_docs_pass(tools, repo, workspace, tag, tick, say) {
+    let (tab, pane) = match start_docs_pass(tools, repo, workspace, tag, tick, say, opened) {
         Ok(started) => started,
         Err(err) => {
             say(format!("graphify docs pass on {tag} did not start: {err}"));
@@ -201,6 +199,7 @@ fn start_docs_pass(
     tag: &str,
     tick: Duration,
     say: &dyn Fn(String),
+    opened: &dyn Fn(&str),
 ) -> Result<(String, String), String> {
     let row = app::row(repo, DOCS_PASS, &[])?;
     let checkout = repo.display().to_string();
@@ -217,6 +216,7 @@ fn start_docs_pass(
     ];
     let reply = herdr(tools, repo, &create).map_err(|err| err.to_string())?;
     let (tab, pane) = (reply.result.tab.tab_id, reply.result.root_pane.pane_id);
+    opened(&tab);
     // a failed pass's agent may live on in its tab: a name of its own
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -235,14 +235,12 @@ fn start_docs_pass(
         "--",
     ];
     argv.extend(args.iter().map(String::as_str));
-    // a pane just created refuses agent_pane_busy until it has a shell
     let give_up = Instant::now() + 6 * tick;
-    while let Err(err) = herdr(tools, repo, &argv) {
-        if !err.to_string().contains("agent_pane_busy") || Instant::now() > give_up {
-            return Err(err.to_string());
-        }
+    start_agent(tools, repo, &argv, give_up, || {
         thread::sleep(tick);
-    }
+        true
+    })
+    .map_err(|err| err.to_string())?;
     // the Docs pass runs on claude or codex alone (runs_on): claude's
     // mention is in words, so its slash command
     let mention = match row.app.mention {

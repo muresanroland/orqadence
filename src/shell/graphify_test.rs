@@ -64,6 +64,7 @@ fn a_pass_refreshes_the_graph_upgrades_graphify_and_finds_a_new_tag() {
         "graphify install --platform claude",
         "graphify install --platform codex",
         "git fetch origin --tags",
+        "git remote set-head origin --auto",
         "git tag --merged origin/HEAD --list v*",
     ] {
         assert!(calls.iter().any(|c| c == want), "no {want:?} in {calls:?}");
@@ -371,5 +372,25 @@ fn idle_without_ever_working_records_nothing_even_with_a_newer_graph() {
     check(&mut s, &d, "v1.4.0");
     s.command("y");
     await_line(&mut s, UNFINISHED);
+    assert_eq!(handled(d.repo.path()), None);
+}
+
+#[test]
+fn exit_mid_pass_closes_its_tab_and_records_nothing() {
+    let d = docs(&["working"; 50]);
+    let mut s = screen_at(d.fake.clone(), d.repo.path());
+    check(&mut s, &d, "v1.4.0");
+    s.command("y");
+    await_line(
+        &mut s,
+        "graphify docs pass started on v1.4.0: claude (pane 1-1)",
+    );
+    s.command("/exit");
+    assert!(s.quit);
+    let calls = herdr_calls(&d.fake);
+    assert!(
+        calls.contains(&"herdr tab close t9".to_string()),
+        "{calls:?}"
+    );
     assert_eq!(handled(d.repo.path()), None);
 }

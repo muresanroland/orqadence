@@ -1,6 +1,7 @@
 //! What the Orchestrator reads from herdr and how it names things there.
 
 use std::path::Path;
+use std::time::Instant;
 
 use serde::Deserialize;
 #[cfg(test)]
@@ -140,6 +141,29 @@ pub(crate) fn herdr(tools: &dyn Tools, dir: &Path, args: &[&str]) -> Result<Herd
         stderr: err.to_string(),
         stdout: String::new(),
     })
+}
+
+/// herdr agent start's `argv` run in dir, giving a pane that has just been
+/// created the moment it needs to get a shell: until it has one herdr
+/// refuses with agent_pane_busy, which is not the pane being unusable.
+/// `give_up` bounds that patience; `sleep` waits a tick between tries, and
+/// its false ends it.
+pub(crate) fn start_agent(
+    tools: &dyn Tools,
+    dir: &Path,
+    argv: &[&str],
+    give_up: Instant,
+    sleep: impl Fn() -> bool,
+) -> Result<(), RunError> {
+    loop {
+        let err = match herdr(tools, dir, argv) {
+            Ok(_) => return Ok(()),
+            Err(err) => err,
+        };
+        if !err.to_string().contains("agent_pane_busy") || Instant::now() > give_up || !sleep() {
+            return Err(err);
+        }
+    }
 }
 
 /// A pane of `workspace` as event lines name it: "(pane 2-1)".

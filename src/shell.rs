@@ -26,6 +26,7 @@ use ratatui::DefaultTerminal;
 use crate::graphify;
 use crate::on_call::{self, Doorbell, OnCall};
 use crate::orchestrator::app::{self, ADDRESS_PR_COMMENTS_COUNTDOWN, RELEASE_ON};
+use crate::orchestrator::herdr::herdr;
 use crate::orchestrator::judgment::{self, Action};
 use crate::orchestrator::manual;
 use crate::orchestrator::pr::Item;
@@ -361,6 +362,9 @@ pub(crate) struct Screen {
     /// The Docs pass's RECENT lines, a thread's, and whether the pass is over.
     docs_sender: Sender<(String, bool)>,
     docs_receiver: Receiver<(String, bool)>,
+    /// The Docs pass's graphify tab once its thread has made it, which
+    /// /exit closes while docs_tag is set.
+    docs_tab: Arc<Mutex<Option<String>>>,
     /// A release downloaded while a run holds the lock: installed when it ends.
     pub(crate) update: Option<Ready>,
     /// When a pending update may try the lock again, from tick().
@@ -454,6 +458,7 @@ impl Screen {
             docs_tag: None,
             docs_sender,
             docs_receiver,
+            docs_tab: Arc::default(),
             update: None,
             retry: Instant::now(),
             reexec: false,
@@ -624,16 +629,19 @@ impl Screen {
     /// poll(); it never holds the run.
     fn run_docs_pass(&mut self, tag: String) {
         self.docs_tag = Some(tag.clone());
-        let (tools, repo, workspace, tick, tx) = (
+        *self.docs_tab.lock().unwrap() = None;
+        let (tools, repo, workspace, tick, tx, docs_tab) = (
             self.cfg.tools.clone(),
             self.cfg.repo.clone(),
             self.cfg.workspace.clone(),
             self.cfg.tick,
             self.docs_sender.clone(),
+            self.docs_tab.clone(),
         );
         thread::spawn(move || {
             let say = |line| _ = tx.send((line, false));
-            let last = graphify::docs_pass(&*tools, &repo, &workspace, &tag, tick, &say);
+            let opened = |tab: &str| *docs_tab.lock().unwrap() = Some(tab.to_string());
+            let last = graphify::docs_pass(&*tools, &repo, &workspace, &tag, tick, &say, &opened);
             let _ = tx.send((last, true));
         });
     }
@@ -2629,10 +2637,16 @@ impl Screen {
         }
     }
 
-    /// Ends the Shell; a live run is stopped first and its panes stay.
+    /// Ends the Shell; a live run is stopped first and its panes stay. A
+    /// live Docs pass is interrupted: its tab closes, its session with it,
+    /// and nothing is recorded, so the next check asks again.
     fn quit(&mut self) {
         if let Some(run) = &self.run {
             run.o.stop();
+        }
+        let tab = self.docs_tab.lock().unwrap().take();
+        if let (Some(_), Some(tab)) = (&self.docs_tag, tab) {
+            let _ = herdr(&*self.cfg.tools, &self.cfg.repo, &["tab", "close", &tab]);
         }
         self.quit = true;
     }

@@ -15,7 +15,7 @@ use super::app::{
     self, check, debate_inputs, extra_review, extra_row, fallback_row, stage_row, ticket_labels,
     App, Row,
 };
-use super::herdr::{agent_name, split_target};
+use super::herdr::{self, agent_name, split_target};
 use super::judgment::{offered, Action, Judged, PlanJudged, TypeSafe, WAKE_FLOOR};
 use super::limit::{codex_review, until, Limit, LAST_LINES};
 use super::manual;
@@ -1344,10 +1344,8 @@ impl Orchestrator {
         }
     }
 
-    /// Starts the Stage's session on `app` in `pane` with `args`, giving a
-    /// pane that has just been created the moment it needs to get a shell:
-    /// until it has one herdr refuses with agent_pane_busy, which is not the
-    /// pane being unusable. `give_up` bounds that patience; stop ends it.
+    /// Starts the Stage's session on `app` in `pane` with `args`, patient
+    /// with a new pane's agent_pane_busy until `give_up`; stop ends it.
     fn start_agent(
         &self,
         ticket: &str,
@@ -1362,18 +1360,9 @@ impl Orchestrator {
             "agent", "start", &name, "--kind", app.name, "--pane", pane, "--",
         ];
         argv.extend(args.iter().map(String::as_str));
-        loop {
-            let err = match self.herdr(&argv) {
-                Ok(_) => return Ok(()),
-                Err(err) => err,
-            };
-            if !err.to_string().contains("agent_pane_busy") || Instant::now() > give_up {
-                return Err(err);
-            }
-            if !self.sleep() {
-                return Err(err);
-            }
-        }
+        herdr::start_agent(&*self.cfg.tools, &self.cfg.repo, &argv, give_up, || {
+            self.sleep()
+        })
     }
 
     /// A blocked session: Implement at its plan dialog with a plan newer

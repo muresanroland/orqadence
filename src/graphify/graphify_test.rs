@@ -4,7 +4,6 @@ use crate::orchestrator::state::State;
 use crate::orchestrator::write_file;
 use crate::tempdir::TempDir;
 use crate::tools::fake::Fake;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// With no Orchestrator: off runs nothing; on, the checkout's graph is
 /// copied in when it has one, and graphify update . runs in the worktree, bounded.
@@ -74,40 +73,6 @@ fn the_handled_version_is_kept_in_orqadence_local_and_outlives_a_saved_empty_sta
     assert_eq!(handled(repo.path()), Some((1, 3)));
     assert!(set_handled(repo.path(), "v2.0.0-rc1").is_err());
     assert_eq!(handled(repo.path()), Some((1, 3)));
-}
-
-#[test]
-fn an_unset_origin_head_is_set_once_and_the_tags_read_again() {
-    let repo = TempDir::new();
-    let set = AtomicBool::new(false);
-    let fake = Fake::new(move |_, argv| match argv.join(" ").as_str() {
-        "git remote set-head origin --auto" => {
-            set.store(true, Ordering::SeqCst);
-            Ok(String::new())
-        }
-        "git tag --merged origin/HEAD --list v*" if !set.load(Ordering::SeqCst) => {
-            Err("malformed object name origin/HEAD".to_string())
-        }
-        "git tag --merged origin/HEAD --list v*" => Ok("v1.3.0\n".to_string()),
-        _ => Ok(String::new()),
-    });
-    let (failed, tag) = pass(&*fake, repo.path());
-    assert_eq!(failed, Vec::<String>::new());
-    assert_eq!(tag.as_deref(), Some("v1.3.0"));
-    let calls = fake.calls();
-    let tail = &calls[calls.len() - 3..];
-    assert_eq!(
-        tail,
-        [
-            "git tag --merged origin/HEAD --list v*",
-            "git remote set-head origin --auto",
-            "git tag --merged origin/HEAD --list v*",
-        ]
-    );
-
-    // With 1.3 handled, the same tag is not new.
-    set_handled(repo.path(), "v1.3.0").unwrap();
-    assert_eq!(pass(&*fake, repo.path()).1, None);
 }
 
 #[test]
