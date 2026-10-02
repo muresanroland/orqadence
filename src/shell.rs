@@ -23,6 +23,7 @@ use crossterm::event::{
 use ratatui::layout::{Position, Rect};
 use ratatui::DefaultTerminal;
 
+use crate::graphify;
 use crate::on_call::{self, Doorbell, OnCall};
 use crate::orchestrator::app::{self, ADDRESS_PR_COMMENTS_COUNTDOWN, RELEASE_ON};
 use crate::orchestrator::judgment::{self, Action};
@@ -347,6 +348,11 @@ pub(crate) struct Screen {
     /// The updater thread's checks, applied between commands in poll().
     update_sender: Sender<Checked>,
     update_receiver: Receiver<Checked>,
+    /// The graphify thread's passes, applied in poll() as the checks are.
+    graphify_sender: Sender<graphify::Pass>,
+    graphify_receiver: Receiver<graphify::Pass>,
+    /// A new X.Y tag the last graphify pass found, for the Docs pass.
+    pub(crate) docs_tag: Option<String>,
     /// A release downloaded while a run holds the lock: installed when it ends.
     pub(crate) update: Option<Ready>,
     /// When a pending update may try the lock again, from tick().
@@ -391,6 +397,7 @@ impl Screen {
         let (sender, receiver) = mpsc::channel();
         let (update_sender, update_receiver) = mpsc::channel();
         let (ring_sender, ring_receiver) = mpsc::channel();
+        let (graphify_sender, graphify_receiver) = mpsc::channel();
         Screen {
             folder,
             version: crate::version::version(),
@@ -433,6 +440,9 @@ impl Screen {
             dock_area: Cell::default(),
             update_sender,
             update_receiver,
+            graphify_sender,
+            graphify_receiver,
+            docs_tag: None,
             update: None,
             retry: Instant::now(),
             reexec: false,
@@ -504,6 +514,7 @@ impl Screen {
             }
             Err(err) => screen.say(&format!("update check failed: {err}")),
         }
+        screen.refresh_graphify(update::EVERY);
         screen
     }
 
@@ -541,6 +552,31 @@ impl Screen {
             let checked = update::check(&*releases, &version, &exe);
             let done = matches!(checked, Ok(Some(_)));
             if tx.send(checked).is_err() || done {
+                return;
+            }
+            thread::sleep(every);
+        });
+    }
+
+    /// The graphify thread, while the switch is on at open: one pass in the
+    /// checkout now, then one every `every`, each handed to poll(). A switch
+    /// turned off since skips the pass and hands over no tag; the thread
+    /// stops once the Screen is gone.
+    pub(crate) fn refresh_graphify(&self, every: Duration) {
+        if !app::graphify(&self.cfg.repo) {
+            return;
+        }
+        let (tools, repo, tx) = (
+            self.cfg.tools.clone(),
+            self.cfg.repo.clone(),
+            self.graphify_sender.clone(),
+        );
+        thread::spawn(move || loop {
+            let pass = match app::graphify(&repo) {
+                true => graphify::pass(&*tools, &repo),
+                false => graphify::Pass::default(),
+            };
+            if tx.send(pass).is_err() {
                 return;
             }
             thread::sleep(every);
@@ -651,6 +687,12 @@ impl Screen {
         }
         while let Ok(checked) = self.update_receiver.try_recv() {
             self.updated(checked);
+        }
+        while let Ok((failed, tag)) = self.graphify_receiver.try_recv() {
+            for line in failed {
+                self.say(&line);
+            }
+            self.docs_tag = tag;
         }
         while let Ok(rung) = self.ring_receiver.try_recv() {
             self.pushes -= 1;
@@ -2901,5 +2943,7 @@ mod approval_test;
 mod config_test;
 #[cfg(test)]
 mod demo_test;
+#[cfg(test)]
+mod graphify_test;
 #[cfg(test)]
 mod shell_test;

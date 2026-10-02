@@ -254,7 +254,7 @@ fn priced_as(model: &str) -> Option<String> {
 }
 
 /// v1.2.3 as (1, 2, 3); anything else is None.
-fn semver(tag: &str) -> Option<(u64, u64, u64)> {
+pub(crate) fn semver(tag: &str) -> Option<(u64, u64, u64)> {
     let mut parts = tag.strip_prefix('v')?.splitn(3, '.');
     let mut next = || parts.next()?.parse().ok();
     Some((next()?, next()?, next()?))
