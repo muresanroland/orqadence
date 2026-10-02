@@ -9,15 +9,15 @@ use serde::Deserialize;
 /// reads for its marker rule. It costs 1 point: GitHub counts connections,
 /// not their size.
 pub(crate) const QUERY: &str = "query($url:URI!){resource(url:$url){...on PullRequest{
-  state mergeable headRefOid mergeCommit{oid}
-  statusCheckRollup{commit{oid} state contexts(first:100){nodes{
+  state mergeable reviewDecision isMergeQueueEnabled headRefOid mergeCommit{oid}
+  statusCheckRollup{commit{oid} state contexts(first:100){pageInfo{hasNextPage} nodes{
     ...on CheckRun{name status conclusion startedAt
       checkSuite{app{slug} workflowRun{event workflow{name}}}}
     ...on StatusContext{context state description creator{login}}}}}
-  reviewThreads(first:100){nodes{id isResolved path line
-    comments(first:50){nodes{databaseId author{login __typename} body}}}}
-  reviews(last:50){nodes{databaseId url author{login __typename} body}}
-  comments(last:100){nodes{databaseId url author{login __typename} body}}}}}";
+  reviewThreads(first:100){pageInfo{hasNextPage} nodes{id isResolved path line
+    comments(first:50){pageInfo{hasNextPage} nodes{databaseId author{login __typename} body}}}}
+  reviews(last:50){pageInfo{hasPreviousPage} nodes{databaseId url author{login __typename} body}}
+  comments(last:100){pageInfo{hasPreviousPage} nodes{databaseId url author{login __typename} body}}}}}";
 
 /// The PR, the reply's `resource`.
 #[derive(Debug, Default, Deserialize)]
@@ -25,6 +25,10 @@ pub(crate) const QUERY: &str = "query($url:URI!){resource(url:$url){...on PullRe
 pub(crate) struct Pr {
     pub(crate) state: String,
     pub(crate) mergeable: String,
+    /// CHANGES_REQUESTED while a human's review asks for changes.
+    pub(crate) review_decision: Option<String>,
+    /// Its base branch has a merge queue: `gh pr merge` would queue it.
+    pub(crate) is_merge_queue_enabled: bool,
     pub(crate) head_ref_oid: String,
     merge_commit: Option<Commit>,
     status_check_rollup: Option<Rollup>,
@@ -33,17 +37,34 @@ pub(crate) struct Pr {
     comments: Nodes<Post>,
 }
 
+/// A connection's nodes, and whether it has more than the poll read.
 #[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 struct Nodes<T> {
     nodes: Vec<T>,
+    page_info: PageInfo,
+}
+
+impl<T> Nodes<T> {
+    fn more(&self) -> bool {
+        self.page_info.has_next_page || self.page_info.has_previous_page
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct Rollup {
     commit: Option<Commit>,
+    /// The rollup's first 100 contexts, and whether it has more.
     contexts: Nodes<Context>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct PageInfo {
+    has_next_page: bool,
+    /// Of a `last:` connection: it has older nodes.
+    has_previous_page: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -160,6 +181,37 @@ impl Pr {
     /// bucket.
     pub(crate) fn busy(&self) -> bool {
         self.contexts().iter().any(|c| pending(c.state()))
+    }
+
+    /// The head's checks are green: none failed, none pending, and none
+    /// past the 100 the poll reads.
+    pub(crate) fn green(&self) -> bool {
+        let rollup = self.status_check_rollup.as_ref();
+        let more = rollup.is_some_and(|r| r.contexts.page_info.has_next_page);
+        let red = |c: &&Context| failed(c.state()) || pending(c.state());
+        !more && !self.contexts().iter().any(red)
+    }
+
+    /// Whether the review bot, as review_bots names it, has reviewed the
+    /// PR, on any commit: a review of its own, not a PR comment, which may
+    /// only say it was skipped or rate limited.
+    pub(crate) fn reviewed_by(&self, bot: &str) -> bool {
+        let login = match bot {
+            "coderabbit" => "coderabbitai",
+            "greptile" => "greptile-apps",
+            other => other,
+        };
+        self.reviews.nodes.iter().any(|r| r.by(login))
+    }
+
+    /// The poll read every thread, thread comment, review and PR comment:
+    /// with any past its page, items() may miss an open one.
+    pub(crate) fn items_complete(&self) -> bool {
+        let threads = &self.review_threads;
+        !(threads.more()
+            || threads.nodes.iter().any(|t| t.comments.more())
+            || self.reviews.more()
+            || self.comments.more())
     }
 
     /// Its open items, most severe first: unresolved threads, the bots'

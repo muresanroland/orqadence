@@ -13,7 +13,7 @@ use super::stage::{
     ADDRESS_PR_COMMENTS, AWAY, DEBATE, EDITING, EXTRA_REVIEW, FINAL, FIX, IMPLEMENT, REBASE,
     REVIEW,
 };
-use super::state::{local_dir, LOCAL, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
+use super::state::{local_dir, TicketState, LOCAL, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 use crate::setup::{DEFAULT_TEMPLATE, TEMPLATE_DIR};
 use crate::skills::manifest::{placeholder, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS};
 use crate::skills::{stage_skill, CREATE_PR};
@@ -54,7 +54,7 @@ const HUMAN_MERGE_LABEL: GhLabel = (
     "D93F0B",
     "A human merges this pull request, never Orqadence",
 );
-const NO_REVIEW_LABEL: GhLabel = (
+pub(crate) const NO_REVIEW_LABEL: GhLabel = (
     "orqa:no-review",
     "C5DEF5",
     "Only Markdown and skills changed: the review bots skip it",
@@ -255,40 +255,98 @@ impl Orchestrator {
     /// so; gh failing leaves a line there too, and a PR without its
     /// orqa:no-review is not No-review, since the bots review it.
     fn label_pr(&self, ticket: &str, pr: &str) -> (bool, bool) {
-        let (tools, repo, pr_ref) = (&self.cfg.tools, &self.cfg.repo, pr_ref(pr));
-        let human_merge = self
-            .labels(ticket)
-            .and_then(|names| Ok(app::human_merge(&app::read(repo)?.1, &names)))
-            .unwrap_or_else(|err| {
-                let text = format!("Ticket labels not read, so a human merges {pr_ref}: {err}");
-                self.report(ticket, &text);
-                true
-            });
+        let human_merge = self.is_human_merge(ticket, pr);
         let label = if human_merge {
             HUMAN_MERGE_LABEL
-        } else {
-            // --no-renames: a source file renamed to Markdown is a source
-            // file deleted. -z, so a path git would quote comes as it is.
-            let range = format!("{}...HEAD", self.origin_head(ticket));
-            let argv = ["git", "diff", "--no-renames", "--name-only", "-z", &range];
-            let paths = tools.run(&self.worktree(ticket), &argv);
-            let paths = paths.unwrap_or_else(|err| {
-                let text = format!("changed files not read, so {pr_ref} is reviewed: {err}");
-                self.report(ticket, &text);
-                String::new()
-            });
-            if !is_no_review(&paths) {
-                return (false, false);
-            }
+        } else if self.changes_no_review(ticket, pr, "HEAD") {
             NO_REVIEW_LABEL
+        } else {
+            return (false, false);
         };
-        let name = label.0;
+        let (pr_ref, name) = (pr_ref(pr), label.0);
         let labelled = self.add_pr_label(pr, label);
         match &labelled {
             Ok(()) => self.log(ticket, &format!("{pr_ref} labelled {name}")),
             Err(err) => self.report(ticket, &format!("{pr_ref} not labelled {name}: {err}")),
         }
         (human_merge, !human_merge && labelled.is_ok())
+    }
+
+    /// Whether the Ticket's labels make its PR human-merge; labels that
+    /// cannot be read do, and RECENT says so.
+    fn is_human_merge(&self, ticket: &str, pr: &str) -> bool {
+        self.labels(ticket)
+            .and_then(|names| Ok(app::human_merge(&app::read(&self.cfg.repo)?.1, &names)))
+            .unwrap_or_else(|err| {
+                let text = format!(
+                    "Ticket labels not read, so a human merges {}: {err}",
+                    pr_ref(pr)
+                );
+                self.report(ticket, &text);
+                true
+            })
+    }
+
+    /// Whether the Ticket's branch, from its base to `head`, changed only
+    /// Markdown and skills; a diff that cannot be read did not, and RECENT
+    /// says so.
+    fn changes_no_review(&self, ticket: &str, pr: &str, head: &str) -> bool {
+        // --no-renames: a source file renamed to Markdown is a source file
+        // deleted. -z, so a path git would quote comes as it is.
+        let range = format!("{}...{head}", self.origin_head(ticket));
+        let argv = ["git", "diff", "--no-renames", "--name-only", "-z", &range];
+        match self.cfg.tools.run(&self.worktree(ticket), &argv) {
+            Ok(paths) => is_no_review(&paths),
+            Err(err) => {
+                let text = format!(
+                    "changed files not read, so {} is reviewed: {err}",
+                    pr_ref(pr)
+                );
+                self.report(ticket, &text);
+                false
+            }
+        }
+    }
+
+    /// Reads again, before a merge, what label_pr read as the PR opened:
+    /// the Ticket's labels, and the diff to the head about to merge. A
+    /// state saved before human_merge was, a label added since or a source
+    /// file pushed since must not merge (ADR 0007). Human-merge now is kept
+    /// and labelled. A No-review PR that is one no longer loses
+    /// orqa:no-review, so the bots review it, and waits for them; it stays
+    /// No-review until gh removes the label, so the next poll tries again.
+    /// True when the merge may go on.
+    pub(super) fn may_merge(&self, ticket: &str, ts: &TicketState, head: &str) -> bool {
+        let pr_ref = pr_ref(&ts.pr);
+        if self.is_human_merge(ticket, &ts.pr) {
+            self.update(ticket, |ts| ts.human_merge = true);
+            let labelled = self.add_pr_label(&ts.pr, HUMAN_MERGE_LABEL);
+            let text = match labelled {
+                Ok(()) => format!(
+                    "{pr_ref} is human-merge now, labelled {}",
+                    HUMAN_MERGE_LABEL.0
+                ),
+                Err(err) => format!("{pr_ref} is human-merge now, not labelled: {err}"),
+            };
+            self.report(ticket, &text);
+            return false;
+        }
+        if !ts.no_review || self.changes_no_review(ticket, &ts.pr, head) {
+            return true;
+        }
+        let name = NO_REVIEW_LABEL.0;
+        let argv = ["gh", "pr", "edit", &ts.pr, "--remove-label", name];
+        let text = match self.cfg.tools.run(&self.cfg.repo, &argv) {
+            Ok(_) => {
+                self.update(ticket, |ts| ts.no_review = false);
+                format!("{pr_ref} changes more than Markdown and skills now: {name} removed, the bots review it")
+            }
+            Err(err) => format!(
+                "{pr_ref} changes more than Markdown and skills now, {name} not removed: {err}"
+            ),
+        };
+        self.report(ticket, &text);
+        false
     }
 
     /// Puts the label on the PR. gh refuses one the repo lacks, so when it

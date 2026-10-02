@@ -585,13 +585,21 @@ impl World {
             return Ok(json!(listed.map(BdTicket::json).collect::<Vec<_>>()).to_string());
         }
 
+        let merged = r#"{"state":"MERGED","mergeable":"UNKNOWN","mergeCommit":{"oid":"m3rg3d"}}"#;
+        if cmd.starts_with("gh api repos/") {
+            // the repo's merge settings, GitHub's defaults
+            let repo = json!({"full_name": "o/r", "allow_squash_merge": true,
+                "allow_rebase_merge": true, "allow_merge_commit": true});
+            return Ok(repo.to_string());
+        }
+        if cmd.starts_with("gh pr merge") {
+            w.prs.insert(argv[3].to_string(), merged.to_string());
+            return Ok(String::new());
+        }
         // the PR at a url, as the poll's GraphQL query shapes it
         let pr = |url: &str| match (w.prs.get(url), w.merged) {
             (Some(pr), _) => pr.clone(),
-            (None, true) => {
-                r#"{"state":"MERGED","mergeable":"UNKNOWN","mergeCommit":{"oid":"m3rg3d"}}"#
-                    .to_string()
-            }
+            (None, true) => merged.to_string(),
             (None, false) => r#"{"state":"OPEN","mergeable":"MERGEABLE"}"#.to_string(),
         };
         if cmd.starts_with("gh api graphql") {
