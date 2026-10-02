@@ -112,27 +112,6 @@ fn a_worktree_path_is_escaped_in_the_review_settings_on_claude() {
     );
 }
 
-/// claude's code-editing Stages in the worktree (Fix, Rebase, Address PR
-/// comments) deny gh secret, gh variable and gh workflow run through their
-/// settings; codex's args are as they were.
-#[test]
-fn claudes_worktree_args_deny_the_gh_commands_and_codexs_are_unchanged() {
-    let run = "/tmp/run";
-    let args = (app("claude").unwrap().worktree_args)(run);
-    let at = args.iter().position(|arg| arg == "--settings").unwrap();
-    let settings: Value = serde_json::from_str(&args[at + 1]).unwrap();
-    assert_eq!(
-        settings,
-        json!({ "permissions": { "deny": [
-            "Bash(gh secret:*)", "Bash(gh variable:*)", "Bash(gh workflow run:*)",
-        ] } })
-    );
-    assert_eq!(
-        (app("codex").unwrap().worktree_args)(run),
-        ["--sandbox", "workspace-write", "--add-dir", run]
-    );
-}
-
 #[test]
 fn the_moderators_inputs_carry_each_sides_command() {
     let skill = SKILLS

@@ -464,14 +464,9 @@ fn fix_and_address_pr_comments_get_the_open_manual_work() {
     }
 }
 
-/// An Implement session that files an item, Blocks: `blocks`, while it
-/// works, and goes on working: the item's folder.
-fn files_while_working(w: &World, o: &Orchestrator, blocks: &'static str) -> std::path::PathBuf {
-    files_what_while_working(w, o, blocks, "Set the DNS record.")
-}
-
-/// files_while_working, the item's What `what`.
-fn files_what_while_working(
+/// An Implement session that files an item, Blocks: `blocks` and What
+/// `what`, while it works, and goes on working: the item's folder.
+fn files_while_working(
     w: &World,
     o: &Orchestrator,
     blocks: &'static str,
@@ -498,8 +493,8 @@ fn ticks(w: &World, pane: &str) {
 
 /// The notice Events: their RECENT lines and Notice texts.
 fn notices(w: &World) -> Vec<(String, String)> {
-    let events = w.events().into_iter();
-    events
+    w.events()
+        .into_iter()
         .filter_map(|e| e.notice.map(|notice| (e.text, notice)))
         .collect()
 }
@@ -509,7 +504,7 @@ fn notices(w: &World) -> Vec<(String, String)> {
 #[test]
 fn non_blocking_manual_work_is_noticed_once_even_after_a_resume() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    let folder = files_while_working(&w, &o, "no");
+    let folder = files_while_working(&w, &o, "no", "Set the DNS record.");
     let o = Arc::new(o);
     let run = spawn_ticket(o.clone(), "hx-1");
 
@@ -550,7 +545,7 @@ fn non_blocking_manual_work_is_noticed_once_even_after_a_resume() {
 #[test]
 fn blocking_manual_work_is_never_noticed() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    files_while_working(&w, &o, "yes");
+    files_while_working(&w, &o, "yes", "Set the DNS record.");
     let o = Arc::new(o);
     let mut run = spawn_ticket(o.clone(), "hx-1");
     w.await_line("hx-1 implement started");
@@ -576,7 +571,7 @@ fn blocking_manual_work_is_never_noticed() {
 #[test]
 fn a_multi_line_what_is_noticed_on_one_line() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
-    files_what_while_working(&w, &o, "no", "Set the DNS record.\n  Then wait an hour.");
+    files_while_working(&w, &o, "no", "Set the DNS record.\n  Then wait an hour.");
     let o = Arc::new(o);
     let _run = spawn_ticket(o.clone(), "hx-1");
     w.await_event("manual work in implement, not blocking");

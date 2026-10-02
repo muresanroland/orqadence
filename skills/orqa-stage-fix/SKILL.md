@@ -33,7 +33,7 @@ With **Fix items** `none` there is nothing to apply: go to section 2.
    - **Extra review skipped**: if **Unreviewed** says `the extra review skipped too`, say that the label's Extra review did not run because the PR opened unreviewed. Otherwise leave this part out.
    - **Extra review Findings still open at the cap**: if this is Round 3 or the final Fix, list the Extra review's Findings (from **Extra review files**) that came to this Fix as fix items. Mark the ones whose item says `not debated`: the label's Debate is off. Otherwise leave this part out.
    - **Not run**: copy each **Extra review files** file's `## Not run` section, naming its file. Leave this part out when none has one.
-   - **Manual work**: each open item from the **Manual work** Input and each item you filed in this session, with its What and its folder, saying it blocks when it does. Leave this part out when the Input is none and you filed nothing.
+   - **Manual work**: each open item from the **Manual work** Input and each item you filed in this session whose folder still exists (marking an item done deletes its folder), with its What and its folder, saying it blocks when it does. Leave this part out when none remain.
 5. Do not merge the PR and do not close the Ticket. The Orchestrator merges, never a session; the Ticket closes when its PR is merged.
 
 If **Open PR** is no, do not push and do not open anything: another Round follows, or, after the last Round, the Extra review before the PR and a final Fix.

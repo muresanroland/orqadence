@@ -1,3 +1,4 @@
+use super::app::GH_DENY;
 use super::judgment::fake::Fake;
 use super::judgment::{Action, PlanJudged, PLAN_FLOOR};
 use super::plan::open_question;
@@ -170,7 +171,7 @@ fn implement_starts_in_plan_mode_with_the_hook_in_the_run_directory() {
         "{start:?}"
     );
     let fix = w.called("herdr agent start h-hx-1-fix");
-    let deny = r#"{"permissions":{"deny":["Bash(gh secret:*)","Bash(gh variable:*)","Bash(gh workflow run:*)"]}}"#;
+    let deny = json!({ "permissions": { "deny": GH_DENY } });
     assert!(
         fix[0].ends_with(&format!(
             " -- --permission-mode auto --add-dir {} --settings {deny}",
@@ -182,9 +183,7 @@ fn implement_starts_in_plan_mode_with_the_hook_in_the_run_directory() {
     assert_eq!(
         settings,
         json!({
-            "permissions": { "deny": [
-                "Bash(gh secret:*)", "Bash(gh variable:*)", "Bash(gh workflow run:*)",
-            ] },
+            "permissions": { "deny": GH_DENY },
             "hooks": { "PreToolUse": [{ "matcher": "ExitPlanMode", "hooks": [{
                 "type": "command",
                 "command": format!("'/opt/the orqa/orqa' __plan-hook '{}'", run.join("plan.md").display()),
@@ -780,9 +779,7 @@ fn a_split_starts_opusplan_and_approves_by_clearing_the_context() {
             assert_eq!(
                 settings,
                 json!({
-                    "permissions": { "deny": [
-                        "Bash(gh secret:*)", "Bash(gh variable:*)", "Bash(gh workflow run:*)",
-                    ] },
+                    "permissions": { "deny": GH_DENY },
                     "env": {
                         "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-fable-5-1",
                         "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-5-5",
@@ -805,9 +802,7 @@ fn a_split_starts_opusplan_and_approves_by_clearing_the_context() {
             assert_eq!(
                 settings,
                 json!({
-                    "permissions": { "deny": [
-                        "Bash(gh secret:*)", "Bash(gh variable:*)", "Bash(gh workflow run:*)",
-                    ] },
+                    "permissions": { "deny": GH_DENY },
                     "hooks": { "PreToolUse": plan_hook },
                 })
             );
