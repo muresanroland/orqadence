@@ -10,7 +10,7 @@ You are in a fresh session inside the kept worktree of a Ticket whose pull reque
 ## Do
 
 1. Read the **Ticket file**: it reminds you what the change is for; its `## Epic context` is the parent Epic's description: context, not scope. Load every skill under **Label skills** by name in this session, and follow **Label guidance**.
-   When the work needs a credential or a human action this session cannot do, load the orqa-manual-work skill by name and file it as Manual work. Never run a command on its never-run list (`gh secret`, `gh variable`, `gh workflow run` and the rest): a denied attempt is your sign to file it. **Manual work** under Inputs lists the items already filed for this Ticket, or none: never file one of them again.
+   When the work needs a credential or a human action this session cannot do, load the orqa-manual-work skill by name and file it as Manual work. Never run a command it says never to run (`gh secret`, `gh variable`, `gh workflow run` and the rest): a denied attempt is your sign to file it. **Manual work** under Inputs lists the items already filed for this Ticket, or none: never file one of them again.
 2. `git fetch origin`, then rebase the branch onto the **Default branch**, keeping both sides' intent: never resolve a conflict by dropping the other change.
    Use the {{merge-conflicts}} skill for the rebase.
    When a conflict cannot keep both intents, stop mid-rebase and ask (see the end): the hunk, what each side meant, and the options ours, theirs, or a merge you describe. The answer resumes the rebase. Never abort it.
