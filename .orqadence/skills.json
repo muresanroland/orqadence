@@ -3,21 +3,65 @@
     "orqa-address-pr-comments": {
       "shipped": true
     },
+    "orqa-api-and-interface-design": {
+      "repo": "https://github.com/addyosmani/agent-skills",
+      "path": "skills/api-and-interface-design",
+      "commit": "9d0c60d406b454a78ccc0a175b19932047aa4dac"
+    },
     "orqa-caveman": {
       "repo": "https://github.com/JuliusBrussee/caveman",
       "path": "skills/caveman",
       "commit": "2fd153c67988e980fb0b2455c90832159a6a5a25"
+    },
+    "orqa-ci-cd-and-automation": {
+      "repo": "https://github.com/addyosmani/agent-skills",
+      "path": "skills/ci-cd-and-automation",
+      "commit": "9d0c60d406b454a78ccc0a175b19932047aa4dac"
     },
     "orqa-code-review": {
       "repo": "https://github.com/mattpocock/skills",
       "path": "skills/engineering/code-review",
       "commit": "d81f3a183412e71a5b1e84ca21bc1a35eea03a60"
     },
+    "orqa-codebase-design": {
+      "repo": "https://github.com/mattpocock/skills",
+      "path": "skills/engineering/codebase-design",
+      "commit": "d81f3a183412e71a5b1e84ca21bc1a35eea03a60"
+    },
     "orqa-create-pr": {
       "shipped": true
     },
+    "orqa-deprecation-and-migration": {
+      "repo": "https://github.com/addyosmani/agent-skills",
+      "path": "skills/deprecation-and-migration",
+      "commit": "9d0c60d406b454a78ccc0a175b19932047aa4dac"
+    },
+    "orqa-docker-build-strategies": {
+      "repo": "https://github.com/docker/skills",
+      "path": "skills/docker-build-strategies",
+      "commit": "3e1cbd179989c2c193f3e4e6553a655907c2003b"
+    },
+    "orqa-domain-modeling": {
+      "repo": "https://github.com/mattpocock/skills",
+      "path": "skills/engineering/domain-modeling",
+      "commit": "d81f3a183412e71a5b1e84ca21bc1a35eea03a60"
+    },
+    "orqa-frontend-design": {
+      "repo": "https://github.com/anthropics/skills",
+      "path": "skills/frontend-design",
+      "commit": "8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4"
+    },
+    "orqa-github-actions-hardening": {
+      "repo": "https://github.com/github/awesome-copilot",
+      "path": "skills/github-actions-hardening",
+      "commit": "143a3d976b3c1603cc8932984d5e1f28501cb5fc"
+    },
     "orqa-infra-review": {
       "shipped": true
+    },
+    "orqa-kubernetes-skill": {
+      "repo": "https://github.com/lukasniessen/kubernetes-skill",
+      "commit": "34f93c1e409156958cc7c410ab1aa88ab512f10f"
     },
     "orqa-ponytail": {
       "repo": "https://github.com/DietrichGebert/ponytail",
@@ -33,6 +77,16 @@
       "repo": "https://github.com/mattpocock/skills",
       "path": "skills/engineering/resolving-merge-conflicts",
       "commit": "c55ee46073ed923f86ce59a5eb3b6d895095d1b7"
+    },
+    "orqa-security-and-hardening": {
+      "repo": "https://github.com/addyosmani/agent-skills",
+      "path": "skills/security-and-hardening",
+      "commit": "9d0c60d406b454a78ccc0a175b19932047aa4dac"
+    },
+    "orqa-security-review": {
+      "repo": "https://github.com/getsentry/skills",
+      "path": "skills/security-review",
+      "commit": "d18b7aa8ba878354e5c348310230e652f7690f9c"
     },
     "orqa-stage-address": {
       "shipped": true
@@ -52,13 +106,31 @@
     "orqa-stage-rebase": {
       "shipped": true
     },
+    "orqa-stage-release": {
+      "shipped": true
+    },
     "orqa-stage-review": {
       "shipped": true
+    },
+    "orqa-supabase-postgres-best-practices": {
+      "repo": "https://github.com/supabase/agent-skills",
+      "path": "skills/supabase-postgres-best-practices",
+      "commit": "c9be0e931b7930f7d02126d04774d904c381e7d7"
     },
     "orqa-tdd": {
       "repo": "https://github.com/mattpocock/skills",
       "path": "skills/engineering/tdd",
       "commit": "c55ee46073ed923f86ce59a5eb3b6d895095d1b7"
+    },
+    "orqa-terraform-style-guide": {
+      "repo": "https://github.com/hashicorp/agent-skills",
+      "path": "plugins/terraform/skills/terraform-style-guide",
+      "commit": "f706481af9b8fedb66de909f6243ad29601afa0c"
+    },
+    "orqa-terraform-test": {
+      "repo": "https://github.com/hashicorp/agent-skills",
+      "path": "plugins/terraform/skills/terraform-test",
+      "commit": "f706481af9b8fedb66de909f6243ad29601afa0c"
     },
     "orqa-typesafe-ai": {
       "repo": "https://github.com/typesafe-ai/skills",

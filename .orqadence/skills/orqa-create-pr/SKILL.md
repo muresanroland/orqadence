@@ -1,14 +1,14 @@
 ---
 name: orqa-create-pr
-description: Open a pull request for the current branch in any repo - find and run the repo's own checks, push, and create the PR with gh. Use when a ticket's work is committed and ready for review. Never merges; merging is human-only.
+description: Open a pull request for the current branch in any repo - find and run the repo's own checks, push, and create the PR with gh. Use when a ticket's work is committed and ready for review. Never merges: the Orchestrator merges, never a session.
 ---
 
 # orqa-create-pr
 
 Open a pull request for the current branch. This skill ends at "PR created".
 
-**You never merge.** No `gh pr merge`, no `--auto`, no merge into the default branch, no
-approving your own PR. Merging is the human's.
+**The Orchestrator merges, never a session.** No `gh pr merge`, no `--auto`, no merge into the
+default branch, no approving your own PR.
 
 Nothing here assumes a stack. The repo's own conventions win over everything below: find them
 in step 1 and follow them. You may be running unwatched (the Orqadence Fix Stage runs this in a

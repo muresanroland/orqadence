@@ -1,0 +1,10 @@
+reviews:
+  auto_review:
+    labels:
+      - "!orqa:no-review"
+  # Installed skill copies: skills/ holds orqa's own sources, the rest are
+  # pinned upstream skills that a skill update replaces wholesale.
+  path_filters:
+    - "!.orqadence/skills/**"
+    - "!.agents/skills/**"
+    - "!.claude/skills/**"
