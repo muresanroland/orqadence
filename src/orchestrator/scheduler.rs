@@ -658,10 +658,7 @@ impl Orchestrator {
         }
         if !pr.ready() {
             // park answered to a Question asked before a gate closed again
-            if !ts.merge_question.is_empty() && self.take_park(ticket) {
-                let reason = format!("{} not merged: you parked it", pr_ref(&ts.pr));
-                self.park_merge(ticket, &reason);
-            }
+            self.parked_late(ticket, ts);
             return;
         }
         // the head the user, or the Judgment, said to merge as it is
@@ -681,6 +678,10 @@ impl Orchestrator {
             let waiting = !silent.is_empty() && due.is_none_or(|due| (self.cfg.clock)() < due);
             let items = pr.items();
             let open = !silent.is_empty() || !items.is_empty();
+            // park answered as the last item or bot it listed cleared
+            if !open && self.parked_late(ticket, ts) {
+                return;
+            }
             // with nothing known open, items past the poll's page wait
             if waiting || (!open && !pr.items_complete()) {
                 return;
@@ -770,6 +771,17 @@ impl Orchestrator {
             Err(err) if !err.stderr.is_empty() => Err(err.stderr),
             Err(err) => Err(err.to_string()),
         }
+    }
+
+    /// Parks the Ticket on park answered to a merge Question merge_open
+    /// will not read: the gate it was asked past moved. Whether it parked.
+    fn parked_late(&self, ticket: &str, ts: &TicketState) -> bool {
+        let parked = !ts.merge_question.is_empty() && self.take_park(ticket);
+        if parked {
+            let reason = format!("{} not merged: you parked it", pr_ref(&ts.pr));
+            self.park_merge(ticket, &reason);
+        }
+        parked
     }
 
     /// The merge Question (ADR 0007): the PR's gate fails only because of
@@ -891,19 +903,21 @@ impl Orchestrator {
         // ponytail: the diff goes whole; one TypeSafe refuses parks like
         // an unreachable TypeSafe. Cut it to the files the items name if
         // big PRs park too often.
-        let range = format!("{}...{}", self.origin_head(ticket), pr.head_ref_oid);
-        let diff = (self.cfg.tools).run(&self.worktree(ticket), &["git", "diff", &range]);
-        let score = match diff {
-            _ if !pr.items_complete() => Err(format!("{what} and more than the poll read")),
-            Err(err) => Err(format!("{what} and its diff was not read: {err}")),
-            Ok(diff) => {
-                let state = MergeState {
-                    pr: &ts.pr,
-                    diff,
-                    open_items: items,
-                    silent_bots: silent,
-                };
-                (self.judge_merge(ticket, &state)).map_err(|why| format!("{what} and {why}"))
+        let score = if !pr.items_complete() {
+            Err(format!("{what} and more than the poll read"))
+        } else {
+            let range = format!("{}...{}", self.origin_head(ticket), pr.head_ref_oid);
+            match (self.cfg.tools).run(&self.worktree(ticket), &["git", "diff", &range]) {
+                Err(err) => Err(format!("{what} and its diff was not read: {err}")),
+                Ok(diff) => {
+                    let state = MergeState {
+                        pr: &ts.pr,
+                        diff,
+                        open_items: items,
+                        silent_bots: silent,
+                    };
+                    (self.judge_merge(ticket, &state)).map_err(|why| format!("{what} and {why}"))
+                }
             }
         };
         if self.stopping() {
@@ -982,6 +996,11 @@ impl Orchestrator {
             self.update(ticket, |ts| {
                 open = ts.status == STATUS_PR_OPEN;
                 if open {
+                    // merge answered for the head never covered an item it
+                    // did not list
+                    if !ids.is_subset(&ts.offered) {
+                        ts.merge_anyway.clear();
+                    }
                     ts.offered = ids;
                 }
             });

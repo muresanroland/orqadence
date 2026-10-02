@@ -1586,6 +1586,41 @@ fn a_new_item_on_the_same_head_asks_again_and_the_old_answer_is_dropped() {
     assert_eq!(asked[1].0, "PR #hx-1: 2 PR comments open, merge it?");
 }
 
+/// merge answered and then not merged, its method not read, covers no PR
+/// comment that comes on the same head later: that one is asked about.
+#[test]
+fn merge_answered_does_not_cover_a_later_item_on_the_same_head() {
+    let (w, o, _) = left_open(&["coderabbit"]);
+    w.fail_once("gh api repos/", "offline");
+    answer(&o, "merge");
+    poll(&o);
+    assert_eq!(o.ticket("hx-1").merge_anyway, "a");
+    let mut pr = open_thread("a");
+    comments(&mut pr).push(human(9, "Please rename this"));
+    serve(&w, &pr);
+    poll(&o); // offers the PR comment, its modal cancelled
+    poll(&o);
+    assert!(merges(&w).is_empty());
+    assert_eq!(questions(&w).len(), 2);
+}
+
+/// park answered as the last open PR comment resolves still parks: the
+/// Question it answered is never read again.
+#[test]
+fn park_answered_as_the_last_item_resolves_still_parks() {
+    let (w, o, _) = left_open(&["coderabbit"]);
+    serve(&w, &open(PR65, "a"));
+    answer(&o, "park");
+    poll(&o);
+    let ts = o.ticket("hx-1");
+    let reason = "PR #hx-1 not merged: you parked it";
+    assert_eq!(
+        (ts.status.as_str(), ts.reason.as_str()),
+        (STATUS_PARKED, reason)
+    );
+    assert!(merges(&w).is_empty());
+}
+
 /// An answer the Question does not offer is dropped, and the Question,
 /// gone from the Shell with its answer, is asked again.
 #[test]
