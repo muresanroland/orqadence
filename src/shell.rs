@@ -275,7 +275,7 @@ pub(crate) struct Screen {
     /// The Brainstorms' Maps, Waypoints and Ideas, kept off the tree.
     brainstorm_issues: Vec<BdIssue>,
     /// The saved Brainstorms, loaded at open.
-    #[allow(dead_code)] // the BRAINSTORM box reads it (Ticket 19)
+    #[allow(dead_code)] // nothing shows the BRAINSTORM box yet
     pub(crate) brainstorms: Vec<Brainstorm>,
     /// The run's State: a snapshot of the live Orchestrator's, or the saved
     /// one; the Overall bar, the TICKETS rows and the resumable mark come
@@ -2418,7 +2418,8 @@ impl Screen {
 
     /// The open Tickets /start-ticket names: every word an open Ticket's id
     /// exactly, as the @ list fills them in, or else the one Ticket resolve
-    /// finds. A Ticket blocked by an open one that is neither named nor in
+    /// finds. A Brainstorm's Waypoint or Idea never enters the Pipeline:
+    /// refused. A Ticket blocked by an open one that is neither named nor in
     /// the run would never start: refused, as is one whose Epic waits so.
     fn tickets_named(&mut self, query: &str) -> Option<Vec<String>> {
         let words: Vec<&str> = query
@@ -2957,14 +2958,16 @@ fn load_epics(
     tools: &dyn Tools,
     queue: &[String],
 ) -> Result<(Vec<Epic>, Vec<BdIssue>), String> {
-    let all = bd_list(repo, tools)?;
-    let out: Vec<bool> = all
+    let mut issues = bd_list(repo, tools)?;
+    let brainstorms: Vec<bool> = issues
         .iter()
-        .map(|i| brainstorm::kind(&all, i).is_some())
+        .map(|i| brainstorm::kind(&issues, i).is_some())
         .collect();
-    let (kept_out, issues): (Vec<_>, Vec<_>) = all.into_iter().zip(out).partition(|(_, o)| *o);
-    let kept_out: Vec<BdIssue> = kept_out.into_iter().map(|(i, _)| i).collect();
-    let mut issues: Vec<BdIssue> = issues.into_iter().map(|(i, _)| i).collect();
+    let mut brainstorms = brainstorms.into_iter();
+    // extract_if visits each issue once, in order
+    let kept_out: Vec<BdIssue> = issues
+        .extract_if(.., |_| brainstorms.next().unwrap_or(false))
+        .collect();
     let mut epics: Vec<Epic> = issues
         .iter()
         .filter(|i| i.issue_type == "epic" && i.status != "closed")

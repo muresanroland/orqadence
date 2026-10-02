@@ -30,7 +30,7 @@ fn mapped(idea: &str, map: &str) -> Brainstorm {
             parked: true,
             limited: true,
         }],
-        labels: vec!["LABEL: docs | the docs | skills: a | tickets: hx-1".to_string()],
+        label_lines: vec!["LABEL: docs | the docs | skills: a | tickets: hx-1".to_string()],
         epics: vec!["hx-e1".to_string()],
         docs_pr: "https://github.com/o/r/pull/71".to_string(),
         docs_merged: true,

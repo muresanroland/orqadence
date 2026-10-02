@@ -14,8 +14,7 @@ pub(crate) const IDEA: &str = "brainstorm:idea";
 /// The Map, an epic. Its children inherit the label unless created with
 /// --no-inherit-labels, so a Map is also an epic.
 pub(crate) const MAP: &str = "brainstorm:map";
-// The Waypoint kinds, on the Map's children; the Waypoint sessions read
-// them (Tickets 12 onwards).
+// The Waypoint kinds, on the Map's children; nothing reads them yet.
 #[allow(dead_code)]
 pub(crate) const GRILLING: &str = "brainstorm:grilling";
 #[allow(dead_code)]
@@ -77,7 +76,7 @@ pub(crate) struct Brainstorm {
     pub(crate) research: Vec<Research>,
     /// The LABEL lines not yet answered.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub(crate) labels: Vec<String>,
+    pub(crate) label_lines: Vec<String>,
     /// The Epics written, in build order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) epics: Vec<String>,
@@ -94,7 +93,7 @@ fn brainstorms(repo: &Path) -> PathBuf {
 impl Brainstorm {
     /// Writes its state.json atomically: a reader sees the old or the new
     /// state, never half of one.
-    // Nothing writes one yet; the idea modal's Start does (Ticket 7).
+    // Nothing writes one yet but the tests.
     #[allow(dead_code)]
     pub(crate) fn save(&self, repo: &Path) -> io::Result<()> {
         local_dir(repo)?;
