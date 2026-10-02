@@ -1011,3 +1011,118 @@ fn a_worktree_dirty_before_the_review_is_never_reset() {
         );
     }
 }
+
+/// graphify on, hx-1 run: the calls around its worktree, in order, each
+/// with its dir. `graph`: the checkout has graphify-out/graph.json;
+/// `resumed`: the worktree exists already.
+fn graphify_calls(
+    graph: bool,
+    resumed: bool,
+) -> (Vec<(std::path::PathBuf, String)>, Arc<World>, Orchestrator) {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    super::app::set_switch(&w.repo, &super::app::GRAPHIFY, true).unwrap();
+    if graph {
+        write_file(&w.repo.join("graphify-out/graph.json"), "{}");
+    }
+    if resumed {
+        std::fs::create_dir_all(o.worktree("hx-1")).unwrap();
+    }
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let record = seen.clone();
+    w.hook(move |dir, argv| {
+        let call = argv.join(" ");
+        let watched = [
+            "bd worktree create",
+            "git pull",
+            "cp ",
+            "graphify",
+            "bd update hx-1",
+            "herdr agent start",
+        ];
+        if watched.iter().any(|p| call.starts_with(p)) {
+            record.lock().unwrap().push((dir.to_path_buf(), call));
+        }
+        None
+    });
+    o.run_ticket("hx-1");
+    let seen = seen.lock().unwrap().clone();
+    (seen, w, o)
+}
+
+/// The checkout's graph is copied into a new worktree and brought up to its
+/// branch there, after the pull and before the Ticket is marked in progress
+/// and Implement starts.
+#[test]
+fn a_new_worktree_gets_the_checkouts_graph_updated_before_implement() {
+    let (seen, w, o) = graphify_calls(true, false);
+    let tree = o.worktree("hx-1");
+    let calls: Vec<&str> = seen.iter().map(|(_, c)| c.as_str()).take(6).collect();
+    assert!(calls[0].starts_with("bd worktree create"), "{calls:?}");
+    assert!(calls[1].starts_with("git pull"), "{calls:?}");
+    assert_eq!(
+        calls[2],
+        format!(
+            "cp -R {}/graphify-out {}/graphify-out",
+            w.repo.display(),
+            tree.display()
+        )
+    );
+    assert_eq!(calls[3], "graphify update .");
+    assert!(calls[4].contains("in_progress"), "{calls:?}");
+    assert!(calls[5].contains("-implement"), "{calls:?}");
+    assert_eq!(seen[2].0, tree);
+    assert_eq!(seen[3].0, tree);
+}
+
+/// No graph in the checkout: the worktree's is built from nothing.
+#[test]
+fn a_new_worktree_with_no_graph_in_the_checkout_only_updates() {
+    let (seen, w, o) = graphify_calls(false, false);
+    assert!(w.called("cp ").is_empty(), "{:?}", w.called("cp "));
+    let update = seen.iter().find(|(_, c)| c.starts_with("graphify"));
+    assert_eq!(
+        update,
+        Some(&(o.worktree("hx-1"), "graphify update .".to_string()))
+    );
+}
+
+/// graphify off: no graph is copied or built.
+#[test]
+fn graphify_off_makes_no_graph_in_a_new_worktree() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    write_file(&w.repo.join("graphify-out/graph.json"), "{}");
+    o.run_ticket("hx-1");
+    assert!(!w.called("bd worktree create").is_empty());
+    assert!(w.called("cp ").is_empty() && w.called("graphify").is_empty());
+}
+
+/// A resumed Ticket's worktree keeps the graph it has.
+#[test]
+fn a_resumed_ticket_keeps_its_worktrees_graph() {
+    let (_, w, _) = graphify_calls(true, true);
+    assert!(w.called("bd worktree create").is_empty());
+    assert!(w.called("cp ").is_empty() && w.called("graphify").is_empty());
+    assert_eq!(
+        stages_run(&w).first().map(String::as_str),
+        Some("implement")
+    );
+}
+
+/// The graph is optional: graphify update . failing is a log line, and the
+/// Ticket goes on to Implement.
+#[test]
+fn a_failed_graphify_update_is_a_log_line_and_the_ticket_goes_on() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    super::app::set_switch(&w.repo, &super::app::GRAPHIFY, true).unwrap();
+    w.fail_once("graphify update", "graphify: command not found");
+    o.run_ticket("hx-1");
+    assert!(
+        w.log().contains(" hx-1 code graph not built: graphify update .: exit status 1: graphify: command not found\n"),
+        "log:\n{}",
+        w.log()
+    );
+    assert_eq!(
+        stages_run(&w).first().map(String::as_str),
+        Some("implement")
+    );
+}
