@@ -213,6 +213,21 @@ fn input_skips_an_item_with_no_what_yet() {
     );
 }
 
+/// A multi-line What lands on its one Input line.
+#[test]
+fn input_flattens_a_multi_line_what() {
+    let dir = TempDir::new();
+    let folder = dir.path().join("manual-work").join("1");
+    file_with(&folder, "no", "Set the DNS record.\n  Then wait an hour.");
+    assert_eq!(
+        manual::input(dir.path()),
+        format!(
+            "\n  {} · Blocks: no · Set the DNS record. Then wait an hour.",
+            folder.display()
+        )
+    );
+}
+
 /// A Stage's session that files blocking Manual work: the folder beside
 /// its result file, then STATUS: manual and the folder, and waits idle.
 pub(crate) fn files_manual(p: &Prompt) -> (String, String) {

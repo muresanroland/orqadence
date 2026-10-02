@@ -91,8 +91,8 @@ pub(crate) fn open(run_dir: &Path) -> Vec<Item> {
 }
 
 /// The Manual work Input: a line per open item, its folder, Blocks and
-/// What, or none. One with no What yet is still being written, listed once
-/// it has one.
+/// What, or none; a multi-line What flattened onto its line. One with no
+/// What yet is still being written, listed once it has one.
 pub(crate) fn input(run_dir: &Path) -> String {
     let lines: Vec<String> = open(run_dir)
         .iter()
@@ -102,7 +102,7 @@ pub(crate) fn input(run_dir: &Path) -> String {
             format!(
                 "\n  {} · Blocks: {blocks} · {}",
                 item.folder.display(),
-                item.what
+                item.what.split_whitespace().collect::<Vec<_>>().join(" ")
             )
         })
         .collect();
