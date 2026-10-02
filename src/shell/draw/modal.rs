@@ -86,8 +86,9 @@ const NOTICE_W: u16 = 60;
 /// The front Notice modal over whatever else shows: a box centred over a
 /// Clear, its border and title red and ' ERROR ' or green and ' NOTICE ';
 /// the message wrapped whole to the box, which is as tall as it up to the
-/// screen, a longer one from its scroll row; one [ OK ], focused; at its
-/// foot the time left while it closes by itself.
+/// screen, a longer one from its scroll row; one [ OK ], focused, or
+/// [ Yes ] and [ No ], the cursor's focused; at its foot the time left
+/// while it closes by itself.
 pub(super) fn notice(f: &mut Frame, s: &Screen) {
     let n = &s.notices[0];
     let (title, c) = match n.kind {
@@ -147,8 +148,19 @@ pub(super) fn notice(f: &mut Frame, s: &Screen) {
     n.scroll.set(from);
     let rows: Vec<Line> = rows.into_iter().skip(from).take(shown).collect();
     f.render_widget(Paragraph::new(rows), text);
-    let ok = Span::styled("[ OK ]", bold(Color::Black).bg(c));
-    f.render_widget(Line::from(ok).centered(), button);
+    let button_at = |label: &'static str, on: bool| match on {
+        true => Span::styled(label, bold(Color::Black).bg(c)),
+        false => Span::styled(label, fg(TEXT)),
+    };
+    let buttons = match n.yes {
+        Some(_) => vec![
+            button_at("[ Yes ]", n.cursor == 0),
+            Span::raw("  "),
+            button_at("[ No ]", n.cursor == 1),
+        ],
+        None => vec![button_at("[ OK ]", true)],
+    };
+    f.render_widget(Line::from(buttons).centered(), button);
 }
 
 /// The front approval modal in the dock: its PR, the other PRs waiting,

@@ -154,16 +154,17 @@ struct Run {
     _lock: Lock,
 }
 
-/// What a yes/no confirmation does on yes.
+/// What a yes/no confirmation, or a yes/no Notice modal, does on yes.
 pub(crate) enum Pending {
     /// Discard the saved run and start this Epic, or a Ticket run on these
     /// Tickets.
     Start { ids: Vec<String>, epic: bool },
     /// Stop the run and exit.
     Exit,
-    /// Close the done Epic in bd: its completed State, which poll has
-    /// cleared from the Shell, for the summary in the reason, and whether
-    /// the close comment went in, so a retry never adds it twice.
+    /// Close the done Epic in bd, asked in a Notice modal: its completed
+    /// State, which poll has cleared from the Shell, for the summary in the
+    /// reason, and whether the close comment went in, so a retry never adds
+    /// it twice.
     Close { done: State, commented: bool },
 }
 
@@ -223,6 +224,10 @@ pub(crate) struct Notice {
     /// The first row of a message longer than the box shown, which ↑↓
     /// move; the draw, which knows the height, keeps it inside.
     pub(crate) scroll: Cell<usize>,
+    /// A yes/no one in place of [ OK ]: what yes does.
+    pub(crate) yes: Option<Pending>,
+    /// The button the cursor is on: 0 yes, 1 no.
+    pub(crate) cursor: usize,
 }
 
 /// The approval modal: a Ticket's PR comments and failing checks, each
@@ -290,6 +295,9 @@ pub(crate) struct Screen {
     /// The Notice modals waiting, oldest first; the first shows over
     /// everything and takes every key.
     pub(crate) notices: Vec<Notice>,
+    /// The close-Epic Notice modal, held while the Epic summary is open
+    /// until Esc on it raises it over the summary.
+    pub(crate) held: Option<Notice>,
     ctrl_c: Option<Instant>,
     pub(crate) ticks: u64,
     /// A run is live: the header's panes step, the status row spins.
@@ -400,6 +408,7 @@ impl Screen {
             recent: Cell::new(0),
             notice: None,
             notices: Vec::new(),
+            held: None,
             ctrl_c: None,
             ticks: 0,
             running: false,
@@ -726,7 +735,7 @@ impl Screen {
                     done,
                     commented: false,
                 };
-                self.confirm(&text, pending);
+                self.ask_close(&text, pending);
             }
         }
         self.reload_epics();
@@ -1348,10 +1357,21 @@ impl Screen {
             key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
         // A Notice modal takes every key before the approval modal, the
         // summary, /config, a Question or the input: Enter or Esc closes it,
-        // ↑↓ scroll a long one; any other key stops its countdown for good
-        // and is swallowed, but Ctrl-C goes on to exit.
+        // ↑↓ scroll a long one; a yes/no one takes y or n, ←→ or Tab move,
+        // Enter answers and Esc says no. Any other key stops its countdown
+        // for good and is swallowed, but Ctrl-C goes on to exit.
         if let Some(n) = self.notices.first_mut() {
+            let ask = n.yes.is_some();
             match key.code {
+                KeyCode::Char('y') if ask => return self.answer_notice(true),
+                KeyCode::Char('n') | KeyCode::Esc if ask => return self.answer_notice(false),
+                KeyCode::Enter if ask => {
+                    let yes = n.cursor == 0;
+                    return self.answer_notice(yes);
+                }
+                KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab if ask => {
+                    n.cursor ^= 1
+                }
                 KeyCode::Enter | KeyCode::Esc => return self.close_notice(),
                 KeyCode::Up => scroll_by(&n.scroll, -1),
                 KeyCode::Down => scroll_by(&n.scroll, 1),
@@ -1409,10 +1429,13 @@ impl Screen {
             return;
         }
         // The Epic summary reads like the plan and takes nothing else; Esc
-        // closes it.
+        // closes it, or raises the close-Epic Notice modal held over it.
         if let Some(summary) = &self.summary {
             match key.code {
-                KeyCode::Esc => self.summary = None,
+                KeyCode::Esc => match self.held.take() {
+                    Some(n) => self.raise(n),
+                    None => self.summary = None,
+                },
                 code => self.scroll_rows(&summary.scroll, code),
             }
             return;
@@ -1764,11 +1787,7 @@ impl Screen {
                 let About::Confirm(pending) = q.about else {
                     unreachable!()
                 };
-                match pending {
-                    Pending::Start { ids, epic } => self.start(&ids, epic, true),
-                    Pending::Exit => self.quit(),
-                    Pending::Close { done, commented } => self.close_epic(&q.text, done, commented),
-                }
+                self.confirmed(&q.text, pending);
             }
             (About::Confirm(_), _) => {
                 self.questions.remove(0);
@@ -1834,7 +1853,7 @@ impl Screen {
             Ok(_) => _ = self.reload_epics(),
             Err(err) => {
                 self.notice(&err.to_string(), NOTICE_WINDOW);
-                self.confirm(text, Pending::Close { done, commented });
+                self.ask_close(text, Pending::Close { done, commented });
             }
         }
     }
@@ -1899,6 +1918,42 @@ impl Screen {
             asked: chrono::Local::now(),
             opened: OnceCell::new(),
         });
+    }
+
+    /// What a confirmation's yes does, asked in `text`.
+    fn confirmed(&mut self, text: &str, pending: Pending) {
+        match pending {
+            Pending::Start { ids, epic } => self.start(&ids, epic, true),
+            Pending::Exit => self.quit(),
+            Pending::Close { done, commented } => self.close_epic(text, done, commented),
+        }
+    }
+
+    /// Asks in a yes/no Notice modal whether to close the done Epic, its
+    /// cursor on no: over the Epic summary once Esc closes it, at once
+    /// with none open.
+    fn ask_close(&mut self, text: &str, pending: Pending) {
+        let n = Notice {
+            yes: Some(pending),
+            cursor: 1,
+            ..notice_modal(NoticeKind::Info, text, None)
+        };
+        match self.summary {
+            Some(_) => self.held = Some(n),
+            None => self.raise(n),
+        }
+    }
+
+    /// The front yes/no Notice modal answered: it closes, and the Epic
+    /// summary under it; yes does what it asks.
+    fn answer_notice(&mut self, yes: bool) {
+        let n = self.notices.remove(0);
+        self.show_notice();
+        self.summary = None;
+        self.off_call("you answered");
+        if let (true, Some(pending)) = (yes, n.yes) {
+            self.confirmed(&n.text, pending);
+        }
     }
 
     /// A confirmation or the /continue checklist: shown at once, ahead of
@@ -2475,13 +2530,12 @@ impl Screen {
     /// Raises a Notice modal; one raised while another shows waits behind it.
     /// An autoclose counts down only while it shows.
     pub(crate) fn notify(&mut self, kind: NoticeKind, text: &str, autoclose: Option<Duration>) {
-        self.notices.push(Notice {
-            kind,
-            text: text.to_string(),
-            autoclose,
-            closes: None,
-            scroll: Cell::new(0),
-        });
+        self.raise(notice_modal(kind, text, autoclose));
+    }
+
+    /// Raises a Notice modal built whole, as notify does.
+    fn raise(&mut self, n: Notice) {
+        self.notices.push(n);
         if self.notices.len() == 1 {
             self.show_notice();
         }
@@ -2799,6 +2853,19 @@ fn mouse_reporting(on: bool) {
 /// Moves a scroll row by `by`, never under 0; the draw keeps it inside.
 fn scroll_by(rows: &Cell<usize>, by: isize) {
     rows.set(rows.get().saturating_add_signed(by));
+}
+
+/// A Notice modal with one [ OK ], not yet shown.
+fn notice_modal(kind: NoticeKind, text: &str, autoclose: Option<Duration>) -> Notice {
+    Notice {
+        kind,
+        text: text.to_string(),
+        autoclose,
+        closes: None,
+        scroll: Cell::new(0),
+        yes: None,
+        cursor: 0,
+    }
 }
 
 /// The screen thread: take the Events and the State, draw, poll for a key

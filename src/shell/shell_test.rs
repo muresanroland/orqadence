@@ -277,6 +277,14 @@ fn question(s: &Screen) -> &str {
     }
 }
 
+/// The front yes/no Notice modal's text, or "" with none showing.
+fn asked(s: &Screen) -> &str {
+    match s.notices.first() {
+        Some(n) if n.yes.is_some() => n.text.as_str(),
+        _ => "",
+    }
+}
+
 /// Polls the Shell until its Ticket Questions number `n`.
 pub(super) fn await_questions(s: &mut Screen, n: usize) {
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -2175,6 +2183,7 @@ fn start_epic_runs_the_tickets_to_prs_and_a_done_epic_clears_the_saved_run() {
     assert_eq!(load_state(&w.repo).unwrap(), State::default());
     assert_eq!(w.lock().peak, 1, "max_tickets 1 was not obeyed");
     s.key(key(KeyCode::Esc)); // the Epic summary
+    s.key(key(KeyCode::Esc)); // no to closing the Epic
     assert!(
         log(&w).contains(" hx-1 PR #hx-1 opened after 1 round (https://example.test/pr/hx-1)\n")
             && log(&w).contains(" Epic done, every Ticket closed\n"),
@@ -2851,7 +2860,7 @@ fn a_releasing_runs_summary_opens_after_its_release_naming_the_version() {
             s.key(key(KeyCode::Esc)); // no's Notice: how to tag it by hand
         }
         s.key(key(KeyCode::Esc));
-        assert_eq!(question(&s), "close Epic hx Epic hx?");
+        assert_eq!(asked(&s), "close Epic hx Epic hx?");
         s.key(key(KeyCode::Char('y')));
         let comment = format!(
             "bd comments add hx Every Ticket merged; released {released}:\n\
@@ -6700,9 +6709,10 @@ fn a_ticket_added_mid_run_holds_the_summary_until_its_pr_opens() {
     await_end(&mut s);
 }
 
-/// When the last Ticket merges and the Epic is done, a confirmation offers
-/// to close the Epic: yes comments each Ticket's PR on it and runs bd close
-/// with the Epic summary in the reason, no runs nothing.
+/// When the last Ticket merges and the Epic is done, Esc on the summary
+/// raises a yes/no Notice modal over it, never above the input line: yes
+/// comments each Ticket's PR on it and runs bd close with the Epic summary
+/// in the reason, no runs nothing; either closes the modal and the summary.
 #[test]
 fn the_close_confirmation_on_the_last_merge_runs_bd_close_on_yes_and_nothing_on_no() {
     for (answer, want) in [('y', 1), ('n', 0)] {
@@ -6718,9 +6728,21 @@ fn the_close_confirmation_on_the_last_merge_runs_bd_close_on_yes_and_nothing_on_
         await_line(&mut s, "Epic done, every Ticket closed");
         await_end(&mut s);
         assert!(s.summary.is_some(), "the summary never opened");
+        assert_eq!(asked(&s), "", "asked before the summary closed");
         s.key(key(KeyCode::Esc));
-        assert_eq!(question(&s), "close Epic hx Epic hx?");
+        assert_eq!(asked(&s), "close Epic hx Epic hx?");
+        assert!(
+            s.summary.is_some(),
+            "Esc closed the summary under the modal"
+        );
+        assert!(!s.showing(), "asked above the input line too");
+        let buf = render(&s, 120, 40);
+        assert!(row_of(&buf, "[ Yes ]").contains("[ No ]"));
         s.key(key(KeyCode::Char(answer)));
+        assert!(
+            s.summary.is_none() && s.notices.is_empty(),
+            "answered {answer}"
+        );
         assert_eq!(
             w.called("bd comments add hx "),
             vec!["bd comments add hx Every Ticket merged:\n- hx-1 Ticket hx-1: https://example.test/pr/hx-1"; want],
@@ -6737,7 +6759,6 @@ fn the_close_confirmation_on_the_last_merge_runs_bd_close_on_yes_and_nothing_on_
             vec![format!("bd close hx --reason {reason}"); want],
             "answered {answer}"
         );
-        assert!(!s.showing(), "the confirmation stayed");
         // The done Epic cleared the State: /summary alone still shows it.
         s.command("/summary");
         let sum = s.summary.as_ref().expect("no summary of the last run");
@@ -6764,7 +6785,7 @@ fn the_close_comment_names_no_pr_for_a_ticket_closed_by_hand() {
     s.command("/start-epic hx");
     await_end(&mut s);
     s.key(key(KeyCode::Esc));
-    assert_eq!(question(&s), "close Epic hx Epic hx?");
+    assert_eq!(asked(&s), "close Epic hx Epic hx?");
     s.key(key(KeyCode::Char('y')));
     assert_eq!(
         w.called("bd comments add hx "),
@@ -6786,7 +6807,7 @@ fn the_close_reason_keeps_a_parked_tickets_reason() {
     s.command("/start-epic hx");
     await_end(&mut s);
     s.key(key(KeyCode::Esc));
-    assert_eq!(question(&s), "close Epic hx Epic hx?");
+    assert_eq!(asked(&s), "close Epic hx Epic hx?");
     s.key(key(KeyCode::Char('y')));
     let closed = w.called("bd close hx ");
     assert!(
@@ -6809,17 +6830,17 @@ fn a_failed_close_asks_again_and_never_comments_twice() {
     w.fail_once("bd comments add hx ", "comment failed");
     s.calling = true;
     s.key(key(KeyCode::Char('y')));
-    assert_eq!(question(&s), "close Epic hx Epic hx?");
+    assert_eq!(asked(&s), "close Epic hx Epic hx?");
     assert!(!s.calling, "the answer left On call on");
     assert!(w.called("bd close hx ").is_empty());
     w.fail_once("bd close hx ", "close failed");
     s.key(key(KeyCode::Char('y')));
-    assert_eq!(question(&s), "close Epic hx Epic hx?");
+    assert_eq!(asked(&s), "close Epic hx Epic hx?");
     s.key(key(KeyCode::Char('y')));
     // the failed comment and the one that went in; the failed close and the one that did
     assert_eq!(w.called("bd comments add hx ").len(), 2);
     assert_eq!(w.called("bd close hx ").len(), 2);
-    assert!(!s.showing(), "the confirmation stayed");
+    assert!(s.notices.is_empty(), "the confirmation stayed");
 }
 
 #[test]
