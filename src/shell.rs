@@ -726,9 +726,8 @@ impl Screen {
     /// its tab closes, its session with it, and nothing is recorded, so the
     /// next check asks again.
     pub(crate) fn close(&mut self) {
-        // ponytail: a tab still being created goes on with its thread, the
-        // process ends; the next check asks again and its tab is a new one
-        // cancelled under the lock the pass records under: it records nothing after
+        // cancelled under the lock the pass records under: it records nothing
+        // after, and closes a tab it makes after
         let tab = {
             let mut docs = self.docs_tab.lock().unwrap();
             docs.cancelled = true;

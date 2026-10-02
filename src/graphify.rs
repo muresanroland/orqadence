@@ -172,7 +172,12 @@ pub(crate) fn docs_pass(
         format!("graphify docs pass on {tag} did not finish: asked again at the next check");
     let since = SystemTime::now();
     let deadline = Instant::now() + limit;
-    let opened = |tab: &str| docs_tab.lock().unwrap().tab = Some(tab.to_string());
+    // under the lock close() cancels with: a tab made after it is not kept
+    let opened = |tab: &str| {
+        let mut docs = docs_tab.lock().unwrap();
+        docs.tab = (!docs.cancelled).then(|| tab.to_string());
+        docs.tab.is_some()
+    };
     let (tab, pane) = match start_docs_pass(tools, repo, workspace, tag, tick, say, &opened) {
         Ok(started) => started,
         Err(err) => {
@@ -224,7 +229,7 @@ pub(crate) struct DocsTab {
 }
 
 /// The graphify tab and its root pane, the session started and prompted
-/// there: its tab and pane.
+/// there: its tab and pane. A tab `opened` refuses closes, unstarted.
 fn start_docs_pass(
     tools: &dyn Tools,
     repo: &Path,
@@ -232,7 +237,7 @@ fn start_docs_pass(
     tag: &str,
     tick: Duration,
     say: &dyn Fn(String),
-    opened: &dyn Fn(&str),
+    opened: &dyn Fn(&str) -> bool,
 ) -> Result<(String, String), String> {
     let row = app::row(repo, DOCS_PASS, &[])?;
     let checkout = repo.display().to_string();
@@ -249,7 +254,10 @@ fn start_docs_pass(
     ];
     let reply = herdr(tools, repo, &create).map_err(|err| err.to_string())?;
     let (tab, pane) = (reply.result.tab.tab_id, reply.result.root_pane.pane_id);
-    opened(&tab);
+    if !opened(&tab) {
+        let _ = herdr(tools, repo, &["tab", "close", &tab]);
+        return Err("docs pass cancelled".to_string());
+    }
     // a failed pass's agent may live on in its tab: a name of its own
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)

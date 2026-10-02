@@ -441,3 +441,32 @@ fn a_check_during_the_pass_leaves_the_graph_to_it() {
     check(&mut s, &d, "v1.4.0");
     assert_eq!(updates(), before, "a check refreshed the graph mid-pass");
 }
+
+#[test]
+fn a_tab_made_after_close_is_closed_and_starts_nothing() {
+    let d = docs(&[]);
+    let cancelled = crate::graphify::DocsTab {
+        tab: None,
+        cancelled: true,
+    };
+    let last = crate::graphify::docs_pass(
+        &*d.fake,
+        d.repo.path(),
+        "",
+        "v1.4.0",
+        Duration::from_millis(1),
+        Duration::from_secs(5),
+        &|_| {},
+        &Mutex::new(cancelled),
+    );
+    assert_eq!(last, UNFINISHED);
+    let calls = herdr_calls(&d.fake);
+    assert!(
+        calls.contains(&"herdr tab close t9".to_string()),
+        "{calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|c| c.starts_with("herdr agent")),
+        "{calls:?}"
+    );
+}
