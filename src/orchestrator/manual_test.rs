@@ -43,6 +43,7 @@ fn a_folder_reads_its_sections() {
         what: "Add the DEPLOY_TOKEN secret to the repo.".to_string(),
         why: "The deploy job reads it; the session has no credential.".to_string(),
         how: "Run wizard.sh, then check the Actions settings page.".to_string(),
+        blocks: false,
     };
     assert_eq!(manual::read(dir.path(), &folder).unwrap(), item);
     let relative = Path::new("manual-work/1");
@@ -101,6 +102,19 @@ fn a_linked_manual_work_folder_is_an_error() {
     std::fs::create_dir_all(&mine).unwrap();
     std::os::unix::fs::symlink(other.join("manual-work"), mine.join("manual-work")).unwrap();
     assert!(manual::read(&mine, Path::new("manual-work/1")).is_err());
+}
+
+/// manual-work/2 linked to manual-work/1: open lists the item once.
+#[cfg(unix)]
+#[test]
+fn open_skips_a_linked_item_folder() {
+    let dir = TempDir::new();
+    let items = dir.path().join("manual-work");
+    file_item(&items.join("1"));
+    std::os::unix::fs::symlink(items.join("1"), items.join("2")).unwrap();
+    let open = manual::open(dir.path());
+    assert_eq!(open.len(), 1, "{open:?}");
+    assert_eq!(open[0].folder, items.join("1"));
 }
 
 /// Done: a bd comment on the Ticket whose Run directory holds the item, with

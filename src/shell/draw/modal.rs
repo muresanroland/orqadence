@@ -434,19 +434,17 @@ pub(super) fn asked(f: &mut Frame, s: &Screen) {
         }
         // the item's own sections, under their headings
         About::Asked(Ask::Manual {
-            pane,
-            item:
-                manual::Item {
-                    folder,
-                    what,
-                    why,
-                    how,
-                },
-            ..
+            pane, item: work, ..
         }) => {
-            let folder = folder.strip_prefix(&s.cfg.repo).unwrap_or(folder);
+            let folder = work
+                .folder
+                .strip_prefix(&s.cfg.repo)
+                .unwrap_or(&work.folder);
             item = format!(
-                "What\n{what}\n\nWhy\n{why}\n\nHow\n{how}\n\nFolder: {}",
+                "What\n{}\n\nWhy\n{}\n\nHow\n{}\n\nFolder: {}",
+                work.what,
+                work.why,
+                work.how,
                 folder.display()
             );
             ("MANUAL WORK", pane.as_str(), &item, false)

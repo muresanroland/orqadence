@@ -16,6 +16,8 @@ pub(crate) struct Item {
     pub(crate) what: String,
     pub(crate) why: String,
     pub(crate) how: String,
+    /// Its session waits on it: `Blocks: yes` on manual-work.md's first line.
+    pub(crate) blocks: bool,
 }
 
 /// Reads the item `filed` names, relative to `run_dir` or absolute: an
@@ -30,10 +32,7 @@ pub(crate) fn read(run_dir: &Path, filed: &Path) -> Result<Item, String> {
         .canonicalize()
         .ok()
         .map(|dir| dir.join("manual-work"));
-    if real.parent().is_none()
-        || real.parent() != items.as_deref()
-        || number(&real).parse::<u64>().is_err()
-    {
+    if real.parent() != items.as_deref() || number(&real).parse::<u64>().is_err() {
         return Err(format!(
             "{} is not a folder manual-work/<n>/ in {}",
             folder.display(),
@@ -62,8 +61,33 @@ pub(crate) fn read(run_dir: &Path, filed: &Path) -> Result<Item, String> {
         what: section("What"),
         why: section("Why"),
         how: section("How"),
+        blocks: body.lines().next().is_some_and(|first| {
+            first
+                .split('·')
+                .any(|field| field.trim().eq_ignore_ascii_case("Blocks: yes"))
+        }),
         folder,
     })
+}
+
+/// The items open in `run_dir`, its manual-work/<n>/ folders read, in
+/// number order; one that does not read is left out, and so is a link, which
+/// would list its target's item twice.
+pub(crate) fn open(run_dir: &Path) -> Vec<Item> {
+    let entries = fs::read_dir(run_dir.join("manual-work"))
+        .into_iter()
+        .flatten();
+    let mut items: Vec<Item> = entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            if entry.file_type().ok()?.is_symlink() {
+                return None;
+            }
+            read(run_dir, &entry.path()).ok()
+        })
+        .collect();
+    items.sort_by_key(|item| number(&item.folder).parse::<u64>().unwrap_or_default());
+    items
 }
 
 /// An item's number, its folder's name: the n of manual-work/<n>/.

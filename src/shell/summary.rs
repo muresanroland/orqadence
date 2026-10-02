@@ -1,8 +1,8 @@
 //! The summary of an Epic or a Ticket run: each Ticket's PR, Rounds and
-//! Findings, and the Parked ones with their reasons, built fresh from bd,
-//! the State and each Ticket's Run directory evidence (harness-0sx.5,
-//! layout B), with each Ticket's cost and time (orchestrator/cost.rs). The
-//! pager that shows it is draw/pager.rs.
+//! Findings, the Parked ones with their reasons, and the Manual work not
+//! done, built fresh from bd, the State and each Ticket's Run directory
+//! evidence (harness-0sx.5, layout B), with each Ticket's cost and time
+//! (orchestrator/cost.rs). The pager that shows it is draw/pager.rs.
 
 use std::cell::Cell;
 use std::path::Path;
@@ -10,6 +10,7 @@ use std::path::Path;
 use super::suffix_order;
 use crate::orchestrator::app;
 use crate::orchestrator::cost::{self, Cost, Logged, Span};
+use crate::orchestrator::manual;
 use crate::orchestrator::pipeline::MAX_ROUNDS;
 use crate::orchestrator::result::{read_stage_result, ResultRequirements, StageResult};
 use crate::orchestrator::scheduler::BdIssue;
@@ -58,6 +59,8 @@ pub(crate) struct Ticket {
     pub(crate) left: Vec<String>,
     /// Why it is Parked.
     pub(crate) parked: Option<String>,
+    /// Its Manual work not done, each folder relative to the repo.
+    pub(crate) manual: Vec<manual::Item>,
     /// Its sessions' tokens and API-equivalent cost, and the Apps it ran on.
     pub(crate) cost: Cost,
     /// Its time in the orchestrator log.
@@ -167,9 +170,9 @@ pub(crate) fn released(state: &State) -> Option<String> {
 
 /// One Ticket from its Run directory: a Round per verdict-N.md, the PR from
 /// the final Fix's result or the last Round's, merged and parked from bd and
-/// the State. Its cost is its transcripts' and its TypeSafe Judgments'. Its
-/// Apps are its transcripts', its log's, its State sessions' and, once it
-/// has had a Debate, the sides'.
+/// the State, its Manual work its open items. Its cost is its transcripts'
+/// and its TypeSafe Judgments'. Its Apps are its transcripts', its log's,
+/// its State sessions' and, once it has had a Debate, the sides'.
 fn ticket(
     repo: &Path,
     state: &State,
@@ -241,6 +244,17 @@ fn ticket(
         parked: ts
             .filter(|ts| ts.status == STATUS_PARKED)
             .map(|ts| ts.reason.clone()),
+        manual: manual::open(&dir)
+            .into_iter()
+            .map(|item| manual::Item {
+                folder: item
+                    .folder
+                    .strip_prefix(repo)
+                    .unwrap_or(&item.folder)
+                    .into(),
+                ..item
+            })
+            .collect(),
         cost,
         time: logged.span,
     }

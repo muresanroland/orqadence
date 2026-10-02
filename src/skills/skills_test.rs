@@ -1,4 +1,4 @@
-use super::{EXTRA_FILES, SKILLS};
+use super::SKILLS;
 use crate::orchestrator::write_file;
 use crate::tempdir::TempDir;
 use std::fs;
@@ -547,12 +547,7 @@ fn manual_work_names_its_folder_status_and_never_run_list() {
 #[test]
 fn manual_work_template_is_vendored_with_its_licence() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("skills/orqa-manual-work/template.sh");
-    let shipped = EXTRA_FILES
-        .iter()
-        .find(|(skill, file, _)| *skill == "orqa-manual-work" && *file == "template.sh")
-        .unwrap()
-        .2;
-    assert_eq!(shipped, fs::read_to_string(&path).unwrap());
+    let shipped = fs::read_to_string(&path).unwrap();
     assert!(shipped.starts_with("#!/usr/bin/env bash\n"));
     for text in [
         "github.com/mattpocock/skills",

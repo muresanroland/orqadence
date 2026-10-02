@@ -4270,6 +4270,7 @@ fn manual_work_docks_its_what_why_how_and_folder() {
                 what: "Add the DEPLOY_TOKEN secret.".to_string(),
                 why: "The deploy job reads it.".to_string(),
                 how: "Run wizard.sh.".to_string(),
+                blocks: false,
             },
         },
     ));
@@ -5848,6 +5849,119 @@ fn summary_counts_each_tickets_rounds_and_findings_from_its_run_directory() {
     );
     assert_eq!(total, (5_200_000, "15.50".to_string(), false));
     assert_eq!(sum.time.map(|t| t.num_minutes()), Some(130));
+}
+
+/// Files Manual work in summary_world: hx-2's items 2 and 10, which do not
+/// block, and hx-3's item 1, which does.
+fn file_summary_manual_work(w: &World) {
+    let runs = w.repo.join(".orqadence-local/runs");
+    let items = [
+        ("hx-2", "10", "implement", "no", "Set the DNS record."),
+        ("hx-2", "2", "fix", "no", "Add the DEPLOY_TOKEN secret."),
+        ("hx-3", "1", "implement", "yes", "Log in to the registry."),
+    ];
+    for (id, n, stage, blocks, what) in items {
+        let body = format!(
+            "Ticket: {id} · Stage: {stage} · Blocks: {blocks}\n\n## What\n{what}\n\n\
+             ## Why\nNo credential.\n\n## How\nRun wizard.sh.\n\n## Report back\n"
+        );
+        write_file(
+            &runs
+                .join(id)
+                .join("manual-work")
+                .join(n)
+                .join("manual-work.md"),
+            &body,
+        );
+    }
+}
+
+/// Each Ticket's Manual work not done, read fresh from its Run directory:
+/// its What, its folder relative to the repo and whether it blocks, in
+/// number order. A folder gone, marked done, is no longer listed.
+#[test]
+fn summary_lists_each_tickets_manual_work_not_done() {
+    let (w, mut s) = summary_world();
+    s.command("/summary");
+    let sum = s.summary.as_ref().expect("no summary");
+    assert!(sum.tickets.iter().all(|t| t.manual.is_empty()));
+
+    file_summary_manual_work(&w);
+    let listed = |s: &Screen| -> Vec<(String, String, String, bool)> {
+        let sum = s.summary.as_ref().expect("no summary");
+        sum.tickets
+            .iter()
+            .flat_map(|t| {
+                t.manual.iter().map(|i| {
+                    let folder = i.folder.display().to_string();
+                    (t.id.clone(), i.what.clone(), folder, i.blocks)
+                })
+            })
+            .collect()
+    };
+    s.command("/summary");
+    let item = |id: &str, what: &str, n: &str, blocks| {
+        let folder = format!(".orqadence-local/runs/{id}/manual-work/{n}");
+        (id.to_string(), what.to_string(), folder, blocks)
+    };
+    assert_eq!(
+        listed(&s),
+        [
+            item("hx-2", "Add the DEPLOY_TOKEN secret.", "2", false),
+            item("hx-2", "Set the DNS record.", "10", false),
+            item("hx-3", "Log in to the registry.", "1", true),
+        ]
+    );
+
+    std::fs::remove_dir_all(w.repo.join(".orqadence-local/runs/hx-3/manual-work/1")).unwrap();
+    s.command("/summary");
+    assert_eq!(
+        listed(&s),
+        [
+            item("hx-2", "Add the DEPLOY_TOKEN secret.", "2", false),
+            item("hx-2", "Set the DNS record.", "10", false),
+        ]
+    );
+}
+
+/// MANUAL WORK NOT DONE follows PARKED: per item its Ticket and whether it
+/// blocks, its What and its folder. With none, no section.
+#[test]
+fn the_summary_shows_manual_work_not_done_after_the_parked_tickets() {
+    let (w, mut s) = summary_world();
+    s.command("/summary");
+    let buf = render(&s, 120, 50);
+    assert!(find(&buf, "MANUAL WORK").is_none(), "{:#?}", rows(&buf));
+
+    file_summary_manual_work(&w);
+    s.command("/summary");
+    let buf = render(&s, 120, 50);
+    let (_, parked) = find(&buf, "PARKED").expect("no PARKED");
+    let body: Vec<String> = (parked + 3..parked + 16)
+        .map(|y| cols(&buf, y, 31, 120).trim_end().to_string())
+        .collect();
+    assert_eq!(
+        body,
+        [
+            "MANUAL WORK NOT DONE",
+            "  hx-2 Ticket hx-2",
+            "    blocks: no",
+            "    what: Add the DEPLOY_TOKEN secret.",
+            "    folder: .orqadence-local/runs/hx-2/manual-work/2",
+            "  hx-2 Ticket hx-2",
+            "    blocks: no",
+            "    what: Set the DNS record.",
+            "    folder: .orqadence-local/runs/hx-2/manual-work/10",
+            "  hx-3 Ticket hx-3",
+            "    blocks: yes",
+            "    what: Log in to the registry.",
+            "    folder: .orqadence-local/runs/hx-3/manual-work/1",
+        ],
+        "{:#?}",
+        rows(&buf)
+    );
+    let (x, y) = find(&buf, "hx-3 Ticket hx-3").unwrap();
+    assert_eq!(buf[(x, y)].fg, ticket_color("hx-3"));
 }
 
 /// Fixed counts the fix items a later Verdict followed: not the last

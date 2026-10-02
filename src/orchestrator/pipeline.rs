@@ -871,8 +871,9 @@ impl Orchestrator {
     /// there: a Go cache runs to some 100MB per Ticket, and nothing reads it
     /// again. The last Fix's screenshots in pr/ go too, attached by then.
     /// Keeping only the evidence survives the next Stage inventing a
-    /// fifth name for its cache. Best effort: scratch that cannot be removed
-    /// is only disk.
+    /// fifth name for its cache. Manual work not done stays in manual-work/
+    /// for the Epic summary and /manual-work. Best effort: scratch that
+    /// cannot be removed is only disk.
     fn prune_run_dir(&self, ticket: &str) {
         let dir = self.run_dir(ticket);
         let Ok(entries) = fs::read_dir(&dir) else {
@@ -883,6 +884,9 @@ impl Orchestrator {
             let evidence = path
                 .extension()
                 .is_some_and(|ext| EVIDENCE.contains(&ext.to_string_lossy().as_ref()));
+            if path.ends_with("manual-work") {
+                continue;
+            }
             if path.is_dir() || !evidence {
                 let removed = if path.is_dir() {
                     fs::remove_dir_all(&path)

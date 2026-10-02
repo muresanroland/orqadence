@@ -212,6 +212,10 @@ fn open_pr_prunes_build_scratch_and_keeps_evidence() {
             write_file(&dir.join("check-testharness"), "a compiled test binary");
             write_file(&dir.join("diff-1.patch"), "the diff it reviewed");
             write_file(&dir.join("pr/home.png"), "a screenshot");
+            write_file(
+                &dir.join("manual-work/1/manual-work.md"),
+                "Ticket: hx-1 · Stage: review · Blocks: no\n\n## What\nSet the DNS record.\n",
+            );
         }
         succeed(p)
     });
@@ -234,6 +238,10 @@ fn open_pr_prunes_build_scratch_and_keeps_evidence() {
     ] {
         assert!(run_dir.join(kept).exists(), "evidence pruned: {kept}");
     }
+    // the Epic summary reads Manual work not done after the PR opens
+    let open = super::manual::open(&run_dir);
+    let what: Vec<&str> = open.iter().map(|i| i.what.as_str()).collect();
+    assert_eq!(what, ["Set the DNS record."]);
 }
 
 /// A Ticket runs the Stage skill committed on its base, as its worktree
