@@ -1382,7 +1382,7 @@ const SECTIONS: &str = r#"[
 /// `running`, the run is live and 4 is blocked on a question.
 fn sections_screen(running: bool) -> Screen {
     let fake = Fake::new(|_, _| Ok(SECTIONS.to_string()));
-    let epics = super::load_epics(Path::new(""), &*fake, &[]).unwrap();
+    let (epics, _) = super::load_epics(Path::new(""), &*fake, &[]).unwrap();
     let mut state = State {
         epic: "harness-a".to_string(),
         ..Default::default()
@@ -1429,6 +1429,113 @@ fn sections_screen(running: bool) -> Screen {
         ));
     }
     s
+}
+
+/// A Map with two Waypoints, one carrying the Map label bd create --parent
+/// copied, and an Idea, beside an ordinary Epic with one Ticket.
+const BRAINSTORMED: &str = r#"[
+    {"id":"hx-m","title":"Wayfinder map: dark mode","status":"open","issue_type":"epic","labels":["brainstorm:map"]},
+    {"id":"hx-m.1","title":"Which palette","status":"open","issue_type":"task","parent":"hx-m","labels":["brainstorm:grilling"]},
+    {"id":"hx-m.2","title":"Write the Epic","status":"open","issue_type":"task","parent":"hx-m","labels":["brainstorm:map","brainstorm:epic"]},
+    {"id":"hx-i","title":"An idea: dark mode","status":"in_progress","issue_type":"task","labels":["brainstorm:idea"]},
+    {"id":"hx-e","title":"Build: the screen","status":"open","issue_type":"epic"},
+    {"id":"hx-e.1","title":"Plan floor","status":"open","issue_type":"task","parent":"hx-e"}
+]"#;
+
+fn brainstormed() -> (Screen, Arc<Fake>) {
+    let fake = Fake::new(|_, argv| match argv.join(" ").as_str() {
+        "bd list --json --brief --all" => Ok(BRAINSTORMED.to_string()),
+        other => Err(format!("unexpected {other}")),
+    });
+    let mut s = Screen::new(
+        Config::for_tests(fake.clone(), Path::new(""), Path::new("")),
+        "~/orqa".to_string(),
+        true,
+        Vec::new(),
+        State::default(),
+    );
+    s.reload_epics();
+    (s, fake)
+}
+
+/// A Brainstorm lives in its box, never in TICKETS: only the Epic is there.
+#[test]
+fn tickets_leaves_out_a_map_its_waypoints_and_an_idea() {
+    let (s, _) = brainstormed();
+    let buf = render(&s, 120, 40);
+    assert!(
+        find(&buf, "Build: the screen").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    assert!(find(&buf, "Plan floor").is_some(), "{:#?}", rows(&buf));
+    for gone in ["dark mode", "Which palette", "Write the Epic", "no Epic"] {
+        assert!(find(&buf, gone).is_none(), "{gone:?} in {:#?}", rows(&buf));
+    }
+}
+
+/// A Map, a Waypoint and an Idea never enter the Pipeline.
+#[test]
+fn starting_a_waypoint_an_idea_or_a_map_is_refused() {
+    let (mut s, fake) = brainstormed();
+    for (line, refusal) in [
+        (
+            "/start-ticket @hx-m.1",
+            "refused: a Waypoint never enters the Pipeline",
+        ),
+        (
+            "/start-ticket @hx-m.2",
+            "refused: a Waypoint never enters the Pipeline",
+        ),
+        (
+            "/start-ticket @hx-i",
+            "refused: an Idea never enters the Pipeline",
+        ),
+        (
+            "/start-epic @hx-m",
+            "refused: hx-m is a Map, /continue @hx-m works it",
+        ),
+    ] {
+        s.notice = None;
+        s.command(line);
+        assert_eq!(notice(&s), refusal, "{line}");
+        assert!(s.run.is_none(), "{line} started a run");
+    }
+    let calls = fake.calls();
+    assert!(
+        calls.iter().all(|c| c == "bd list --json --brief --all"),
+        "{calls:?}"
+    );
+}
+
+/// The Shell lists every saved Brainstorm at open, but one whose Map the
+/// user closed in bd.
+#[test]
+fn the_shell_lists_the_saved_brainstorms_at_open() {
+    let repo = TempDir::new();
+    for (idea, map) in [("hx-i", "hx-m"), ("hx-j", "hx-n")] {
+        crate::brainstorm::Brainstorm {
+            phase: crate::brainstorm::Phase::Map,
+            idea: idea.to_string(),
+            map: map.to_string(),
+            ..Default::default()
+        }
+        .save(repo.path())
+        .unwrap();
+    }
+    let fake = Fake::new(|_, argv| {
+        match argv.join(" ").as_str() {
+        "bd list --json --brief --all" => Ok(r#"[
+            {"id":"hx-m","title":"Map one","status":"open","issue_type":"epic","labels":["brainstorm:map"]},
+            {"id":"hx-n","title":"Map two","status":"closed","issue_type":"epic","labels":["brainstorm:map"]}
+        ]"#
+        .to_string()),
+        _ => Ok(String::new()),
+    }
+    });
+    let s = Screen::open(repo.path(), fake, &|_| String::new());
+    let ideas: Vec<&str> = s.brainstorms.iter().map(|b| b.idea.as_str()).collect();
+    assert_eq!(ideas, ["hx-i"]);
 }
 
 /// The row where `text` first appears, right-trimmed.

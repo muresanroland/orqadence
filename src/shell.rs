@@ -23,6 +23,7 @@ use crossterm::event::{
 use ratatui::layout::{Position, Rect};
 use ratatui::DefaultTerminal;
 
+use crate::brainstorm::{self, Brainstorm};
 use crate::graphify;
 use crate::on_call::{self, Doorbell, OnCall};
 use crate::orchestrator::app::{self, ADDRESS_PR_COMMENTS_COUNTDOWN, RELEASE_ON};
@@ -271,6 +272,11 @@ pub(crate) struct Screen {
     /// COLORTERM says 24-bit; otherwise every color is folded to the 256 cube.
     pub(crate) truecolor: bool,
     pub(crate) epics: Vec<Epic>,
+    /// The Brainstorms' Maps, Waypoints and Ideas, kept off the tree.
+    brainstorm_issues: Vec<BdIssue>,
+    /// The saved Brainstorms, loaded at open.
+    #[allow(dead_code)] // the BRAINSTORM box reads it (Ticket 19)
+    pub(crate) brainstorms: Vec<Brainstorm>,
     /// The run's State: a snapshot of the live Orchestrator's, or the saved
     /// one; the Overall bar, the TICKETS rows and the resumable mark come
     /// from it.
@@ -418,6 +424,8 @@ impl Screen {
             version: crate::version::version(),
             truecolor,
             epics,
+            brainstorm_issues: Vec::new(),
+            brainstorms: Vec::new(),
             state,
             events: Vec::new(),
             input: String::new(),
@@ -525,6 +533,7 @@ impl Screen {
         screen.on_call = on_call::load(repo, env);
         screen.moshi_env = !env(on_call::TOKEN_VAR).trim().is_empty();
         screen.reload_epics();
+        screen.brainstorms = brainstorm::load(repo, &screen.brainstorm_issues);
         match update::exe_path() {
             Ok(exe) => {
                 screen.cfg.exe = exe;
@@ -754,8 +763,9 @@ impl Screen {
     /// itself. Whether bd answered.
     fn reload_epics(&mut self) -> bool {
         match load_epics(&self.cfg.repo, &*self.cfg.tools, &self.state.queue) {
-            Ok(epics) => {
+            Ok((epics, brainstorm_issues)) => {
                 self.epics = epics;
+                self.brainstorm_issues = brainstorm_issues;
                 true
             }
             Err(err) => {
@@ -2168,6 +2178,9 @@ impl Screen {
                     return;
                 }
                 self.reload_epics();
+                if let Some(text) = brainstorm::refusal(&self.brainstorm_issues, query) {
+                    return self.refuse(&text);
+                }
                 if let Some(id) = self.resolve(query, true) {
                     match self.epic_waits(&id, &|_| false) {
                         Some(text) => self.refuse(&text),
@@ -2412,6 +2425,13 @@ impl Screen {
             .split_whitespace()
             .map(|w| w.strip_prefix('@').unwrap_or(w))
             .collect();
+        let refusal = words
+            .iter()
+            .find_map(|w| brainstorm::refusal(&self.brainstorm_issues, w));
+        if let Some(text) = refusal {
+            self.refuse(&text);
+            return None;
+        }
         // one off the tree is closed: the tree keeps every open Ticket
         let open = |epics: &[Epic], id: &str| find(epics, id).is_some_and(|t| t.status != "closed");
         let ids = match words.len() > 1 && words.iter().all(|w| open(&self.epics, w)) {
@@ -2929,9 +2949,22 @@ fn bd_list(repo: &Path, tools: &dyn Tools) -> Result<Vec<BdIssue>, String> {
 
 /// Every open Epic expanded into its Tickets, then the no-Epic group when it
 /// has one, from one bd list call. A closed Ticket with no open Epic is left
-/// out, but for one still in the Ticket run's queue.
-fn load_epics(repo: &Path, tools: &dyn Tools, queue: &[String]) -> Result<Vec<Epic>, String> {
-    let mut issues = bd_list(repo, tools)?;
+/// out, but for one still in the Ticket run's queue. A Brainstorm's Maps,
+/// Waypoints and Ideas never enter the Pipeline: kept off the tree, they
+/// come back beside it.
+fn load_epics(
+    repo: &Path,
+    tools: &dyn Tools,
+    queue: &[String],
+) -> Result<(Vec<Epic>, Vec<BdIssue>), String> {
+    let all = bd_list(repo, tools)?;
+    let out: Vec<bool> = all
+        .iter()
+        .map(|i| brainstorm::kind(&all, i).is_some())
+        .collect();
+    let (kept_out, issues): (Vec<_>, Vec<_>) = all.into_iter().zip(out).partition(|(_, o)| *o);
+    let kept_out: Vec<BdIssue> = kept_out.into_iter().map(|(i, _)| i).collect();
+    let mut issues: Vec<BdIssue> = issues.into_iter().map(|(i, _)| i).collect();
     let mut epics: Vec<Epic> = issues
         .iter()
         .filter(|i| i.issue_type == "epic" && i.status != "closed")
@@ -2966,7 +2999,7 @@ fn load_epics(repo: &Path, tools: &dyn Tools, queue: &[String]) -> Result<Vec<Ep
     if !no_epic.tickets.is_empty() {
         epics.push(no_epic);
     }
-    Ok(epics)
+    Ok((epics, kept_out))
 }
 
 /// Opens the Shell over the Target repo and returns when the user exits.
