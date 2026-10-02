@@ -5,8 +5,8 @@ use super::app::{
     app, canonical, checks, clash, count, count_in, debate_inputs, extra_review, fallback_row,
     floor_in, human_merge, labels, review_bots_in, row, runs_on, set_switch, switch, Clash,
     ExtraReview, Floor, Label, ADDRESS_PR_COMMENTS_AUTO, ADDRESS_PR_COMMENTS_COUNTDOWN,
-    ADDRESS_PR_COMMENTS_RUNS, AGENT_MERGE, BOT_WAIT, GH_DENY, IF_LIMITED, MAX_PR_SESSIONS,
-    MAX_TICKETS, REBASE_AUTO, RELEASE_ON,
+    ADDRESS_PR_COMMENTS_RUNS, AGENT_MERGE, BOT_WAIT, IF_LIMITED, MAX_PR_SESSIONS, MAX_TICKETS,
+    REBASE_AUTO, RELEASE_ON,
 };
 use super::stage::{Answer, Ask, Orchestrator, AWAY};
 use super::state::STATUS_PARKED;
@@ -53,7 +53,14 @@ fn a_rows_model_and_effort_add_the_flags_on_claude_and_on_codex() {
         argv(&w, "review"),
         "--sandbox workspace-write -m gpt-6-sol -c model_reasoning_effort=low"
     );
-    let deny = serde_json::json!({ "permissions": { "deny": GH_DENY } });
+    let deny = concat!(
+        r#"{"permissions":{"deny":["Bash(gh secret:*)","Bash(gh variable:*)","#,
+        r#""Bash(gh workflow run:*)","Bash(gh api */secrets*)","Bash(gh api */variables*)","#,
+        r#""Bash(gh api */dispatches*)","Bash(gh api */actions/permissions*)","#,
+        r#""Bash(gh api */environments*)","Bash(gh api */hooks*)","Bash(gh api */protection*)","#,
+        r#""Bash(gh api */rulesets*)","Bash(gh api */collaborators*)","Bash(gh api */keys*)","#,
+        r#""Bash(gh api */pages*)"]}}"#
+    );
     assert_eq!(
         argv(&w, "fix"),
         format!("--permission-mode auto --add-dir {run} --settings {deny} --model sonnet")
