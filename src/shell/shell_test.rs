@@ -8,6 +8,7 @@ use crate::orchestrator::app::{set_count, set_switch, MAX_TICKETS, RELEASE_ON};
 use crate::orchestrator::judgment::fake::Fake as TypeSafeFake;
 use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
 use crate::orchestrator::limit_test::{hits, CODEX};
+use crate::orchestrator::manual::Item;
 use crate::orchestrator::manual_test::files_manual;
 use crate::orchestrator::plan_test::{at_dialog, nouls};
 use crate::orchestrator::question_test::ASKS;
@@ -4263,11 +4264,13 @@ fn manual_work_docks_its_what_why_how_and_folder() {
         "manual work in implement (pane 2-1)",
         Ask::Manual {
             pane: "w1:p7".to_string(),
-            folder,
             stage: "implement".to_string(),
-            what: "Add the DEPLOY_TOKEN secret.".to_string(),
-            why: "The deploy job reads it.".to_string(),
-            how: "Run wizard.sh.".to_string(),
+            item: Item {
+                folder,
+                what: "Add the DEPLOY_TOKEN secret.".to_string(),
+                why: "The deploy job reads it.".to_string(),
+                how: "Run wizard.sh.".to_string(),
+            },
         },
     ));
     assert!(s.modal(), "Manual work did not dock");

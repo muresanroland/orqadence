@@ -175,16 +175,12 @@ pub(crate) enum Ask {
         options: Vec<String>,
     },
     /// Manual work its Stage's session waits on (STATUS: manual): its pane,
-    /// the item's folder, the Stage, and the item's What, Why and How as
-    /// written. Done, or a line of the user's own (the Report back facts),
-    /// goes into the pane as a prompt.
+    /// the Stage, and the item as read. Done, or a line of the user's own
+    /// (the Report back facts), goes into the pane as a prompt.
     Manual {
         pane: String,
-        folder: PathBuf,
         stage: String,
-        what: String,
-        why: String,
-        how: String,
+        item: manual::Item,
     },
     /// A Question at the Ticket's start, before any Stage, or on a failed
     /// fetch.sh before an Extra review (ask_at_start): its text is the
@@ -1509,11 +1505,8 @@ impl Orchestrator {
                         "manual work",
                         Ask::Manual {
                             pane,
-                            folder: item.folder,
                             stage: label.to_string(),
-                            what: item.what,
-                            why: item.why,
-                            how: item.how,
+                            item,
                         },
                     ),
                 };

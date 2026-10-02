@@ -19,14 +19,17 @@ pub(crate) struct Item {
 }
 
 /// Reads the item `filed` names, relative to `run_dir` or absolute: an
-/// error when it is not one of run_dir's manual-work/<n>/ folders, its
-/// manual-work.md is missing, or that file's first line is not Ticket,
-/// Stage and Blocks.
+/// error when it is not one of run_dir's manual-work/<n>/ folders or its
+/// manual-work.md is missing.
 pub(crate) fn read(run_dir: &Path, filed: &Path) -> Result<Item, String> {
     let folder = run_dir.join(filed);
-    // canonical, so neither ../ nor a link reaches another Ticket's item
+    // canonical, so neither ../ nor a link reaches another Ticket's item:
+    // manual-work itself linked elsewhere is not run_dir's
     let real = folder.canonicalize().unwrap_or_default();
-    let items = run_dir.join("manual-work").canonicalize().ok();
+    let items = run_dir
+        .canonicalize()
+        .ok()
+        .map(|dir| dir.join("manual-work"));
     if real.parent().is_none()
         || real.parent() != items.as_deref()
         || number(&real).parse::<u64>().is_err()
@@ -39,22 +42,8 @@ pub(crate) fn read(run_dir: &Path, filed: &Path) -> Result<Item, String> {
     }
     let file = folder.join("manual-work.md");
     let body = fs::read_to_string(&file).map_err(|err| format!("{}: {err}", file.display()))?;
-    let mut lines = body.lines();
-    let first = lines.next().unwrap_or_default();
-    let field = |name: &str| {
-        first.split(" · ").any(|part| {
-            let part = part.trim().strip_prefix(name);
-            part.is_some_and(|rest| rest.starts_with(':'))
-        })
-    };
-    if !["Ticket", "Stage", "Blocks"].into_iter().all(field) {
-        return Err(format!(
-            "{}: its first line is not Ticket: <id> · Stage: <stage> · Blocks: yes|no",
-            file.display()
-        ));
-    }
     let mut sections: Vec<(&str, Vec<&str>)> = Vec::new();
-    for line in lines {
+    for line in body.lines() {
         match (line.strip_prefix("## "), sections.last_mut()) {
             (Some(heading), _) => sections.push((heading.trim(), Vec::new())),
             (None, Some((_, text))) => text.push(line),
@@ -102,8 +91,7 @@ pub(crate) fn done(
     item: &Item,
     facts: &str,
 ) -> Result<(), String> {
-    let n = number(&item.folder);
-    let mut comment = format!("Manual work {n} done: {}", item.what);
+    let mut comment = done_prompt(&item.folder, &item.what);
     if !facts.is_empty() {
         comment += &format!("\n\nFacts: {facts}");
     }

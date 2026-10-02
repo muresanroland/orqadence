@@ -435,10 +435,13 @@ pub(super) fn asked(f: &mut Frame, s: &Screen) {
         // the item's own sections, under their headings
         About::Asked(Ask::Manual {
             pane,
-            folder,
-            what,
-            why,
-            how,
+            item:
+                manual::Item {
+                    folder,
+                    what,
+                    why,
+                    how,
+                },
             ..
         }) => {
             let folder = folder.strip_prefix(&s.cfg.repo).unwrap_or(folder);
@@ -661,8 +664,8 @@ fn sends(s: &Screen, q: &Question, at: &str) -> (String, String) {
                 (None, _) => park(),
             }
         }
-        About::Asked(Ask::Manual { folder, .. }) => {
-            let done = manual::done_prompt(folder, "");
+        About::Asked(Ask::Manual { item, .. }) => {
+            let done = manual::done_prompt(&item.folder, "");
             match q.cursor {
                 0 => (word, done),
                 1 if s.composing => {

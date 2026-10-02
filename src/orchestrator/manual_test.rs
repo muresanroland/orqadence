@@ -13,10 +13,8 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-/// The manual-work.md a Stage writes, its first line then the four sections.
-const FILED: &str = "Ticket: hx-1 · Stage: implement · Blocks: yes
-
-## What
+/// The manual-work.md a Stage writes, its four sections.
+const FILED: &str = "## What
 Add the DEPLOY_TOKEN secret to the repo.
 
 ## Why
@@ -58,7 +56,7 @@ fn a_folder_reads_its_sections() {
 }
 
 #[test]
-fn a_missing_or_unreadable_folder_is_an_error() {
+fn a_missing_folder_is_an_error() {
     let dir = TempDir::new();
     let folder = dir.path().join("manual-work").join("1");
     assert!(
@@ -66,10 +64,7 @@ fn a_missing_or_unreadable_folder_is_an_error() {
         "a missing folder read"
     );
     write_file(&folder.join("manual-work.md"), "## What\nsomething\n");
-    assert!(
-        manual::read(dir.path(), &folder).is_err(),
-        "a first line not read"
-    );
+    assert_eq!(manual::read(dir.path(), &folder).unwrap().what, "something");
 }
 
 /// Only this Run directory's manual-work/<n>/: never another Ticket's item,
@@ -93,6 +88,19 @@ fn a_folder_outside_the_run_directorys_items_is_an_error() {
             "{filed:?} was read"
         );
     }
+}
+
+/// manual-work itself linked to another Ticket's: its items are not this
+/// Run directory's, so Done never deletes them.
+#[cfg(unix)]
+#[test]
+fn a_linked_manual_work_folder_is_an_error() {
+    let dir = TempDir::new();
+    let (mine, other) = (dir.path().join("hx-1"), dir.path().join("hx-2"));
+    file_item(&other.join("manual-work/1"));
+    std::fs::create_dir_all(&mine).unwrap();
+    std::os::unix::fs::symlink(other.join("manual-work"), mine.join("manual-work")).unwrap();
+    assert!(manual::read(&mine, Path::new("manual-work/1")).is_err());
 }
 
 /// Done: a bd comment on the Ticket whose Run directory holds the item, with
@@ -145,33 +153,11 @@ fn status_manual_is_put_to_you_never_judged_and_done_sends_comments_and_deletes(
         let asked = w.await_event("manual work in implement");
         assert_eq!(asked.text, "manual work in implement (pane 1-1)");
         let folder = o.run_dir("hx-1").join("manual-work").join("1");
-        let Some(Ask::Manual {
-            pane,
-            folder: asked_folder,
-            stage,
-            what,
-            why,
-            how,
-        }) = asked.ask
-        else {
+        let Some(Ask::Manual { pane, stage, item }) = asked.ask else {
             panic!("STATUS: manual raised {:?}, not Manual work", asked.ask);
         };
-        assert_eq!(
-            (
-                asked_folder,
-                stage.as_str(),
-                what.as_str(),
-                why.as_str(),
-                how.as_str()
-            ),
-            (
-                folder.clone(),
-                "implement",
-                "Add the DEPLOY_TOKEN secret to the repo.",
-                "The deploy job reads it; the session has no credential.",
-                "Run wizard.sh, then check the Actions settings page.",
-            )
-        );
+        assert_eq!(stage, "implement");
+        assert_eq!(item, manual::read(&o.run_dir("hx-1"), &folder).unwrap());
 
         o.answer("hx-1", &pane, Answer::Prompt(facts.to_string()));
         w.await_line("hx-1 sent manual work 1 done");
@@ -309,11 +295,11 @@ fn manual_work_filed_anew_is_put_to_you_afresh_and_done_marks_that_one() {
         &run_dir.join("implement.md"),
         "STATUS: manual\nmanual-work/2\n",
     );
-    let Some(Ask::Manual { pane, folder, .. }) = w.await_nth("manual work in implement", 2).ask
+    let Some(Ask::Manual { pane, item, .. }) = w.await_nth("manual work in implement", 2).ask
     else {
         panic!("the new item was not raised");
     };
-    assert_eq!(folder, run_dir.join("manual-work/2"));
+    assert_eq!(item.folder, run_dir.join("manual-work/2"));
 
     o.answer("hx-1", &pane, Answer::Prompt(String::new()));
     w.await_line("hx-1 sent manual work 2 done");
