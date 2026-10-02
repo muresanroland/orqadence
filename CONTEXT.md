@@ -184,7 +184,7 @@ What the Shell puts to the user when the Orchestrator cannot act alone: a Wake t
 _Avoid_: Prompt, dialog, alert, form, popup
 
 **Parked**:
-A Ticket taken out of the Pipeline to wait for the user, after a Wake that a Judgment or the user settled as park, or after its Stage, its start or a failed fetch.sh asked a question while the user was Away. Other Tickets keep running. Parked from Rebase or Address PR comments, it keeps its pull request, still polled for its merge, and /continue takes it back to that Stage, never to the Pipeline. Parked because GitHub refused the Orchestrator's merge, it keeps its pull request the same way, and /continue has the merge tried again. Parked by the merge Question, or by its Judgment while the user was Away, it keeps its pull request too, and /continue asks again. A Research Waypoint whose session needs the user while they are Away is parked the same way, and the other research goes on.
+A Ticket taken out of the Pipeline to wait for the user, after a Wake that a Judgment or the user settled as park, or after its Stage, its start or a failed fetch.sh asked a question, or its Stage filed Manual work it waits on, while the user was Away. Other Tickets keep running. Parked from Rebase or Address PR comments, it keeps its pull request, still polled for its merge, and /continue takes it back to that Stage, never to the Pipeline. Parked because GitHub refused the Orchestrator's merge, it keeps its pull request the same way, and /continue has the merge tried again. Parked by the merge Question, or by its Judgment while the user was Away, it keeps its pull request too, and /continue asks again. A Research Waypoint whose session needs the user while they are Away is parked the same way, and the other research goes on.
 _Avoid_: Stuck, paused, failed
 
 **Manual work**:
@@ -192,7 +192,7 @@ Something a code-editing Stage or a Brainstorm session needs done that it cannot
 _Avoid_: Manual step, human task, hand-off
 
 **Away**:
-What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question, a Plan's open question, one at a Ticket's start or one on a failed fetch.sh, then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket; the Release's, with no Ticket to park, wait. Nothing is pushed to the phone, and the Shell never goes On call. Under Agent merge a Judgment answers the merge Question in the user's place. Nothing else changes: Judgments still answer what they can.
+What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question, Manual work a Stage waits on, a Plan's open question, one at a Ticket's start or one on a failed fetch.sh, then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket; the Release's, with no Ticket to park, wait. Nothing is pushed to the phone, and the Shell never goes On call. Under Agent merge a Judgment answers the merge Question in the user's place. Nothing else changes: Judgments still answer what they can.
 _Avoid_: AFK, offline, unattended mode
 
 **On call**:

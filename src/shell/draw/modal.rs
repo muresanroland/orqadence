@@ -17,6 +17,7 @@ use ratatui::Frame;
 
 use super::{bold, cut, fg, shell};
 use crate::orchestrator::judgment::{Action, WAITS};
+use crate::orchestrator::manual;
 use crate::orchestrator::stage::{plural, Ask};
 use crate::shell::brand::{lerp, BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT};
 use crate::shell::{About, NoticeKind, Question, Screen};
@@ -417,17 +418,35 @@ fn option_row(i: usize, option: &str, on: bool, w: usize) -> Line<'static> {
     ))
 }
 
-/// A Wake or a Stage's own question in the dock (the A+C mix of
-/// harness-crk): its badges, text, the Judgment's scores and the facts; the
-/// pane's last lines, or the question from its start, in a box that gives up
+/// A Wake, a Stage's own question or Manual work in the dock (the A+C mix
+/// of harness-crk): its badges, text, the Judgment's scores and the facts;
+/// the pane's last lines, or the question or the item's What, Why, How and
+/// folder from its start, in a box that gives up
 /// its rows first; the band of what the option under the cursor sends word
 /// for word or does, or the prompt being typed; then the options.
 pub(super) fn asked(f: &mut Frame, s: &Screen) {
     let q = &s.questions[0];
+    let item: String;
     let (kind, pane, text, wake) = match &q.about {
         About::Asked(Ask::Wake { pane, tail, .. }) => ("WAKE", pane.as_str(), tail, true),
         About::Asked(Ask::StageQuestion { pane, question, .. }) => {
             ("QUESTION", pane.as_str(), question, false)
+        }
+        // the item's own sections, under their headings
+        About::Asked(Ask::Manual {
+            pane,
+            folder,
+            what,
+            why,
+            how,
+            ..
+        }) => {
+            let folder = folder.strip_prefix(&s.cfg.repo).unwrap_or(folder);
+            item = format!(
+                "What\n{what}\n\nWhy\n{why}\n\nHow\n{how}\n\nFolder: {}",
+                folder.display()
+            );
+            ("MANUAL WORK", pane.as_str(), &item, false)
         }
         About::Asked(Ask::Labels { .. }) => ("QUESTION", "", &q.text, false),
         About::Asked(Ask::Merge { open, .. }) => ("QUESTION", "", open, false),
@@ -448,10 +467,11 @@ pub(super) fn asked(f: &mut Frame, s: &Screen) {
         (false, false) => long,
         (false, true) => format!("↑↓ 1-{n} · PgUp PgDn · Enter · Esc"),
     };
-    let title = format!(
-        " {kind} · {} ",
-        s.name(q.ticket.as_deref().unwrap_or_default())
-    );
+    let name = s.name(q.ticket.as_deref().unwrap_or_default());
+    let title = match &q.about {
+        About::Asked(Ask::Manual { stage, .. }) => format!(" {kind} · {name} {stage} · blocks "),
+        _ => format!(" {kind} · {name} "),
+    };
     let block = block
         .title(Span::styled(title, bold(TEXT)))
         .title_bottom(Span::styled(format!(" {hint} "), fg(MUTED)));
@@ -496,6 +516,7 @@ pub(super) fn asked(f: &mut Frame, s: &Screen) {
         _ if wake => format!(" pane {at}, its last lines "),
         About::Asked(Ask::Labels { .. }) => " the Ticket's labels ".to_string(),
         About::Asked(Ask::Merge { .. }) => " still open ".to_string(),
+        About::Asked(Ask::Manual { .. }) => " what to do ".to_string(),
         _ => " the session asks ".to_string(),
     };
     let frame = Block::bordered()
@@ -638,6 +659,18 @@ fn sends(s: &Screen, q: &Question, at: &str) -> (String, String) {
                 (None, 0) => own(),
                 (None, 1) => open(),
                 (None, _) => park(),
+            }
+        }
+        About::Asked(Ask::Manual { folder, .. }) => {
+            let done = manual::done_prompt(folder, "");
+            match q.cursor {
+                0 => (word, done),
+                1 if s.composing => {
+                    let (sends, typed) = own();
+                    (sends, format!("{done}{typed}"))
+                }
+                1 => own(),
+                _ => park(),
             }
         }
         About::Asked(Ask::Labels { options }) => match options.get(q.cursor) {

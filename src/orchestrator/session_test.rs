@@ -1,5 +1,6 @@
 //! Session ids in the State, and /continue resuming a Stage by its id.
 
+use super::manual_test::file_item;
 use super::question_test::ASKS;
 use super::stage::{Answer, Orchestrator};
 use super::state::{load_state, Session};
@@ -178,6 +179,36 @@ fn a_stage_resumed_by_id_that_asked_is_put_its_question_not_continue() {
         w.since(before, &format!("herdr agent prompt {pane} ")),
         [format!("herdr agent prompt {pane} ours")],
         "the resumed session was prompted before its answer"
+    );
+}
+
+#[test]
+fn a_stage_resumed_by_id_waiting_on_manual_work_is_put_it_not_continue() {
+    let (w, stopped) = stopped_at("implement", "implement", true);
+    let folder = stopped.run_dir("hx-1").join("manual-work/1");
+    file_item(&folder);
+    let filed = format!("STATUS: manual\n{}\n", folder.display());
+    write_file(&stopped.run_dir("hx-1").join("implement.md"), &filed);
+    panes_gone(&w);
+    let o = restarted(&w, &stopped);
+    w.session(|p| match p.text.starts_with("Manual work 1 done") {
+        true => (String::new(), "working".to_string()),
+        false => succeed(p),
+    });
+    let before = w.calls().len();
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+
+    w.await_event("manual work in implement");
+    let pane = o.ticket("hx-1").panes["implement"].clone();
+    o.answer("hx-1", &pane, Answer::Prompt(String::new()));
+    w.await_line("hx-1 sent manual work 1 done");
+    finishes(&w, &o, &pane, "implement.md");
+    run.wait();
+
+    assert_eq!(
+        w.since(before, &format!("herdr agent prompt {pane} ")),
+        [format!("herdr agent prompt {pane} Manual work 1 done: ")],
+        "the resumed session was prompted before its Manual work was done"
     );
 }
 
