@@ -2,8 +2,9 @@
 //! the shipped skills and every job's default in .orqadence/skills, offers
 //! bd init, the docs/agents setup and herdr's integrations, keeps TypeSafe
 //! on or off and its key, the shipped Ticket labels and their skills,
-//! Rebase and Address PR comments' switches and the Release's, asks On
-//! call's Moshi token, and preflights the Target repo.
+//! Rebase and Address PR comments' switches and the Release's, tells the
+//! review bots to skip a No-review pull request, asks On call's Moshi token,
+//! and preflights the Target repo.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -350,10 +351,12 @@ fn unhide_links(repo: &Path) -> io::Result<()> {
 
 /// The rest of init once the skills are in: bd, the docs/agents setup,
 /// TypeSafe, every job's default, the Ticket labels, Rebase and Address PR
-/// comments' switches, the Release's, On call, and herdr's integrations. A
-/// `committed` checkout keeps the committed TypeSafe switch, picks, labels
-/// and switches, and is asked only for the key, when TypeSafe is on and no
-/// key is set or kept; On call is per person, asked on every checkout.
+/// comments' switches, the Release's, the review bots' No-review exclusion,
+/// On call, and herdr's integrations. A `committed` checkout keeps the
+/// committed TypeSafe switch, picks, labels and switches, and is asked only
+/// for the key, when TypeSafe is on and no key is set or kept; On call is
+/// per person, asked on every checkout, and the exclusion, which asks
+/// nothing, is written on every checkout that lacks it.
 pub(crate) fn set_up(
     repo: &Path,
     tools: &dyn Tools,
@@ -375,6 +378,7 @@ pub(crate) fn set_up(
     } else if app::typesafe(repo) && env_key.trim().is_empty() && !repo.join(KEY_FILE).exists() {
         ask_typesafe_key(repo, out, input, tty)?;
     }
+    write_bot_exclusions(repo, out)?;
     ask_on_call(repo, &env(on_call::TOKEN_VAR), out, input, tty)?;
     install_integrations(repo, tools, out, input, tty)
 }
@@ -438,6 +442,162 @@ fn ask_agent_merge(
         return Ok(());
     }
     app::set_review_bots(repo, &bots).map_err(io::Error::other)
+}
+
+/// The GitHub label of a No-review pull request, which the review bots skip.
+const NO_REVIEW: &str = "orqa:no-review";
+
+/// Under Agent merge, tells each review bot that review_bots lists to skip
+/// a No-review pull request: CodeRabbit in .coderabbit.yaml, Greptile in
+/// .greptile/config.json when the repo has a .greptile folder, which wins
+/// over greptile.json, else in
+/// greptile.json. A file is made when missing, written only when it lacks
+/// the label, and named so it gets committed; one that cannot be edited is
+/// left as it is, with what to add by hand.
+fn write_bot_exclusions(repo: &Path, out: &mut dyn Write) -> io::Result<()> {
+    let (_, doc) = app::read(repo).map_err(io::Error::other)?;
+    if !app::switch_in(&doc, &app::AGENT_MERGE) {
+        return Ok(());
+    }
+    type Edit = fn(&str) -> Result<Option<String>, String>;
+    // A list that cannot be read is /config's to flag.
+    for bot in app::review_bots_in(&doc).unwrap_or_default() {
+        let (file, name, by_hand, edit): (_, _, _, Edit) = match bot {
+            "coderabbit" => (
+                ".coderabbit.yaml",
+                "CodeRabbit",
+                format!("\"!{NO_REVIEW}\" to reviews.auto_review.labels"),
+                coderabbit_skipping,
+            ),
+            "greptile" => {
+                let file = if repo.join(".greptile").is_dir() {
+                    ".greptile/config.json"
+                } else {
+                    "greptile.json"
+                };
+                (
+                    file,
+                    "Greptile",
+                    format!("\"{NO_REVIEW}\" to disabledLabels"),
+                    greptile_skipping,
+                )
+            }
+            _ => continue,
+        };
+        let text = match fs::read_to_string(repo.join(file)) {
+            Ok(text) => text,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(err) => return Err(err),
+        };
+        match edit(&text) {
+            Ok(Some(text)) => {
+                fs::write(repo.join(file), text)?;
+                write!(
+                    out,
+                    "init: wrote {file}: {name} skips {NO_REVIEW} pull requests\r\n"
+                )?;
+            }
+            Ok(None) => {}
+            Err(err) => write!(
+                out,
+                "init: {file} not changed ({err}): add {by_hand} by hand, so {name} skips {NO_REVIEW} pull requests\r\n"
+            )?,
+        }
+    }
+    Ok(())
+}
+
+/// What follows `key:` on a YAML line holding that key, bare or quoted.
+fn after_key<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let line = line.trim_start();
+    let rest = ['"', '\'']
+        .into_iter()
+        .find_map(|quote| {
+            line.strip_prefix(quote)?
+                .strip_prefix(key)?
+                .strip_prefix(quote)
+        })
+        .or_else(|| line.strip_prefix(key))?
+        .trim_start()
+        .strip_prefix(':')?;
+    (rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(rest)
+}
+
+/// .coderabbit.yaml's `text` with "!orqa:no-review" in
+/// reviews.auto_review.labels, a label CodeRabbit reads as not to review,
+/// and every other line as it was; None when it has the block this adds.
+/// serde_yaml is not an allowed crate, so the YAML is edited as text and
+/// only where that is safe: a missing file is made, and a file without a
+/// reviews key gains the block at its end. Err for any other, as one with
+/// a reviews key of its own, so init says what to add by hand.
+// ponytail: a file with its own reviews key is left for a human; edit it in
+// place once a YAML crate is allowed.
+fn coderabbit_skipping(text: &str) -> Result<Option<String>, String> {
+    let block = format!("reviews:\n  auto_review:\n    labels:\n      - \"!{NO_REVIEW}\"\n");
+    if text.starts_with(&block) || text.contains(&format!("\n{block}")) {
+        return Ok(None);
+    }
+    if text.starts_with('\u{feff}') {
+        return Err("it starts with a byte order mark".to_string());
+    }
+    let content = |line: &str| !line.trim().is_empty() && !line.trim_start().starts_with('#');
+    // A key added past one of these could land outside the document or
+    // override what a merge key brings in.
+    let mut seen = false;
+    for line in text.lines() {
+        let key = line.trim_start();
+        if key.starts_with("<<") || key == "?" || key.starts_with("? ") {
+            return Err("it has a merge key or a `?` key".to_string());
+        }
+        let marker = |m: &str| line.trim_end() == m || line.starts_with(&format!("{m} "));
+        if marker("...") || seen && marker("---") {
+            return Err("it has more than one YAML document".to_string());
+        }
+        seen |= content(line);
+    }
+    // The root's first line past a document start: a block added at the end
+    // is one of its keys only when they start their lines.
+    let root = text
+        .lines()
+        .find(|line| content(line) && line.trim_end() != "---");
+    if root.is_some_and(|line| line.starts_with([' ', '\t', '-', '{', '['])) {
+        return Err("its keys are not at the start of their lines".to_string());
+    }
+    if text
+        .lines()
+        .any(|line| content(line) && after_key(line, "reviews").is_some())
+    {
+        return Err("it has a reviews key".to_string());
+    }
+    // Added lines end in \n whatever the file's line endings: YAML reads both.
+    let mut text = text.to_string();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    Ok(Some(text + &block))
+}
+
+/// Greptile's config `text` with orqa:no-review in disabledLabels, the
+/// labels whose pull requests Greptile skips; None when it is there. An
+/// empty text is a missing file. Every key is kept, sorted as serde_json
+/// writes them.
+fn greptile_skipping(text: &str) -> Result<Option<String>, String> {
+    let mut doc = match text.trim() {
+        "" => json!({}),
+        text => serde_json::from_str(text).map_err(|err| err.to_string())?,
+    };
+    let Value::Object(top) = &mut doc else {
+        return Err("not a JSON object".to_string());
+    };
+    let labels = top.entry("disabledLabels").or_insert_with(|| json!([]));
+    let Value::Array(labels) = labels else {
+        return Err("disabledLabels is not a list".to_string());
+    };
+    if labels.iter().any(|label| label == NO_REVIEW) {
+        return Ok(None);
+    }
+    labels.push(json!(NO_REVIEW));
+    Ok(Some(format!("{doc:#}\n")))
 }
 
 /// Releases (the orqa:release label), a yes/no kept in config.json, default

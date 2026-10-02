@@ -1,4 +1,7 @@
-use super::{ask_typesafe, install_skills, preflight, typesafe_key, warnings, yes};
+use super::{
+    ask_typesafe, coderabbit_skipping, install_skills, preflight, typesafe_key, warnings,
+    write_bot_exclusions, yes,
+};
 use crate::orchestrator::write_file;
 use crate::skills::manifest::{Manifest, JOBS, NONE};
 use crate::skills::{EXTRA_FILES, SKILLS};
@@ -981,4 +984,199 @@ fn warnings_of_an_old_gh_when_orqa_fe_is_configured() {
     );
     let (got, _) = gh_warnings(repo.path(), "2.101.0");
     assert_eq!(got, Vec::<String>::new());
+}
+
+/// init's bot exclusions step over a repo whose config.json is `config`:
+/// what it said.
+fn exclusions(repo: &Path, config: &str) -> String {
+    write_file(&repo.join(".orqadence/config.json"), config);
+    let mut out = Vec::new();
+    write_bot_exclusions(repo, &mut out).unwrap();
+    String::from_utf8(out).unwrap()
+}
+
+const MERGE_CODERABBIT: &str =
+    r#"{"address_pr_comments_auto": true, "agent_merge": true, "review_bots": ["coderabbit"]}"#;
+const MERGE_GREPTILE: &str =
+    r#"{"address_pr_comments_auto": true, "agent_merge": true, "review_bots": ["greptile"]}"#;
+
+/// Agent merge on and coderabbit listed, a repo without a .coderabbit.yaml
+/// gets one whose reviews.auto_review.labels excludes orqa:no-review, and
+/// init lists it; Greptile, not listed, gets nothing.
+#[test]
+fn a_repo_without_a_coderabbit_yaml_gets_one_with_the_exclusion() {
+    let repo = TempDir::new();
+    let out = exclusions(repo.path(), MERGE_CODERABBIT);
+    assert_eq!(
+        read(repo.path(), ".coderabbit.yaml"),
+        "reviews:\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n"
+    );
+    assert!(out.contains("init: wrote .coderabbit.yaml"), "{out}");
+    assert!(!repo.path().join("greptile.json").exists(), "{out}");
+}
+
+/// The text edit of .coderabbit.yaml adds reviews.auto_review.labels at the
+/// end of a file without a reviews key, every other line, comment and line
+/// ending kept, and leaves alone a text that has that block. A file with a
+/// reviews key of its own, or that cannot take a key at its end, is refused.
+#[test]
+fn coderabbit_skipping_adds_the_label_and_keeps_every_other_line() {
+    let block = "reviews:\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n";
+    let cases = [
+        // No newline ending the file; a comment naming the label is not it.
+        "# \"!orqa:no-review\" goes below\nlanguage: en-US\nchat:\n  auto_reply: true",
+        // A block of text ending the file.
+        "language: en-US\ntone: |\n  hello\n  # heading\n",
+        // A document start before the keys.
+        "---\nlanguage: en-US\n",
+        // Windows line endings stay on the lines that had them.
+        "language: en-US\r\nchat:\r\n  auto_reply: true\r\n",
+        "# only a comment\n",
+        "",
+    ];
+    for before in cases {
+        let newline = if before.is_empty() || before.ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        };
+        let after = format!("{before}{newline}{block}");
+        assert_eq!(
+            coderabbit_skipping(before),
+            Ok(Some(after.clone())),
+            "{before}"
+        );
+        assert_eq!(coderabbit_skipping(&after), Ok(None), "{after}");
+    }
+    for unreadable in [
+        // A reviews key of its own, however it is written.
+        "reviews:\n  profile: chill\n",
+        "reviews: {}\n",
+        "\"reviews\":\n  auto_review:\n    labels:\n      - bug\n",
+        "reviews:\n  auto_review:\n    labels: [bug]\n",
+        "reviews:\n  auto_review:\n    labels:\n      - '!orqa:no-review # suffix'\n",
+        // Keys that do not start their lines, past a document start too.
+        "---\n  reviews:\n    profile: chill\n",
+        "  language: en-US\n",
+        "{}\n",
+        "- chill\n",
+        "\u{feff}language: en-US\n",
+        // A merge key or a `?` key could hold reviews.auto_review out of sight.
+        "base: &base\n  auto_review:\n    enabled: false\nchat:\n  <<: *base\n",
+        "? reviews\n: {profile: chill}\n",
+        // A key added at the end would land outside the document.
+        "language: en-US\n...\n",
+        "language: en-US\n---\nlanguage: de-DE\n",
+    ] {
+        assert!(coderabbit_skipping(unreadable).is_err(), "{unreadable}");
+    }
+}
+
+/// Greptile listed: its disabledLabels gains orqa:no-review once, in a
+/// greptile.json made when missing or beside every key an existing one has,
+/// and in .greptile/config.json instead when the repo has a .greptile
+/// folder, made when only other files are there, since Greptile reads the
+/// folder first.
+#[test]
+fn greptiles_config_gains_the_exclusion_once() {
+    let repo = TempDir::new();
+    let out = exclusions(repo.path(), MERGE_GREPTILE);
+    let doc: serde_json::Value = serde_json::from_str(&read(repo.path(), "greptile.json")).unwrap();
+    assert_eq!(
+        doc,
+        serde_json::json!({"disabledLabels": ["orqa:no-review"]})
+    );
+    assert!(out.contains("init: wrote greptile.json"), "{out}");
+    assert!(!repo.path().join(".coderabbit.yaml").exists(), "{out}");
+
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join("greptile.json"),
+        r#"{"strictness": 2, "disabledLabels": ["wip-*"], "instructions": "be kind"}"#,
+    );
+    exclusions(repo.path(), MERGE_GREPTILE);
+    let written = read(repo.path(), "greptile.json");
+    let doc: serde_json::Value = serde_json::from_str(&written).unwrap();
+    assert_eq!(
+        doc,
+        serde_json::json!({
+            "strictness": 2,
+            "disabledLabels": ["wip-*", "orqa:no-review"],
+            "instructions": "be kind"
+        })
+    );
+    let out = exclusions(repo.path(), MERGE_GREPTILE);
+    assert_eq!(read(repo.path(), "greptile.json"), written);
+    assert_eq!(out, "");
+
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join(".greptile/config.json"),
+        r#"{"strictness": 3}"#,
+    );
+    let out = exclusions(repo.path(), MERGE_GREPTILE);
+    let doc: serde_json::Value =
+        serde_json::from_str(&read(repo.path(), ".greptile/config.json")).unwrap();
+    assert_eq!(
+        doc,
+        serde_json::json!({"strictness": 3, "disabledLabels": ["orqa:no-review"]})
+    );
+    assert!(out.contains("init: wrote .greptile/config.json"), "{out}");
+    assert!(!repo.path().join("greptile.json").exists(), "{out}");
+
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".greptile/rules.md"), "be kind\n");
+    let out = exclusions(repo.path(), MERGE_GREPTILE);
+    let doc: serde_json::Value =
+        serde_json::from_str(&read(repo.path(), ".greptile/config.json")).unwrap();
+    assert_eq!(
+        doc,
+        serde_json::json!({"disabledLabels": ["orqa:no-review"]})
+    );
+    assert!(out.contains("init: wrote .greptile/config.json"), "{out}");
+    assert!(!repo.path().join("greptile.json").exists(), "{out}");
+}
+
+/// Without Agent merge, or with no bot listed, no bot's file is written.
+#[test]
+fn no_exclusion_is_written_without_agent_merge_or_a_listed_bot() {
+    for config in [
+        r#"{"address_pr_comments_auto": true, "review_bots": ["coderabbit", "greptile"]}"#,
+        // Agent merge counts only with PR comments opened by themselves.
+        r#"{"agent_merge": true, "review_bots": ["coderabbit", "greptile"]}"#,
+        r#"{"address_pr_comments_auto": true, "agent_merge": true}"#,
+    ] {
+        let repo = TempDir::new();
+        let out = exclusions(repo.path(), config);
+        assert_eq!(out, "", "{config}");
+        assert!(!repo.path().join(".coderabbit.yaml").exists(), "{config}");
+        assert!(!repo.path().join("greptile.json").exists(), "{config}");
+    }
+}
+
+/// A file init cannot edit is left as it is, and init says what to add by
+/// hand; the other bot's file is still written.
+#[test]
+fn a_bot_file_that_cannot_be_edited_is_left_and_named() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".coderabbit.yaml"), "reviews: {}\n");
+    write_file(&repo.path().join("greptile.json"), "{not json");
+    let both = r#"{"address_pr_comments_auto": true, "agent_merge": true, "review_bots": ["coderabbit", "greptile"]}"#;
+    let out = exclusions(repo.path(), both);
+    assert_eq!(read(repo.path(), ".coderabbit.yaml"), "reviews: {}\n");
+    assert_eq!(read(repo.path(), "greptile.json"), "{not json");
+    assert!(
+        out.contains("init: .coderabbit.yaml not changed")
+            && out.contains("add \"!orqa:no-review\" to reviews.auto_review.labels by hand"),
+        "{out}"
+    );
+    assert!(
+        out.contains("init: greptile.json not changed")
+            && out.contains("add \"orqa:no-review\" to disabledLabels by hand"),
+        "{out}"
+    );
+
+    fs::remove_file(repo.path().join("greptile.json")).unwrap();
+    let out = exclusions(repo.path(), both);
+    assert!(out.contains("init: wrote greptile.json"), "{out}");
 }

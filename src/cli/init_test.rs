@@ -1102,7 +1102,7 @@ const REVIEW_BOTS_QUESTION: &str = "Which review bots does this repo have?";
 
 /// With PR comments opened by themselves init asks Agent merge, enter alone
 /// no; yes asks the repo's review bots, none ticked, and writes no bot_wait:
-/// its default stands.
+/// its default stands. The bot ticked gets its No-review exclusion.
 #[test]
 fn init_asks_agent_merge_after_address_pr_comments_and_yes_asks_the_review_bots() {
     // (the answers after the docs/agents setup, TypeSafe no and the labels:
@@ -1130,6 +1130,11 @@ fn init_asks_agent_merge_after_address_pr_comments_and_yes_asks_the_review_bots(
         "{out}"
     );
     assert!(doc.get("bot_wait").is_none(), "{out}");
+    // The bot ticked is told to skip a No-review pull request, the other not.
+    let yaml = fs::read_to_string(repo.path().join(".coderabbit.yaml")).unwrap();
+    assert!(yaml.contains("- \"!orqa:no-review\""), "{yaml}");
+    assert!(out.contains("init: wrote .coderabbit.yaml"), "{out}");
+    assert!(!repo.path().join("greptile.json").exists(), "{out}");
 }
 
 /// With PR comments not opened by themselves Agent merge is not asked: init
@@ -1153,7 +1158,8 @@ fn init_does_not_ask_agent_merge_without_address_pr_comments_and_says_why() {
 
 /// Nobody answering leaves Agent merge off and writes neither review_bots
 /// nor bot_wait; on a re-run it keeps Agent merge on and the bots ticked.
-/// A checkout whose settings are committed is not asked.
+/// A checkout whose settings are committed is not asked, and with Agent
+/// merge committed on it still gets the bots' No-review exclusion.
 #[test]
 fn a_silent_or_committed_init_asks_no_agent_merge_and_a_rerun_keeps_it() {
     let repo = bare_repo();
@@ -1181,6 +1187,18 @@ fn a_silent_or_committed_init_asks_no_agent_merge_and_a_rerun_keeps_it() {
     let (_, out) = init_with(repo.path(), home.path(), committed_tools(), &["\n"], "");
     assert!(out.contains(COMMITTED), "{out}");
     assert!(!out.contains(AGENT_MERGE_QUESTION), "{out}");
+    assert_eq!(read(repo.path(), ".orqadence/config.json"), config);
+
+    // Committed with Agent merge on, a bot's file that lacks the No-review
+    // exclusion gets it, unasked.
+    let (repo, home) = (prepared_repo(), TempDir::new());
+    let config =
+        r#"{"address_pr_comments_auto": true, "agent_merge": true, "review_bots": ["greptile"]}"#;
+    write_file(&repo.path().join(".orqadence/config.json"), config);
+    let (_, out) = init_with(repo.path(), home.path(), committed_tools(), &["\n"], "");
+    assert!(out.contains(COMMITTED), "{out}");
+    assert!(out.contains("init: wrote greptile.json"), "{out}");
+    assert!(read(repo.path(), "greptile.json").contains("orqa:no-review"));
     assert_eq!(read(repo.path(), ".orqadence/config.json"), config);
 }
 
