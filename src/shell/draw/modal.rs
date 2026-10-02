@@ -12,7 +12,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-    Wrap,
 };
 use ratatui::Frame;
 
@@ -222,7 +221,7 @@ pub(super) fn approval(f: &mut Frame, s: &Screen) {
 /// The /manual-work modal in the dock: one row per open item (the
 /// cursor's marked, scrolled into sight) with its checkbox, Ticket, What and
 /// folder, a blocking one's box [-] and "blocking" after it; the cursor
-/// row's whole folder, wrapped; then [ Mark done ] and [ Close ]; the keys
+/// row's whole folder, cut at the width; then [ Mark done ] and [ Close ]; the keys
 /// at its foot.
 pub(super) fn manual_work(f: &mut Frame, s: &Screen) {
     let Some(m) = &s.manual_work else {
@@ -241,13 +240,18 @@ pub(super) fn manual_work(f: &mut Frame, s: &Screen) {
         folder.display().to_string()
     };
     // the row cuts its folder first, so the cursor's shows whole under them
-    let detail = format!("Folder: {}", shown(&m.rows[m.cursor].1.folder));
-    let lines = detail.chars().count().div_ceil(inner.width.max(1) as usize);
+    let detail: Vec<char> = format!("Folder: {}", shown(&m.rows[m.cursor].1.folder))
+        .chars()
+        .collect();
+    // cut at the width, not on words: a path has no spaces to wrap at
+    let lines: Vec<Line> = (detail.chunks(inner.width.max(1) as usize))
+        .map(|piece| Line::from(Span::styled(String::from_iter(piece), fg(MUTED))))
+        .collect();
     let [head, _, body, folder, rule, buttons] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(0),
-        Constraint::Length(lines as u16),
+        Constraint::Length(lines.len() as u16),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
@@ -283,8 +287,7 @@ pub(super) fn manual_work(f: &mut Frame, s: &Screen) {
         })
         .collect();
     f.render_widget(Paragraph::new(rows), body);
-    let detail = Paragraph::new(Span::styled(detail, fg(MUTED))).wrap(Wrap { trim: false });
-    f.render_widget(detail, folder);
+    f.render_widget(Paragraph::new(lines), folder);
     f.render_widget(divider(rule.width as usize), rule);
     let line = Line::from(vec![
         Span::styled("[ Mark done ]", bold(Color::Black).bg(GREEN)),

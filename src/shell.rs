@@ -2569,13 +2569,11 @@ impl Screen {
             .flatten()
             .flatten()
             .map(|entry| {
-                (
-                    entry.file_name().to_string_lossy().to_string(),
-                    entry.path(),
-                )
+                let name = entry.file_name().to_string_lossy().to_string();
+                // a /continue reset's <id>.reset-<n> keeps its items under <id>
+                let id = name.split(".reset-").next().unwrap_or_default();
+                (id.to_string(), entry.path())
             })
-            // a /continue reset's <id>.reset-<n> is no bd id to comment on
-            .filter(|(id, _)| !id.contains(".reset-"))
             .collect();
         dirs.sort();
         let rows: Vec<_> = dirs
@@ -2615,10 +2613,11 @@ impl Screen {
         let Some(m) = self.manual_work.take() else {
             return;
         };
-        let runs = self.cfg.repo.join(LOCAL).join("runs");
         for (id, item, _) in m.rows.into_iter().filter(|(_, _, on)| *on) {
             let n = manual::number(&item.folder);
-            let now = manual::read(&runs.join(&id), &item.folder);
+            // its own Run directory, a reset's archive too: <dir>/manual-work/<n>
+            let dir = item.folder.ancestors().nth(2).unwrap_or(&item.folder);
+            let now = manual::read(dir, &item.folder);
             let marked = match now {
                 Ok(item) if item.blocks || self.waited_on(&item.folder) => {
                     Err("it blocks now, its Question marks it done".to_string())

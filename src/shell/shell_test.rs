@@ -4484,7 +4484,7 @@ fn manual_work_a_question_waits_on_blocks() {
 /// shows on its own line under the rows.
 #[test]
 fn manual_work_shows_the_cursor_rows_whole_folder() {
-    let (_w, mut s, _, _) = manual_world();
+    let (w, mut s, _, _) = manual_world();
     s.key(key(KeyCode::Down));
     let buf = render(&s, 120, 30);
     let text = rows(&buf).join("");
@@ -4494,6 +4494,47 @@ fn manual_work_shows_the_cursor_rows_whole_folder() {
         "{}",
         rows(&buf).join("\n")
     );
+    // at 52 columns a longer id's path runs past the width: it is cut there,
+    // not wrapped on its one space, so its last row, the number, stays
+    let long = w
+        .repo
+        .join(".orqadence-local/runs/harness-a19.4/manual-work/1");
+    write_file(
+        &long.join("manual-work.md"),
+        "Ticket: harness-a19.4 · Stage: implement · Blocks: no\n\n## What\nAsk.\n",
+    );
+    s.command("/manual-work");
+    let buf = render(&s, 52, 30);
+    let text = rows(&buf).join("").replace('│', "");
+    let flat: String = text.split_whitespace().collect();
+    assert!(
+        flat.contains("Folder:.orqadence-local/runs/harness-a19.4/manual-work/1"),
+        "{}",
+        rows(&buf).join("\n")
+    );
+}
+
+/// A /continue reset moves the Run directory, manual-work/ with it, to
+/// <id>.reset-<n>: its items still list under the Ticket, and Mark done
+/// comments on the Ticket and deletes the archived folder.
+#[test]
+fn manual_work_lists_a_reset_tickets_archived_items() {
+    let (w, _) = new_world(Vec::new());
+    let folder = w
+        .repo
+        .join(".orqadence-local/runs/hx-1.reset-1/manual-work/2");
+    write_file(
+        &folder.join("manual-work.md"),
+        "Ticket: hx-1 · Stage: implement · Blocks: no\n\n## What\nRotate the key.\n",
+    );
+    let mut s = shell(&w);
+    s.command("/manual-work");
+    assert_eq!(manual_rows(&s), [("hx-1", "Rotate the key.", false)]);
+    s.key(key(KeyCode::Char(' ')));
+    s.key(key(KeyCode::Enter));
+    let comments = w.called("bd comments add hx-1");
+    assert_eq!(comments.len(), 1, "{:?}", w.calls());
+    assert!(!folder.exists(), "the archived item was not deleted");
 }
 
 /// An item that comes to block while the modal is open, its session now
