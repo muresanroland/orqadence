@@ -8,7 +8,7 @@ use crate::orchestrator::app::{set_count, set_switch, MAX_TICKETS, RELEASE_ON};
 use crate::orchestrator::judgment::fake::Fake as TypeSafeFake;
 use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
 use crate::orchestrator::limit_test::{hits, CODEX};
-use crate::orchestrator::manual::Item;
+use crate::orchestrator::manual::{self, Item};
 use crate::orchestrator::manual_test::files_manual;
 use crate::orchestrator::plan_test::{at_dialog, nouls};
 use crate::orchestrator::question_test::ASKS;
@@ -4423,7 +4423,6 @@ fn manual_work_lists_every_item_and_marks_the_checked_done() {
     assert!(text.contains("MANUAL WORK"), "{text}");
     assert!(text.contains("[ Mark done ]  [ Close ]"), "{text}");
 
-    s.key(key(KeyCode::Tab)); // to [Mark done]
     s.key(key(KeyCode::Enter));
     assert!(s.manual_work.is_none(), "the modal stayed open");
     assert_eq!(
@@ -4438,16 +4437,10 @@ fn manual_work_lists_every_item_and_marks_the_checked_done() {
     );
 }
 
-/// [Close], by Tab or Esc, changes nothing: no bd comment, every folder kept.
+/// Esc closes it and changes nothing: no bd comment, every folder kept.
 #[test]
 fn manual_work_close_changes_nothing() {
     let (w, mut s, free, held) = manual_world();
-    s.key(key(KeyCode::Char(' ')));
-    s.key(key(KeyCode::Tab));
-    s.key(key(KeyCode::Tab)); // to [Close]
-    s.key(key(KeyCode::Enter));
-    assert!(s.manual_work.is_none(), "Close left it open");
-    s.command("/manual-work");
     s.key(key(KeyCode::Char(' ')));
     s.key(key(KeyCode::Esc));
     assert!(s.manual_work.is_none(), "Esc left it open");
@@ -4485,6 +4478,49 @@ fn manual_work_a_question_waits_on_blocks() {
     s.key(key(KeyCode::Char(' ')));
     assert_eq!(manual_rows(&s), [("hx-1", "Add the secret.", false)]);
     assert!(s.manual_work.as_ref().unwrap().rows[0].1.blocks);
+}
+
+/// A narrow dock cuts the row's folder, so the cursor row's whole folder
+/// shows on its own line under the rows.
+#[test]
+fn manual_work_shows_the_cursor_rows_whole_folder() {
+    let (_w, mut s, _, _) = manual_world();
+    s.key(key(KeyCode::Down));
+    let buf = render(&s, 120, 30);
+    let text = rows(&buf).join("");
+    let flat: String = text.split_whitespace().collect();
+    assert!(
+        flat.contains("Folder:.orqadence-local/runs/hx-2/manual-work/1"),
+        "{}",
+        rows(&buf).join("\n")
+    );
+}
+
+/// An item that comes to block while the modal is open, its session now
+/// asking on it, is left to its Question: Enter neither comments nor
+/// deletes it.
+#[test]
+fn manual_work_marks_nothing_a_question_came_to_wait_on() {
+    let (w, mut s, free, _) = manual_world();
+    s.key(key(KeyCode::Char(' ')));
+    s.push(asking(
+        "hx-1",
+        "manual work in implement (pane 2-1)",
+        Ask::Manual {
+            pane: "w1:p7".to_string(),
+            stage: "implement".to_string(),
+            item: manual::read(&free.join("../.."), &free).unwrap(),
+        },
+    ));
+    s.key(key(KeyCode::Enter));
+    assert!(s.manual_work.is_none(), "the modal stayed open");
+    assert!(w.called("bd comments add").is_empty(), "{:?}", w.calls());
+    assert!(free.exists(), "the waited-on item was deleted");
+    assert!(
+        line(s.events.last().unwrap()).contains("Manual work 1 not marked done"),
+        "{:?}",
+        s.events.last().map(line)
+    );
 }
 
 /// With no Manual work open, /manual-work is a notice and opens nothing.

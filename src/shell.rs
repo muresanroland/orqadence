@@ -247,7 +247,7 @@ pub(crate) struct Approval {
 pub(crate) struct ManualWork {
     /// The Ticket or Waypoint (its Run directory's name), the item, checked.
     pub(crate) rows: Vec<(String, manual::Item, bool)>,
-    /// On a row, or past them on [Mark done] (rows.len()) or [Close].
+    /// The row the cursor is on.
     pub(crate) cursor: usize,
 }
 
@@ -1372,22 +1372,16 @@ impl Screen {
             }
         }
         // The /manual-work modal, as the /continue checklist: ↑↓ move,
-        // Space checks a row that does not block, Tab and Shift-Tab go on to
-        // [Mark done] and [Close], Enter acts, Esc closes; Ctrl-C goes on.
+        // Space checks a row that does not block, Enter marks the checked
+        // done, Esc closes; Ctrl-C goes on.
         if let Some(m) = &mut self.manual_work {
-            let n = m.rows.len();
             match key.code {
-                KeyCode::Up => m.cursor = m.cursor.min(n).saturating_sub(1),
-                KeyCode::Down => m.cursor = (m.cursor + 1).min(n - 1),
-                KeyCode::Tab if m.cursor < n => m.cursor = n,
-                KeyCode::Tab => m.cursor = if m.cursor == n { n + 1 } else { 0 },
-                KeyCode::BackTab if m.cursor < n => m.cursor = n + 1,
-                KeyCode::BackTab => m.cursor = if m.cursor == n { 0 } else { n },
+                KeyCode::Up => m.cursor = m.cursor.saturating_sub(1),
+                KeyCode::Down => m.cursor = (m.cursor + 1).min(m.rows.len() - 1),
                 KeyCode::Char(' ') => match m.rows.get_mut(m.cursor) {
                     Some((_, item, on)) if !item.blocks => *on = !*on,
                     _ => {}
                 },
-                KeyCode::Enter if m.cursor == n + 1 => self.manual_work = None,
                 KeyCode::Enter => return self.mark_done(),
                 KeyCode::Esc => self.manual_work = None,
                 _ => {}
@@ -2584,19 +2578,11 @@ impl Screen {
             .filter(|(id, _)| !id.contains(".reset-"))
             .collect();
         dirs.sort();
-        // a session waiting on an item blocks on it, whatever its first line says
-        let waited: Vec<PathBuf> = (self.questions.iter())
-            .filter_map(|q| match &q.about {
-                About::Asked(Ask::Manual { item, .. }) => item.folder.canonicalize().ok(),
-                _ => None,
-            })
-            .collect();
         let rows: Vec<_> = dirs
             .iter()
             .flat_map(|(id, dir)| {
                 manual::open(dir).into_iter().map(|mut item| {
-                    let real = item.folder.canonicalize().ok();
-                    item.blocks |= real.is_some_and(|real| waited.contains(&real));
+                    item.blocks |= self.waited_on(&item.folder);
                     (id.clone(), item, false)
                 })
             })
@@ -2607,15 +2593,40 @@ impl Screen {
         }
     }
 
+    /// A Manual work Question waits on `folder`: its session blocks on it,
+    /// whatever its first line says.
+    fn waited_on(&self, folder: &Path) -> bool {
+        let Ok(real) = folder.canonicalize() else {
+            return false;
+        };
+        self.questions.iter().any(|q| match &q.about {
+            About::Asked(Ask::Manual { item, .. }) => {
+                item.folder.canonicalize().ok() == Some(real.clone())
+            }
+            _ => false,
+        })
+    }
+
     /// Mark done on the /manual-work modal: each checked item's bd comment
     /// with its What, its folder deleted, said on RECENT; the modal closes.
+    /// Each is read again first: one that came to block while the modal was
+    /// open is left to its Question, so its session still hears it is done.
     fn mark_done(&mut self) {
         let Some(m) = self.manual_work.take() else {
             return;
         };
+        let runs = self.cfg.repo.join(LOCAL).join("runs");
         for (id, item, _) in m.rows.into_iter().filter(|(_, _, on)| *on) {
             let n = manual::number(&item.folder);
-            let text = match manual::done(&*self.cfg.tools, &self.cfg.repo, &id, &item, "") {
+            let now = manual::read(&runs.join(&id), &item.folder);
+            let marked = match now {
+                Ok(item) if item.blocks || self.waited_on(&item.folder) => {
+                    Err("it blocks now, its Question marks it done".to_string())
+                }
+                Ok(item) => manual::done(&*self.cfg.tools, &self.cfg.repo, &id, &item, ""),
+                Err(err) => Err(err),
+            };
+            let text = match marked {
                 Ok(()) => format!("marked Manual work {n} done: {}", item.what),
                 Err(err) => format!("Manual work {n} not marked done: {err}"),
             };

@@ -870,6 +870,7 @@ impl Orchestrator {
     /// writable root, so a Stage that has to compile puts its build cache
     /// there: a Go cache runs to some 100MB per Ticket, and nothing reads it
     /// again. The last Fix's screenshots in pr/ go too, attached by then.
+    /// manual-work/ stays: an item is open until the user marks it done.
     /// Keeping only the evidence survives the next Stage inventing a
     /// fifth name for its cache. Manual work not done stays in manual-work/
     /// for the Epic summary and /manual-work. Best effort: scratch that

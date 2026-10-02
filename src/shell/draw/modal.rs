@@ -12,6 +12,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Wrap,
 };
 use ratatui::Frame;
 
@@ -220,25 +221,33 @@ pub(super) fn approval(f: &mut Frame, s: &Screen) {
 
 /// The /manual-work modal in the dock: one row per open item (the
 /// cursor's marked, scrolled into sight) with its checkbox, Ticket, What and
-/// folder, a blocking one's box [-] and "blocking" after it; then
-/// [ Mark done ] and [ Close ], the focused one on its ground; the keys at
-/// its foot.
+/// folder, a blocking one's box [-] and "blocking" after it; the cursor
+/// row's whole folder, wrapped; then [ Mark done ] and [ Close ]; the keys
+/// at its foot.
 pub(super) fn manual_work(f: &mut Frame, s: &Screen) {
     let Some(m) = &s.manual_work else {
         return;
     };
     let (rect, block) = dock(f, s);
-    let foot = " ↑↓ Space checks · Tab buttons · Enter acts · Esc closes ";
+    let foot = " ↑↓ Space checks · Enter marks done · Esc closes ";
     let block = block
         .title(Span::styled(" MANUAL WORK ", bold(TEXT)))
         .title_bottom(Span::styled(foot, fg(MUTED)));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
 
-    let [head, _, body, rule, buttons] = Layout::vertical([
+    let shown = |folder: &std::path::Path| {
+        let folder = folder.strip_prefix(&s.cfg.repo).unwrap_or(folder);
+        folder.display().to_string()
+    };
+    // the row cuts its folder first, so the cursor's shows whole under them
+    let detail = format!("Folder: {}", shown(&m.rows[m.cursor].1.folder));
+    let lines = detail.chars().count().div_ceil(inner.width.max(1) as usize);
+    let [head, _, body, folder, rule, buttons] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(0),
+        Constraint::Length(lines as u16),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
@@ -246,11 +255,9 @@ pub(super) fn manual_work(f: &mut Frame, s: &Screen) {
     let open = Span::styled(format!("{} open", m.rows.len()), fg(TEXT));
     f.render_widget(Line::from(open), head);
 
-    let n = m.rows.len();
     let w = body.width as usize;
     let from = m
         .cursor
-        .min(n - 1)
         .saturating_sub((body.height as usize).saturating_sub(1));
     let rows: Vec<Line> = (m.rows.iter().enumerate().skip(from))
         .map(|(i, (id, item, on))| {
@@ -263,12 +270,12 @@ pub(super) fn manual_work(f: &mut Frame, s: &Screen) {
                 (false, true) => ("[x]", ""),
                 (false, false) => ("[ ]", ""),
             };
-            let folder = item
-                .folder
-                .strip_prefix(&s.cfg.repo)
-                .unwrap_or(&item.folder);
             let room = w.saturating_sub(blocking.chars().count());
-            let text = format!("{mark} {check} {id}  {}  {}", item.what, folder.display());
+            let text = format!(
+                "{mark} {check} {id}  {}  {}",
+                item.what,
+                shown(&item.folder)
+            );
             Line::from(vec![
                 Span::styled(cut(&text, room), style),
                 Span::styled(blocking, fg(ORANGE)),
@@ -276,15 +283,13 @@ pub(super) fn manual_work(f: &mut Frame, s: &Screen) {
         })
         .collect();
     f.render_widget(Paragraph::new(rows), body);
+    let detail = Paragraph::new(Span::styled(detail, fg(MUTED))).wrap(Wrap { trim: false });
+    f.render_widget(detail, folder);
     f.render_widget(divider(rule.width as usize), rule);
-    let button = |label: &'static str, at: usize, c: Color| match m.cursor == at {
-        true => Span::styled(label, bold(Color::Black).bg(c)),
-        false => Span::styled(label, fg(c)),
-    };
     let line = Line::from(vec![
-        button("[ Mark done ]", n, GREEN),
+        Span::styled("[ Mark done ]", bold(Color::Black).bg(GREEN)),
         Span::raw("  "),
-        button("[ Close ]", n + 1, RED),
+        Span::styled("[ Close ]", bold(Color::Black).bg(RED)),
     ]);
     f.render_widget(line, buttons);
 }
