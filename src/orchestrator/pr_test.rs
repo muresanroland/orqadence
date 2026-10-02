@@ -1289,7 +1289,7 @@ fn park_answered_parks_the_ticket_with_its_pr_open() {
     answer(&o, "park");
     poll(&o);
     let ts = o.ticket("hx-1");
-    let reason = "PR #hx-1 not merged: you parked it with 1 PR comment open";
+    let reason = "PR #hx-1 not merged: you parked it";
     assert_eq!(
         (ts.status.as_str(), ts.reason.as_str()),
         (STATUS_PARKED, reason)
@@ -1523,12 +1523,12 @@ fn away_a_judgment_below_the_floor_or_none_parks() {
         (
             scoring(0.4),
             true,
-            "the Judgment was unsure, merge 0.40".to_string(),
+            "merge 0.40 under the floor 0.70".to_string(),
         ),
         (
             scoring(0.2),
             true,
-            "judged against it, merge 0.20".to_string(),
+            "merge 0.20 under the floor 0.70".to_string(),
         ),
         (Fake::down(), true, format!("{none} gave no answer")),
         (scoring(0.9), false, format!("{none} is off")),
@@ -1566,6 +1566,26 @@ fn away_turned_on_while_the_question_waits_takes_the_judgment() {
     o.cfg.away.store(true, Ordering::SeqCst);
     poll(&o);
     assert_eq!(merges(&w).len(), 1);
+}
+
+/// park answered and Away turned on before the next poll parks: the
+/// answer is taken before any Judgment.
+#[test]
+fn park_answered_then_away_turned_on_parks_unjudged() {
+    let (w, mut o, _) = left_open(&["coderabbit"]);
+    let typesafe = scoring(0.9);
+    o.cfg.typesafe = typesafe.clone();
+    answer(&o, "park");
+    o.cfg.away.store(true, Ordering::SeqCst);
+    poll(&o);
+    let ts = o.ticket("hx-1");
+    let reason = "PR #hx-1 not merged: you parked it";
+    assert_eq!(
+        (ts.status.as_str(), ts.reason.as_str()),
+        (STATUS_PARKED, reason)
+    );
+    assert!(merges(&w).is_empty());
+    assert!(typesafe.requests().is_empty());
 }
 
 /// A PR comment that comes on the head already asked about is a new

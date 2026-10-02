@@ -16,7 +16,7 @@ use std::thread;
 use std::time::Instant;
 
 use super::app;
-use super::judgment::{MergeState, WAKE_FLOOR};
+use super::judgment::WAKE_FLOOR;
 use super::pr::{self, Item, Pr};
 use super::release::RELEASE_LABEL;
 use super::result::ResultRequirements;
@@ -656,9 +656,13 @@ impl Orchestrator {
         if ts.human_merge || ts.merge_asked || !app::switch(repo, &app::AGENT_MERGE) {
             return;
         }
+        // park answered to the merge Question parks whatever the gates read
+        // now: a gate closed again, the last item cleared, Away turned on
+        if !ts.merge_question.is_empty() && self.take_park(ticket) {
+            let reason = format!("{} not merged: you parked it", pr_ref(&ts.pr));
+            return self.park_merge(ticket, &reason);
+        }
         if !pr.ready() {
-            // park answered to a Question asked before a gate closed again
-            self.parked_late(ticket, ts);
             return;
         }
         // the head the user, or the Judgment, said to merge as it is
@@ -678,10 +682,6 @@ impl Orchestrator {
             let waiting = !silent.is_empty() && due.is_none_or(|due| (self.cfg.clock)() < due);
             let items = pr.items();
             let open = !silent.is_empty() || !items.is_empty();
-            // park answered as the last item or bot it listed cleared
-            if !open && self.parked_late(ticket, ts) {
-                return;
-            }
             // with nothing known open, items past the poll's page wait
             if waiting || (!open && !pr.items_complete()) {
                 return;
@@ -773,17 +773,6 @@ impl Orchestrator {
         }
     }
 
-    /// Parks the Ticket on park answered to a merge Question merge_open
-    /// will not read: the gate it was asked past moved. Whether it parked.
-    fn parked_late(&self, ticket: &str, ts: &TicketState) -> bool {
-        let parked = !ts.merge_question.is_empty() && self.take_park(ticket);
-        if parked {
-            let reason = format!("{} not merged: you parked it", pr_ref(&ts.pr));
-            self.park_merge(ticket, &reason);
-        }
-        parked
-    }
-
     /// The merge Question (ADR 0007): the PR's gate fails only because of
     /// `items`, PR comments still open once Address PR comments' flow is
     /// over, or of `silent`, listed bots with no review bot_wait after it
@@ -814,13 +803,14 @@ impl Orchestrator {
             what.push(format!("{bots} not reviewed after {minutes}"));
         }
         let what = what.join(" and ");
-        if self.cfg.away.load(Ordering::SeqCst) {
-            return self.merge_judged(ticket, ts, pr, items, silent, &what);
-        }
+        let away = self.cfg.away.load(Ordering::SeqCst);
         // what the Question lists: another head, item or bot is another one
         let ids: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
         let about = format!("{head}\n{}\n{bots}", ids.join("\n"));
         if ts.merge_question != about {
+            if away {
+                return self.merge_judged(ticket, ts, pr, items, silent, &what);
+            }
             self.take_answer(ticket, None); // an answer sent before it is not for it
             let more = "more PR comments than the poll read, some may be open";
             let open = (items.iter())
@@ -843,11 +833,6 @@ impl Orchestrator {
                 self.update(ticket, |ts| ts.merge_anyway = head.clone());
                 true
             }
-            Some(Answer::Prompt(picked)) if picked == "park" => {
-                let reason = format!("{number} not merged: you parked it with {what}");
-                self.park_merge(ticket, &reason);
-                false
-            }
             Some(Answer::Prompt(picked)) if picked == "keep waiting" && !silent.is_empty() => {
                 let wait = bot_wait(&self.cfg.repo);
                 self.update(ticket, |ts| {
@@ -864,6 +849,8 @@ impl Orchestrator {
                 self.unasked(ticket);
                 false
             }
+            // Away turned on with the Question unanswered
+            None if away => self.merge_judged(ticket, ts, pr, items, silent, &what),
             None => false,
         }
     }
@@ -910,13 +897,13 @@ impl Orchestrator {
             match (self.cfg.tools).run(&self.worktree(ticket), &["git", "diff", &range]) {
                 Err(err) => Err(format!("{what} and its diff was not read: {err}")),
                 Ok(diff) => {
-                    let state = MergeState {
-                        pr: &ts.pr,
-                        diff,
-                        open_items: items,
-                        silent_bots: silent,
-                    };
-                    (self.judge_merge(ticket, &state)).map_err(|why| format!("{what} and {why}"))
+                    let state = serde_json::json!({
+                        "pr": ts.pr,
+                        "diff": diff,
+                        "open_items": items,
+                        "silent_bots": silent,
+                    });
+                    (self.judge_merge(ticket, state)).map_err(|why| format!("{what} and {why}"))
                 }
             }
         };
@@ -931,10 +918,7 @@ impl Orchestrator {
                 self.update(ticket, |ts| ts.merge_anyway = pr.head_ref_oid.clone());
                 return true;
             }
-            (Ok(score), Some(floor)) if score <= 1.0 - floor => {
-                format!("judged against it, merge {score:.2}")
-            }
-            (Ok(score), Some(_)) => format!("the Judgment was unsure, merge {score:.2}"),
+            (Ok(score), Some(floor)) => format!("merge {score:.2} under the floor {floor:.2}"),
         };
         let reason = format!("{} not merged: {refused}", pr_ref(&ts.pr));
         self.park_merge(ticket, &reason);

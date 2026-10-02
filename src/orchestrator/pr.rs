@@ -215,8 +215,10 @@ impl Pr {
     /// The bots of `bots`, as review_bots names them, that have not
     /// reviewed the PR.
     pub(crate) fn silent<'a>(&self, bots: &[&'a str]) -> Vec<&'a str> {
-        let silent = bots.iter().filter(|bot| !self.reviewed_by(bot));
-        silent.copied().collect()
+        bots.iter()
+            .copied()
+            .filter(|b| !self.reviewed_by(b))
+            .collect()
     }
 
     /// The poll read every thread, thread comment, review and PR comment:
