@@ -154,6 +154,7 @@ fn every_field_survives_a_save_and_a_missing_file_is_an_empty_state() {
                     .unwrap(),
             ),
             offered: ["PRRT_kwDOUiwtFs6meF8y".to_string()].into(),
+            noticed: ["2".to_string()].into(),
             address_runs: 1,
             fetching: false,    // live only, never saved
             settled: false,     // live only, never saved

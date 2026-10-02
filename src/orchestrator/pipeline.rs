@@ -7,6 +7,7 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use super::app::{self, ExtraReview};
+use super::manual;
 use super::release::RELEASE_LABEL;
 use super::result::{read_stage_result, ResultRequirements, StageResult};
 use super::stage::{
@@ -617,7 +618,8 @@ impl Orchestrator {
 
     /// A Fix given only the fix items ("none" without any); one that opens
     /// the PR also gets the Verdict files, its template and the Extra
-    /// review's result files, for the PR description.
+    /// review's result files, for the PR description. Every Fix gets the
+    /// open Manual work.
     fn fix(
         &self,
         ticket: &str,
@@ -644,6 +646,7 @@ impl Orchestrator {
             .map(|file| file.display().to_string())
             .collect();
         let extra_files = extra_files.join(", ");
+        let manual = manual::input(&self.run_dir(ticket));
         let mut inputs = vec![("Open PR", "no"), ("Fix items", items.as_str())];
         if open_pr {
             inputs[0].1 = "yes";
@@ -658,6 +661,7 @@ impl Orchestrator {
         if !unreviewed.is_empty() {
             inputs.push(("Unreviewed", unreviewed));
         }
+        inputs.push(("Manual work", &manual));
         let fix = self.run_stage(ticket, &FIX, round, &inputs, want)?;
         self.report(ticket, &format!("{} done", stage_label(&FIX, round)));
         Ok(fix)
@@ -881,13 +885,14 @@ impl Orchestrator {
             return;
         };
         for entry in entries.flatten() {
+            // Manual work stays until it is marked done, the PR open or not
+            if entry.file_name() == "manual-work" {
+                continue;
+            }
             let path = entry.path();
             let evidence = path
                 .extension()
                 .is_some_and(|ext| EVIDENCE.contains(&ext.to_string_lossy().as_ref()));
-            if path.ends_with("manual-work") {
-                continue;
-            }
             if path.is_dir() || !evidence {
                 let removed = if path.is_dir() {
                     fs::remove_dir_all(&path)

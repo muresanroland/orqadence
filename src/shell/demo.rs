@@ -423,6 +423,7 @@ fn play(s: &mut Screen, (n, text, then): &(usize, &str, Then)) {
         panel: !matches!(then, Asks(Kind::Plan | Kind::Limited)),
         ask,
         offer: Vec::new(),
+        notice: None,
     });
 }
 
@@ -509,6 +510,7 @@ pub(super) fn answered(s: &mut Screen, id: &str, about: &About, answer: Answer) 
         panel: true,
         ask: None,
         offer: Vec::new(),
+        notice: None,
     });
 }
 

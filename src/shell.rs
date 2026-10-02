@@ -55,6 +55,8 @@ const IDLE_TICK: Duration = Duration::from_millis(250);
 /// How long 'press Ctrl-C again to exit' stands.
 const CTRL_C_WINDOW: Duration = Duration::from_secs(2);
 const NOTICE_WINDOW: Duration = Duration::from_secs(5);
+/// How long non-blocking Manual work's Notice modal stands with no key.
+const MANUAL_NOTICE_WINDOW: Duration = Duration::from_secs(60);
 /// RECENT keeps this many Events; older ones are in the log.
 const KEPT_EVENTS: usize = 1000;
 /// An update another process's run keeps from installing is tried this often.
@@ -957,13 +959,19 @@ impl Screen {
     /// a Ticket closes the Question it had: the Ticket has moved on, and an
     /// answer sent to it meanwhile is dropped. A merge Question closed so
     /// is told to the Orchestrator, whose poll asks it again while it holds. A line that asks, or an ask
-    /// with no line of its own, raises the Ticket's Question anew.
+    /// with no line of its own, raises the Ticket's Question anew. A notice's
+    /// line is shown with its info Notice modal, closing nothing.
     pub(crate) fn push(&mut self, event: Event) {
         if !event.offer.is_empty() {
             let minutes = app::count(&self.cfg.repo, &ADDRESS_PR_COMMENTS_COUNTDOWN) as u64;
             let countdown = (minutes > 0).then(|| Duration::from_secs(60 * minutes));
             let ticket = event.ticket.unwrap_or_default();
             return self.offer(ticket, event.offer, countdown, false);
+        }
+        // non-blocking Manual work: no Question, so the Ticket's stays open
+        if let Some(text) = event.notice.clone() {
+            self.show(event);
+            return self.notify(NoticeKind::Info, &text, Some(MANUAL_NOTICE_WINDOW));
         }
         if !event.panel && event.ask.is_none() {
             return;
@@ -1082,6 +1090,7 @@ impl Screen {
             panel: true,
             ask: None,
             offer: Vec::new(),
+            notice: None,
         });
     }
 

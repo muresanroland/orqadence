@@ -4,9 +4,13 @@
 use super::judgment::fake::Fake;
 use super::judgment::Action;
 use super::manual::{self, Item};
+use super::stage::Orchestrator;
 use super::stage::{Answer, Ask, AWAY};
 use super::state::STATUS_PARKED;
-use super::world::{new_world, spawn_ticket, succeed, wait_until, BdTicket, Prompt};
+use super::world::{
+    new_world, restarted, spawn_epic, spawn_ticket, succeed, wait_until, working, BdTicket, Prompt,
+    World,
+};
 use super::write_file;
 use crate::tempdir::TempDir;
 use std::path::Path;
@@ -136,11 +140,99 @@ fn done_comments_the_what_and_facts_and_removes_the_folder() {
     assert!(!folder.exists(), "the folder was kept");
 }
 
+/// Writes a filed item that blocks its session, as the Stage skills write it.
+pub(crate) fn file_blocking_item(folder: &Path) {
+    file_item(folder);
+    write_file(
+        &folder.join("manual-work.md"),
+        &format!("Ticket: hx-1 · Stage: implement · Blocks: yes\n\n{FILED}"),
+    );
+}
+
+/// Writes a filed item with its first line, Blocks: `blocks`.
+fn file_with(folder: &Path, blocks: &str, what: &str) {
+    let first = format!("Ticket: hx-1 · Stage: implement · Blocks: {blocks}");
+    write_file(
+        &folder.join("manual-work.md"),
+        &format!("{first}\n\n## What\n{what}\n"),
+    );
+}
+
+/// list: every readable manual-work/<n>/ by number, its Blocks read from
+/// the first line, blocking only for Blocks: yes; a folder with no manual-work.md
+/// yet skipped. input: none, or a line per open item.
+#[test]
+fn list_reads_each_items_blocks_and_input_lists_them() {
+    let dir = TempDir::new();
+    assert_eq!(manual::input(dir.path()), "none");
+    let items = dir.path().join("manual-work");
+    file_with(&items.join("10"), "no", "Set the DNS record.");
+    file_with(&items.join("2"), "YES", "Add the secret.");
+    file_with(&items.join("5"), "none", "Rotate the key.");
+    file_item(&items.join("3"));
+    std::fs::create_dir_all(items.join("4")).unwrap();
+    let listed: Vec<(String, bool)> = manual::open(dir.path())
+        .into_iter()
+        .map(|item| (manual::number(&item.folder), item.blocks))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("2".to_string(), true),
+            ("3".to_string(), false),
+            ("5".to_string(), false),
+            ("10".to_string(), false)
+        ]
+    );
+    let at = |n: &str| items.join(n).display().to_string();
+    assert_eq!(
+        manual::input(dir.path()),
+        format!(
+            "\n  {} · Blocks: yes · Add the secret.\n  {} · Blocks: no · Add the DEPLOY_TOKEN secret to the repo.\n  {} · Blocks: no · Rotate the key.\n  {} · Blocks: no · Set the DNS record.",
+            at("2"),
+            at("3"),
+            at("5"),
+            at("10")
+        )
+    );
+}
+
+/// An item whose manual-work.md has no What yet is still being written:
+/// left out of input until it has one, though open still lists it.
+#[test]
+fn input_skips_an_item_with_no_what_yet() {
+    let dir = TempDir::new();
+    let folder = dir.path().join("manual-work").join("1");
+    write_file(&folder.join("manual-work.md"), "Blocks: no\n");
+    assert_eq!(manual::open(dir.path()).len(), 1);
+    assert_eq!(manual::input(dir.path()), "none");
+    file_with(&folder, "no", "Set the DNS record.");
+    assert_eq!(
+        manual::input(dir.path()),
+        format!("\n  {} · Blocks: no · Set the DNS record.", folder.display())
+    );
+}
+
+/// A multi-line What lands on its one Input line.
+#[test]
+fn input_flattens_a_multi_line_what() {
+    let dir = TempDir::new();
+    let folder = dir.path().join("manual-work").join("1");
+    file_with(&folder, "no", "Set the DNS record.\n  Then wait an hour.");
+    assert_eq!(
+        manual::input(dir.path()),
+        format!(
+            "\n  {} · Blocks: no · Set the DNS record. Then wait an hour.",
+            folder.display()
+        )
+    );
+}
+
 /// A Stage's session that files blocking Manual work: the folder beside
 /// its result file, then STATUS: manual and the folder, and waits idle.
 pub(crate) fn files_manual(p: &Prompt) -> (String, String) {
     let folder = Path::new(&p.file).parent().unwrap().join("manual-work/1");
-    file_item(&folder);
+    file_blocking_item(&folder);
     (
         format!("STATUS: manual\n{}\n", folder.display()),
         "idle".to_string(),
@@ -330,4 +422,171 @@ fn manual_work_filed_anew_is_put_to_you_afresh_and_done_marks_that_one() {
     w.lock().agents.insert(pane.clone(), "idle".to_string());
     run.wait();
     w.await_line("hx-1 PR #hx-1 opened");
+}
+
+/// The last Fix gets the open items as its Manual work Input, none without
+/// any; Address PR comments gets them too, the folder kept past the PR.
+#[test]
+fn fix_and_address_pr_comments_get_the_open_manual_work() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    o.run_ticket("hx-1");
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert!(
+        w.prompt("fix-1.md").contains("\n- Manual work: none\n"),
+        "{}",
+        w.prompt("fix-1.md")
+    );
+
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    let folder = o.run_dir("hx-1").join("manual-work/1");
+    let filed = folder.clone();
+    w.session(move |p| {
+        if p.stage == "implement" {
+            file_with(&filed, "no", "Set the DNS record.");
+        }
+        succeed(p)
+    });
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+    w.await_line("hx-1 PR #hx-1 opened");
+    o.command("address-pr-comments-hx-1");
+    w.await_line("hx-1 addressed PR #hx-1");
+    o.stop();
+    run.wait();
+    o.wait_in_flight();
+    let want = format!(
+        "\n- Manual work: \n  {} · Blocks: no · Set the DNS record.\n",
+        folder.display()
+    );
+    for file in ["fix-1.md", "address-pr-comments.md"] {
+        let prompt = w.prompt(file);
+        assert!(prompt.contains(&want), "{file}: {prompt}");
+    }
+}
+
+/// An Implement session that files an item, Blocks: `blocks`, while it
+/// works, and goes on working: the item's folder.
+fn files_while_working(w: &World, o: &Orchestrator, blocks: &'static str) -> std::path::PathBuf {
+    files_what_while_working(w, o, blocks, "Set the DNS record.")
+}
+
+/// files_while_working, the item's What `what`.
+fn files_what_while_working(
+    w: &World,
+    o: &Orchestrator,
+    blocks: &'static str,
+    what: &'static str,
+) -> std::path::PathBuf {
+    let folder = o.run_dir("hx-1").join("manual-work/1");
+    let filed = folder.clone();
+    w.session(move |p| match p.stage == "implement" {
+        true => {
+            file_with(&filed, blocks, what);
+            working(p)
+        }
+        false => succeed(p),
+    });
+    folder
+}
+
+/// Lets the watch on `pane` take a few more ticks.
+fn ticks(w: &World, pane: &str) {
+    let get = format!("herdr agent get {pane}");
+    let seen = w.called(&get).len();
+    wait_until("five more watch ticks", || w.called(&get).len() >= seen + 5);
+}
+
+/// The notice Events: their RECENT lines and Notice texts.
+fn notices(w: &World) -> Vec<(String, String)> {
+    let events = w.events().into_iter();
+    events
+        .filter_map(|e| e.notice.map(|notice| (e.text, notice)))
+        .collect()
+}
+
+/// Blocks: no filed while the session works: one RECENT line and one info
+/// notice, none on the next ticks nor after a resume, which keeps it noticed.
+#[test]
+fn non_blocking_manual_work_is_noticed_once_even_after_a_resume() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    let folder = files_while_working(&w, &o, "no");
+    let o = Arc::new(o);
+    let run = spawn_ticket(o.clone(), "hx-1");
+
+    w.await_event("manual work in implement, not blocking");
+    let pane = o.ticket("hx-1").panes["implement"].clone();
+    ticks(&w, &pane);
+    let once = vec![(
+        "manual work in implement, not blocking: Set the DNS record.".to_string(),
+        format!(
+            "hx-1 implement filed Manual work (not blocking, the session carries on): \
+             Set the DNS record. Folder: {}. The PR will list it.",
+            folder.display()
+        ),
+    )];
+    assert_eq!(notices(&w), once);
+    assert!(
+        w.lines().iter().any(
+            |l| l.ends_with("hx-1 manual work in implement, not blocking: Set the DNS record.")
+        ),
+        "no RECENT line: {:#?}",
+        w.lines()
+    );
+    drop(run);
+
+    let o = restarted(&w, &o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    ticks(&w, &pane);
+    write_file(&o.run_dir("hx-1").join("implement.md"), "STATUS: done\n");
+    w.lock().agents.insert(pane, "idle".to_string());
+    run.wait();
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(notices(&w), once, "noticed again");
+    assert!(folder.exists(), "the item's folder went with the PR");
+}
+
+/// Blocks: yes filed while the session works is never noticed: it is the
+/// Question STATUS: manual raises.
+#[test]
+fn blocking_manual_work_is_never_noticed() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    files_while_working(&w, &o, "yes");
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    w.await_line("hx-1 implement started");
+    let pane = o.ticket("hx-1").panes["implement"].clone();
+    wait_until("the item filed", || {
+        o.run_dir("hx-1").join("manual-work/1").exists()
+    });
+    ticks(&w, &pane);
+    write_file(&o.run_dir("hx-1").join("implement.md"), "STATUS: done\n");
+    w.lock().agents.insert(pane, "idle".to_string());
+    run.wait();
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(notices(&w), []);
+    assert!(
+        !w.lines().iter().any(|l| l.contains("not blocking")),
+        "{:#?}",
+        w.lines()
+    );
+}
+
+/// A What over several lines is one RECENT line, its whitespace flattened;
+/// the Notice keeps the What as filed.
+#[test]
+fn a_multi_line_what_is_noticed_on_one_line() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    files_what_while_working(&w, &o, "no", "Set the DNS record.\n  Then wait an hour.");
+    let o = Arc::new(o);
+    let _run = spawn_ticket(o.clone(), "hx-1");
+    w.await_event("manual work in implement, not blocking");
+    let (line, notice) = notices(&w).remove(0);
+    assert_eq!(
+        line,
+        "manual work in implement, not blocking: Set the DNS record. Then wait an hour."
+    );
+    assert!(
+        notice.contains("Set the DNS record.\n  Then wait an hour"),
+        "{notice}"
+    );
 }
