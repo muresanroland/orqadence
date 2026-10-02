@@ -93,6 +93,8 @@ pub(crate) struct TicketState {
     pub(crate) settled: bool,
     /// gh took the Orchestrator's merge of its PR: it is not asked twice,
     /// though the PR reads open a while longer. Live only, never saved.
+    // ponytail: never reset in a run, so a PR still open after gh said yes
+    // waits for a human; reset it on a new head if that ever happens
     #[serde(skip)]
     pub(crate) merge_asked: bool,
     /// What its PR Stage does while it runs, as TICKETS shows it: "rebase",

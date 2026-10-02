@@ -9,7 +9,7 @@ use serde::Deserialize;
 /// reads for its marker rule. It costs 1 point: GitHub counts connections,
 /// not their size.
 pub(crate) const QUERY: &str = "query($url:URI!){resource(url:$url){...on PullRequest{
-  state mergeable reviewDecision headRefOid mergeCommit{oid}
+  state mergeable reviewDecision isMergeQueueEnabled headRefOid mergeCommit{oid}
   statusCheckRollup{commit{oid} state contexts(first:100){nodes{
     ...on CheckRun{name status conclusion startedAt
       checkSuite{app{slug} workflowRun{event workflow{name}}}}
@@ -27,6 +27,8 @@ pub(crate) struct Pr {
     pub(crate) mergeable: String,
     /// CHANGES_REQUESTED while a human's review asks for changes.
     pub(crate) review_decision: Option<String>,
+    /// Its base branch has a merge queue: `gh pr merge` would queue it.
+    pub(crate) is_merge_queue_enabled: bool,
     pub(crate) head_ref_oid: String,
     merge_commit: Option<Commit>,
     status_check_rollup: Option<Rollup>,
