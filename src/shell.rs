@@ -858,6 +858,7 @@ impl Screen {
             Ask::PlanFailed { .. } => "Plan failed",
             Ask::Limited { .. } => "Usage limit",
             Ask::StageQuestion { .. } => "Stage question",
+            Ask::Manual { .. } => "Manual work",
             Ask::TicketStart { .. } => "Start question",
             Ask::Labels { .. } => "Label question",
             Ask::Tag { .. } => "Tag question",
@@ -989,6 +990,7 @@ impl Screen {
             | Ask::Plan { .. }
             | Ask::Limited { .. }
             | Ask::StageQuestion { .. }
+            | Ask::Manual { .. }
             | Ask::TicketStart { .. }
             | Ask::Labels { .. }
             | Ask::Tag { .. }
@@ -1112,7 +1114,8 @@ impl Screen {
     }
 
     /// Whether the front Question docks in the modal: a plan, a Wake, a
-    /// Stage's own question, the Ticket's labels or its PR's merge.
+    /// Stage's own question, Manual work, the Ticket's labels or its PR's
+    /// merge.
     pub(crate) fn modal(&self) -> bool {
         self.showing()
             && matches!(
@@ -1121,6 +1124,7 @@ impl Screen {
                     Ask::Plan { .. }
                         | Ask::Wake { .. }
                         | Ask::StageQuestion { .. }
+                        | Ask::Manual { .. }
                         | Ask::Labels { .. }
                         | Ask::Merge { .. }
                 )
@@ -1183,6 +1187,9 @@ impl Screen {
                 .cloned()
                 .chain(["an answer of your own", "open the pane", "park"].map(str::to_string))
                 .collect(),
+            About::Asked(Ask::Manual { .. }) => ["done", "done, with facts of your own", "park"]
+                .map(str::to_string)
+                .to_vec(),
             About::Asked(
                 Ask::TicketStart { options }
                 | Ask::Labels { options }
@@ -1506,6 +1513,7 @@ impl Screen {
                     let word = match self.questions[0].about {
                         About::Asked(Ask::Plan { .. }) => "feedback",
                         About::Asked(Ask::StageQuestion { .. }) => "your answer",
+                        About::Asked(Ask::Manual { .. }) => "your facts",
                         _ => "your prompt",
                     };
                     self.reply(word, Answer::Prompt(prompt.trim().to_string()));
@@ -1672,6 +1680,12 @@ impl Screen {
                     (None, _) => self.reply("park", Answer::Act(Action::Park)),
                 }
             }
+            // done, done with your facts (typed in the band), park
+            (About::Asked(Ask::Manual { .. }), n) => match n {
+                0 => self.reply("done", Answer::Prompt(String::new())),
+                1 => self.composing = true,
+                _ => self.reply("park", Answer::Act(Action::Park)),
+            },
             // its options alone, the one picked sent word for word
             (
                 About::Asked(
@@ -1808,7 +1822,8 @@ impl Screen {
                 | Ask::Blocked { pane }
                 | Ask::Plan { pane, .. }
                 | Ask::PlanFailed { pane, .. }
-                | Ask::StageQuestion { pane, .. },
+                | Ask::StageQuestion { pane, .. }
+                | Ask::Manual { pane, .. },
             ) => pane.as_str(),
             // no session: the Ticket's own, or the Release's
             About::Asked(

@@ -1,6 +1,7 @@
 use super::herdr::{location, PaneInfo, TabInfo};
 use super::result::{
-    read_question, read_stage_result, stage_prompt, ResultRequirements, StageResult,
+    read_manual, read_question, read_stage_result, stage_prompt, ResultRequirements, StageResult,
+    MANUAL,
 };
 use super::write_file;
 use crate::tempdir::TempDir;
@@ -281,4 +282,24 @@ fn stage_prompt_is_skill_body_plus_inputs() {
     ] {
         assert!(got.contains(want), "prompt lacks {want:?}:\n{got}");
     }
+}
+
+/// STATUS: manual is neither done nor a Wake: its own reason, as a
+/// question's, and the folder path on its second line.
+#[test]
+fn status_manual_is_not_done_and_names_its_folder() {
+    let dir = TempDir::new();
+    let path = dir.path().join("implement.md");
+    assert_eq!(read_manual(&path), None, "a missing file files nothing");
+    write_file(&path, "STATUS: manual\n/runs/hx-1/manual-work/1\n");
+    let (result, reason) = read_stage_result(&path, ResultRequirements::default());
+    assert_eq!((result, reason.as_str()), (StageResult::default(), MANUAL));
+    assert_eq!(
+        read_manual(&path),
+        Some(std::path::PathBuf::from("/runs/hx-1/manual-work/1"))
+    );
+    write_file(&path, "STATUS: manual\n");
+    assert_eq!(read_manual(&path), Some(std::path::PathBuf::new()));
+    write_file(&path, "STATUS: question\n/runs/hx-1/manual-work/1\n");
+    assert_eq!(read_manual(&path), None, "a question is no Manual work");
 }

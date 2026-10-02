@@ -6,6 +6,7 @@ pub(crate) mod cost;
 pub(crate) mod herdr;
 pub(crate) mod judgment;
 pub(crate) mod limit;
+pub(crate) mod manual;
 pub(crate) mod pipeline;
 pub(crate) mod plan;
 pub(crate) mod pr;
@@ -39,6 +40,8 @@ mod judgment_test;
 mod label_test;
 #[cfg(test)]
 pub(crate) mod limit_test;
+#[cfg(test)]
+pub(crate) mod manual_test;
 #[cfg(test)]
 mod panes_test;
 #[cfg(test)]

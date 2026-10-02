@@ -112,7 +112,7 @@ Decided on the map ticket for the Release label (harness-bsg.22). A run carrying
 
 ## Wake reasons
 
-session reported failure · went idle without a result · wrote a result file whose first line is not STATUS: · timed out after 30m · session died · finished without a PR link · finished without a VERSION line · never took the Stage skill · never took the nudge · never took the continue · never took your answer · wrote STATUS: plan and no plan.md · has no plan hook · never took the answer to its plan · left plan mode before your feedback · feedback not sent: `why` · the cursor never reached Yes, clear context · changed the worktree before its plan was approved
+session reported failure · went idle without a result · wrote a result file whose first line is not STATUS: · timed out after 30m · session died · finished without a PR link · finished without a VERSION line · never took the Stage skill · never took the nudge · never took the continue · never took your answer · filed Manual work that cannot be read: `err` · wrote STATUS: plan and no plan.md · has no plan hook · never took the answer to its plan · left plan mode before your feedback · feedback not sent: `why` · the cursor never reached Yes, clear context · changed the worktree before its plan was approved
 
 The last six are plan failures: a Question for the user, no Judgment asked.
 
@@ -147,6 +147,19 @@ Decided on the map ticket "Delegate skills" (harness-0sx.12, Asks). A Stage writ
 | answered in the pane instead | carrying on |
 | asked while Away | parked: asked you while away *(a bd comment on the Ticket asks for a manual resume, /continue @ticket; the pane stays open; a Rebase or Address PR comments question parks too, its PR still polled for a merge but nothing started on it until /continue @ticket takes that Stage back)* |
 
+## Manual work
+
+Decided on the map ticket "Manual work: the file, the modal, marking it done, and Away" (harness-bsg.18, Blocking). A Stage writes its item's folder, `manual-work/<n>/` in the Run directory, then `STATUS: manual` and the folder's path on the next line, and waits in its session: a Question as a Stage's own question is.
+
+| Moment | Wording |
+|---|---|
+| a Stage files blocking Manual work | manual work in implement (pane 2-1) *(a Question docked as MANUAL WORK · ticket implement · blocks, the item's What, Why, How and folder: done, done with facts of your own, park)* |
+| done sent into the pane | sent manual work 1 done *(the prompt Manual work 1 done: `facts`; then a bd comment on the Ticket with the What and the facts, and the folder deleted)* |
+| the item not marked done | manual work 1 not cleared: `err` |
+| carried on in the pane instead | carrying on |
+| filed while Away | parked: asked you while away *(a bd comment with the What asks for a manual resume, /continue @ticket; the pane and the folder stay)* |
+| its folder missing or unreadable | stuck in implement: filed Manual work that cannot be read: `err` |
+
 ## Ticket-start questions
 
 Decided on harness-bsg.19 and ADR 0006: a Ticket runs the skills committed on its base, as its worktree has them. A job's pick the checkout's Skill manifest records as installed but the worktree lacks was added in /config and not yet merged. Right after the worktree is prepared, while no Stage has run, the branch is brought up to the base (`git pull --ff-only`), and a pick still missing is a Question with no pane, one per pick.
@@ -173,7 +186,7 @@ Decided on the map ticket "The Shell's Question panel" (harness-7bj.7). A Questi
 | Moment | Wording |
 |---|---|
 | Question raised | asking you: stuck in fix 1 · asking you: waiting at a prompt in fix 1 (pane 2-1) · asking you: plan ready in implement (pane 2-1) · asking you: question in implement (pane 2-1) |
-| answer, line 1 | you answered: nudge · retry · park · wait · your prompt · approve · feedback · I answered it · the Stage's option picked · your answer |
+| answer, line 1 | you answered: nudge · retry · park · wait · your prompt · approve · feedback · I answered it · the Stage's option picked · your answer · done · your facts |
 | answer, line 2 | the Judgment's line 2 wording where it has one: nudged: write the result · retrying fix 1 with a fresh session (pane 2-3) · parked: `reason` |
 | answer, line 2, no Judgment equivalent | nudged with your prompt · plan approved · plan sent back with your feedback · sent your answer · carrying on |
 | blocked session cleared in the pane | carrying on |

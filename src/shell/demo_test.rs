@@ -54,6 +54,7 @@ fn the_demo_plays_a_run_asks_and_puts_the_shell_back() {
             }
             Ask::Tag { .. } | Ask::ReleaseAgain { .. } => panic!("the demo has no Release"),
             Ask::Merge { .. } => panic!("the demo merges nothing"),
+            Ask::Manual { .. } => panic!("the demo files no Manual work"),
         };
         asked.push(kind);
         pick(&mut s, option);

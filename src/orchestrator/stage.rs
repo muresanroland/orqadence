@@ -18,10 +18,12 @@ use super::app::{
 use super::herdr::{agent_name, split_target};
 use super::judgment::{offered, Action, Judged, PlanJudged, TypeSafe, WAKE_FLOOR};
 use super::limit::{codex_review, until, Limit, LAST_LINES};
+use super::manual;
 use super::pipeline::MAX_ROUNDS;
 use super::pr::Item;
 use super::result::{
-    read_question, read_stage_result, stage_prompt, ResultRequirements, StageResult, ASKED, PLANNED,
+    read_manual, read_question, read_stage_result, stage_prompt, ResultRequirements, StageResult,
+    ASKED, MANUAL, PLANNED,
 };
 use super::state::{load_state, Session, State, TicketState, LOCAL, STATUS_RUNNING};
 use super::trust::trusts;
@@ -115,6 +117,16 @@ pub(super) enum Held {
     Restart,
 }
 
+/// What a Stage's session waits on you for, its result file reading
+/// STATUS: question or STATUS: manual.
+#[derive(Clone, PartialEq)]
+enum Waiting {
+    /// Its own question and options.
+    Question(String, Vec<String>),
+    /// Manual work, the item its folder holds.
+    Manual(manual::Item),
+}
+
 /// What a panel line asks of the user; the Shell puts it as a Question.
 #[derive(Clone, Debug)]
 pub(crate) enum Ask {
@@ -161,6 +173,14 @@ pub(crate) enum Ask {
         pane: String,
         question: String,
         options: Vec<String>,
+    },
+    /// Manual work its Stage's session waits on (STATUS: manual): its pane,
+    /// the Stage, and the item as read. Done, or a line of the user's own
+    /// (the Report back facts), goes into the pane as a prompt.
+    Manual {
+        pane: String,
+        stage: String,
+        item: manual::Item,
     },
     /// A Question at the Ticket's start, before any Stage, or on a failed
     /// fetch.sh before an Extra review (ask_at_start): its text is the
@@ -790,9 +810,9 @@ impl Orchestrator {
                     Held::Woke(reason) if self.waits_on_you(ticket, st, &reason) => {
                         let pane = self.ticket(ticket).panes.get(st.name).cloned();
                         let pane = pane.unwrap_or_default(); // the pane it asked in
-                        held = match reason == ASKED {
-                            true => self.question(ticket, &label, &pane, &file),
-                            false => self.written_plan(ticket, st, &label, &pane),
+                        held = match reason.as_str() {
+                            ASKED | MANUAL => self.question(ticket, &label, &pane, &file),
+                            _ => self.written_plan(ticket, st, &label, &pane),
                         }
                         .unwrap_or_else(|| {
                             self.hold(ticket, st, &label, &pane, &file, want, true, None)
@@ -1245,10 +1265,11 @@ impl Orchestrator {
     }
 
     /// Whether a Stage whose result gives `reason` waits on you, never a
-    /// Wake: its own question, or Implement's two-step Plan.
+    /// Wake: its own question, Manual work it waits on, or Implement's
+    /// two-step Plan.
     fn waits_on_you(&self, ticket: &str, st: &Stage, reason: &str) -> bool {
         let planned = reason == PLANNED && st.name == IMPLEMENT.name;
-        reason == ASKED || planned && self.writes_plan(ticket)
+        reason == ASKED || reason == MANUAL || planned && self.writes_plan(ticket)
     }
 
     /// Holds a Stage until its agent trusts the directory its pane started
@@ -1400,64 +1421,114 @@ impl Orchestrator {
         }
     }
 
-    /// A Stage's own question, its result file reading STATUS: question:
-    /// never a Wake, never judged, and no deadline runs while it waits.
-    /// Away, the Ticket parks with a bd comment asking for a manual resume,
-    /// its session left waiting in its pane, a PR Stage's PR still polled
-    /// for its merge; turning Away on while the Question waits does the
-    /// same. The Release's, no Ticket to park, waits as a Question all the
-    /// same. Otherwise it is a Question, whose answer goes into the pane as
-    /// a prompt. None once the answer is sent, or the session moves on in
+    /// A Stage's own question, its result file reading STATUS: question, or
+    /// Manual work it waits on, STATUS: manual and the item's folder: never
+    /// a Wake, never judged, and no deadline runs while it waits. Away, the
+    /// Ticket parks with a bd comment asking for a manual resume, its
+    /// session left waiting in its pane, a PR Stage's PR still polled for
+    /// its merge; turning Away on while the Question waits does the same.
+    /// The Release's, no Ticket to park, waits as a Question all the same.
+    /// Otherwise it is a Question, whose answer goes into the pane as a
+    /// prompt; for Manual work, Done or a line of the user's own, the Report
+    /// back facts, goes as Manual work <n> done: <facts>, then the item is
+    /// marked done: a bd comment, its folder deleted. A question or item
+    /// written anew while it waits is put to you afresh, the answer to the
+    /// old one dropped. Manual work whose folder cannot be read is a Wake,
+    /// its result removed so the Wake's hold does not take it for Manual
+    /// work again. None once the answer is sent, or the session moves on in
     /// the pane.
     fn question(&self, ticket: &str, label: &str, pane: &str, file: &Path) -> Option<Held> {
-        let mut raised = false;
+        let mut raised: Option<Waiting> = None;
         loop {
-            let asked = read_question(file);
+            let asked = self.waiting(ticket, file);
             match self.agent_status(pane).as_deref() {
                 None => return Some(Held::Woke("session died".to_string())),
                 Some("idle" | "done") if asked.is_some() => {}
                 Some(_) => {
                     // answered in the pane: no longer open, as a sent answer;
                     // a new one written since the read stays for the watch
-                    if asked.is_some() && read_question(file) == asked {
+                    if asked.is_some() && self.waiting(ticket, file) == asked {
                         let _ = fs::remove_file(file);
                     }
-                    if raised {
+                    if raised.is_some() {
+                        self.take_answer(ticket, None); // yours is for no one now
                         self.report(ticket, "carrying on"); // answered in the pane
                     }
                     return None;
                 }
             }
-            let (question, options) = asked.unwrap();
+            let asked = match asked.unwrap() {
+                Ok(asked) => asked,
+                Err(err) => {
+                    let _ = fs::remove_file(file);
+                    return Some(Held::Woke(format!(
+                        "filed Manual work that cannot be read: {err}"
+                    )));
+                }
+            };
             if self.cfg.away.load(Ordering::SeqCst) && !self.is_release(ticket) {
-                let lead = format!(
-                    "{label} asked a question while you were away and needs a manual resume: \
-                     /continue @{ticket} in the Orqadence Shell puts it to you, its session \
-                     still waiting in its pane."
-                );
-                self.comment_away(ticket, &lead, &question, &options);
+                match &asked {
+                    Waiting::Question(question, options) => {
+                        let lead = format!(
+                            "{label} asked a question while you were away and needs a manual \
+                             resume: /continue @{ticket} in the Orqadence Shell puts it to you, \
+                             its session still waiting in its pane."
+                        );
+                        self.comment_away(ticket, &lead, question, options);
+                    }
+                    Waiting::Manual(item) => {
+                        let lead = format!(
+                            "{label} filed Manual work it waits on while you were away and \
+                             needs a manual resume: /continue @{ticket} in the Orqadence Shell \
+                             puts it to you, its session still waiting in its pane. Folder: {}",
+                            item.folder.display()
+                        );
+                        self.comment_away(ticket, &lead, &item.what, &[]);
+                    }
+                }
                 return Some(Held::Away);
             }
-            if !raised {
+            if raised.as_ref() != Some(&asked) {
                 self.take_answer(ticket, None); // an answer sent before it is not for it
                 let at = self.locate(pane);
-                let ask = Ask::StageQuestion {
-                    pane: pane.to_string(),
-                    question,
-                    options,
+                let pane = pane.to_string();
+                let (said, ask) = match asked.clone() {
+                    Waiting::Question(question, options) => (
+                        "question",
+                        Ask::StageQuestion {
+                            pane,
+                            question,
+                            options,
+                        },
+                    ),
+                    Waiting::Manual(item) => (
+                        "manual work",
+                        Ask::Manual {
+                            pane,
+                            stage: label.to_string(),
+                            item,
+                        },
+                    ),
                 };
-                self.asks(ticket, &format!("question in {label} {at}"), ask);
-                raised = true;
+                self.asks(ticket, &format!("{said} in {label} {at}"), ask);
+                raised = Some(asked.clone());
             }
             match self.take_answer(ticket, Some(pane)) {
                 Some(Answer::Act(Action::Park)) => return Some(Held::Park),
                 Some(Answer::Prompt(text)) => {
+                    let (prompt, said) = match &asked {
+                        Waiting::Question(..) => (text.clone(), "sent your answer".to_string()),
+                        Waiting::Manual(item) => (
+                            manual::done_prompt(&item.folder, &text),
+                            format!("sent manual work {} done", manual::number(&item.folder)),
+                        ),
+                    };
                     // An answered question is no longer open: a session that
                     // goes idle without rewriting it has no result. Removed
                     // first, so nothing written after the prompt is taken.
                     let kept = fs::read(file);
                     let _ = fs::remove_file(file);
-                    if let Err(err) = self.herdr(&["agent", "prompt", pane, &text]) {
+                    if let Err(err) = self.herdr(&["agent", "prompt", pane, &prompt]) {
                         // never taken, still open: put back unless written anew,
                         // so the Wake's hold asks it again
                         if let Ok(kept) = kept {
@@ -1469,7 +1540,14 @@ impl Orchestrator {
                         }
                         return Some(Held::Woke(format!("never took your answer: {err}")));
                     }
-                    self.report(ticket, "sent your answer");
+                    self.report(ticket, &said);
+                    if let Waiting::Manual(item) = &asked {
+                        let tools = &*self.cfg.tools;
+                        if let Err(err) = manual::done(tools, &self.cfg.repo, ticket, item, &text) {
+                            let n = manual::number(&item.folder);
+                            self.report(ticket, &format!("manual work {n} not cleared: {err}"));
+                        }
+                    }
                     self.settle(pane, &["idle", "done"]);
                     return None;
                 }
@@ -1483,6 +1561,17 @@ impl Orchestrator {
                 return Some(Held::Stopped);
             }
         }
+    }
+
+    /// What the Stage's session waits on you for, as its result file names
+    /// it: its own question, or Manual work, an error when the item's folder
+    /// cannot be read.
+    fn waiting(&self, ticket: &str, file: &Path) -> Option<Result<Waiting, String>> {
+        if let Some((question, options)) = read_question(file) {
+            return Some(Ok(Waiting::Question(question, options)));
+        }
+        let filed = read_manual(file)?;
+        Some(manual::read(&self.run_dir(ticket), &filed).map(Waiting::Manual))
     }
 
     /// A bd comment on the Ticket for a Question that came while the user

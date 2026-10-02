@@ -8,6 +8,8 @@ use crate::orchestrator::app::{set_count, set_switch, MAX_TICKETS, RELEASE_ON};
 use crate::orchestrator::judgment::fake::Fake as TypeSafeFake;
 use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
 use crate::orchestrator::limit_test::{hits, CODEX};
+use crate::orchestrator::manual::Item;
+use crate::orchestrator::manual_test::files_manual;
 use crate::orchestrator::plan_test::{at_dialog, nouls};
 use crate::orchestrator::question_test::ASKS;
 use crate::orchestrator::release_test::{label, releasing, VERSION_PR};
@@ -4244,6 +4246,109 @@ fn a_stage_question_docks_its_text_from_the_start_and_takes_an_answer_in_the_ban
         s.events.last().map(line).as_deref(),
         Some("harness-kqe.11 you answered: your answer")
     );
+}
+
+/// Manual work its session waits on docks titled MANUAL WORK with its
+/// Stage and "blocks": the item's What, Why and How and its folder in the
+/// box; done sends Manual work <n> done: word for word, your own text goes
+/// as the facts after it, and park parks.
+#[test]
+fn manual_work_docks_its_what_why_how_and_folder() {
+    let repo = TempDir::new();
+    let mut s = screen_at(Fake::quiet(), repo.path());
+    let folder = repo
+        .path()
+        .join(".orqadence-local/runs/harness-kqe.11/manual-work/1");
+    s.push(asking(
+        "harness-kqe.11",
+        "manual work in implement (pane 2-1)",
+        Ask::Manual {
+            pane: "w1:p7".to_string(),
+            stage: "implement".to_string(),
+            item: Item {
+                folder,
+                what: "Add the DEPLOY_TOKEN secret.".to_string(),
+                why: "The deploy job reads it.".to_string(),
+                how: "Run wizard.sh.".to_string(),
+            },
+        },
+    ));
+    assert!(s.modal(), "Manual work did not dock");
+    assert_eq!(
+        s.options(),
+        ["done", "done, with facts of your own", "park"]
+    );
+    let buf = render(&s, 160, 30);
+    assert!(
+        row(&buf, 0).contains("┏ MANUAL WORK · 11 Questions implement · blocks "),
+        "{:?}",
+        row(&buf, 0)
+    );
+    let body = boxed_body(&buf, "╭ what to do ");
+    assert_eq!(
+        body[..10],
+        [
+            "What",
+            "Add the DEPLOY_TOKEN secret.",
+            "",
+            "Why",
+            "The deploy job reads it.",
+            "",
+            "How",
+            "Run wizard.sh.",
+            "",
+            "Folder: .orqadence-local/runs/harness-kqe.11/manual-work/1",
+        ],
+        "{:#?}",
+        rows(&buf)
+    );
+    for want in [
+        "› sends to pane 2-1, word for word: Manual work 1 done:",
+        "› sends to pane 2-1: what you type next; Enter starts typing",
+        "› does: parks the Ticket where it is, pane 2-1 left open; /continue @harness-kqe.11 picks it up again",
+    ] {
+        assert_eq!(band(&render(&s, 160, 30)), want);
+        s.key(key(KeyCode::Down));
+    }
+    pick(&mut s, 2);
+    assert!(s.composing);
+    type_in(&mut s, "DEPLOY_TOKEN");
+    assert_eq!(
+        band(&render(&s, 160, 30)),
+        "› sends to pane 2-1: Manual work 1 done: DEPLOY_TOKEN▌"
+    );
+    s.key(key(KeyCode::Enter));
+    assert!(s.questions.is_empty() && !s.composing);
+    assert_eq!(
+        s.events.last().map(line).as_deref(),
+        Some("harness-kqe.11 you answered: your facts")
+    );
+}
+
+/// Over a live run, Manual work answered done from the Shell goes into the
+/// pane and the Ticket carries on to its PR.
+#[test]
+fn manual_work_answered_done_from_the_shell_carries_the_ticket_on() {
+    let (w, _) = new_world(vec![BdTicket::new("hx-1")]);
+    let result = w.repo.join(".orqadence-local/runs/hx-1/implement.md");
+    w.session(move |p| match p.text.starts_with("Manual work 1 done") {
+        true => {
+            write_file(&result, "STATUS: done\n"); // the session carries on
+            (String::new(), "idle".to_string())
+        }
+        false if p.stage == "implement" => files_manual(p),
+        false => succeed(p),
+    });
+    let mut s = shell(&w);
+    s.command("/start-ticket hx-1");
+    await_line(&mut s, "hx-1 asking you: manual work in implement");
+    assert!(s.modal());
+    pick(&mut s, 1);
+    await_line(&mut s, "hx-1 you answered: done");
+    await_line(&mut s, "hx-1 sent manual work 1 done");
+    await_line(&mut s, "hx-1 PR #hx-1 opened");
+    s.command("/stop-work");
+    await_end(&mut s);
 }
 
 /// The Ticket's label Question docks as a Stage's own question does, with

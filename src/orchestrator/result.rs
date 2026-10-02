@@ -2,7 +2,7 @@
 //! the Pipeline, and the prompt a Stage's session is started with.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The accepted content of a Stage result. Session liveness is a separate
 /// part of Stage completion.
@@ -37,6 +37,9 @@ const NO_RESULT: &str = "went idle without a result";
 const NOT_STATUS: &str = "wrote a result file whose first line is not STATUS:";
 /// STATUS: question: neither done nor a Wake (read_question).
 pub(crate) const ASKED: &str = "asked a question";
+/// STATUS: manual: Manual work its session waits on, neither done nor a
+/// Wake (read_manual).
+pub(crate) const MANUAL: &str = "filed Manual work it waits on";
 /// STATUS: plan: a two-step Plan ready, neither done nor a Wake (plan.rs).
 pub(crate) const PLANNED: &str = "wrote its plan";
 
@@ -55,6 +58,7 @@ pub(crate) fn read_stage_result(path: &Path, want: ResultRequirements) -> (Stage
     match value.trim().to_lowercase().as_str() {
         "failed" => return rejected("session reported failure"),
         "question" => return rejected(ASKED),
+        "manual" => return rejected(MANUAL),
         "plan" => return rejected(PLANNED),
         "done" => {}
         _ => return rejected(NOT_STATUS),
@@ -130,6 +134,24 @@ pub(crate) fn read_question(path: &Path) -> Option<(String, Vec<String>)> {
     let options = lines[from..].iter().map(|o| o[2..].trim().to_string());
     let text = lines[..from].join("\n");
     Some((text.trim_matches('\n').to_string(), options.collect()))
+}
+
+/// Manual work a Stage's session waits on, its result file's first line
+/// STATUS: manual: the item's folder, as the next line names it; empty
+/// when no line does.
+pub(crate) fn read_manual(path: &Path) -> Option<PathBuf> {
+    let body = fs::read_to_string(path).ok()?;
+    let mut lines = body.lines().map(str::trim);
+    let first = lines.next()?.strip_prefix("STATUS:")?;
+    if !first.trim().eq_ignore_ascii_case("manual") {
+        return None;
+    }
+    Some(
+        lines
+            .find(|line| !line.is_empty())
+            .unwrap_or_default()
+            .into(),
+    )
 }
 
 /// The text a Stage's session is prompted with: the Stage skill's body
