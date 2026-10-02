@@ -78,10 +78,13 @@ pub(crate) fn ticket_color(id: &str) -> Color {
 
 /// The Shell over the whole terminal, or docked beside a plan, a Wake or a
 /// Stage's own question; the Epic summary over both; the approval modal
-/// docked ahead of them all; a Notice modal over whichever shows.
+/// docked ahead of them all, then /manual-work; a Notice modal over
+/// whichever shows.
 pub(crate) fn draw(f: &mut Frame, s: &Screen) {
     if !s.approvals.is_empty() {
         modal::approval(f, s);
+    } else if s.manual_work.is_some() {
+        modal::manual_work(f, s);
     } else if let Some(summary) = &s.summary {
         pager::pager(f, s, summary);
     } else if s.settings.is_some() {

@@ -799,7 +799,7 @@ fn up_and_down_move_an_open_lists_cursor_and_with_shift_scroll_recent() {
     for _ in 0..20 {
         s.key(key(KeyCode::Down));
     }
-    assert_eq!(s.pick, 15, "past the last row");
+    assert_eq!(s.pick, 16, "past the last row");
     s.key(key(KeyCode::Up));
     s.key(key(KeyCode::Up));
     s.key(key(KeyCode::Enter));
@@ -947,12 +947,12 @@ fn the_slash_list_renders_above_the_input_with_its_hint() {
     assert_eq!(at("run every Ticket").0, TEXT);
     assert_eq!(at("run Tickets, or add").0, MUTED);
     // The window follows the cursor to the last row.
-    for _ in 0..15 {
+    for _ in 0..16 {
         s.key(key(KeyCode::Down));
     }
     let buf = render(&s, 120, 40);
     assert!(
-        row(&buf, 29).starts_with("   /address-pr-comments"),
+        row(&buf, 29).starts_with("   /questions"),
         "{:#?}",
         rows(&buf)
     );
@@ -962,7 +962,7 @@ fn the_slash_list_renders_above_the_input_with_its_hint() {
     assert!(row(&buf, 11).contains("harness-kqe"), "{:#?}", rows(&buf));
     assert!(row(&buf, 13).contains("6 more, PgDn"), "{:#?}", rows(&buf));
     assert!(
-        row(&buf, 14).starts_with("   /questions"),
+        row(&buf, 14).starts_with("   /manual-work"),
         "{:#?}",
         rows(&buf)
     );
@@ -4350,6 +4350,151 @@ fn manual_work_answered_done_from_the_shell_carries_the_ticket_on() {
     await_line(&mut s, "hx-1 PR #hx-1 opened");
     s.command("/stop-work");
     await_end(&mut s);
+}
+
+/// Two Tickets' Run directories, hx-1's item not blocking and hx-2's
+/// blocking; with no run, /manual-work lists both. Returns their folders.
+fn manual_world() -> (Arc<World>, Screen, PathBuf, PathBuf) {
+    let (w, _) = new_world(Vec::new());
+    let runs = w.repo.join(".orqadence-local/runs");
+    let (free, held) = (
+        runs.join("hx-1/manual-work/1"),
+        runs.join("hx-2/manual-work/1"),
+    );
+    for (folder, id, blocks, what) in [
+        (&free, "hx-1", "no", "Add the DEPLOY_TOKEN secret."),
+        (&held, "hx-2", "yes", "Create the bucket."),
+    ] {
+        write_file(
+            &folder.join("manual-work.md"),
+            &format!("Ticket: {id} · Stage: implement · Blocks: {blocks}\n\n## What\n{what}\n"),
+        );
+    }
+    let mut s = shell(&w);
+    s.command("/manual-work");
+    (w, s, free, held)
+}
+
+/// The rows of the open /manual-work modal: Ticket, What, checked.
+fn manual_rows(s: &Screen) -> Vec<(&str, &str, bool)> {
+    let m = s.manual_work.as_ref().expect("no /manual-work modal");
+    m.rows
+        .iter()
+        .map(|(id, item, on)| (id.as_str(), item.what.as_str(), *on))
+        .collect()
+}
+
+/// /manual-work lists every Run directory's open items; a blocking one
+/// cannot be checked. Mark done comments each checked one's What on its
+/// Ticket and deletes its folder, the blocking one untouched, and says so
+/// on RECENT.
+#[test]
+fn manual_work_lists_every_item_and_marks_the_checked_done() {
+    let (w, mut s, free, held) = manual_world();
+    assert_eq!(
+        manual_rows(&s),
+        [
+            ("hx-1", "Add the DEPLOY_TOKEN secret.", false),
+            ("hx-2", "Create the bucket.", false),
+        ]
+    );
+    s.key(key(KeyCode::Down));
+    s.key(key(KeyCode::Char(' ')));
+    assert!(!manual_rows(&s)[1].2, "a blocking item was checked");
+    s.key(key(KeyCode::Up));
+    s.key(key(KeyCode::Char(' ')));
+    assert!(manual_rows(&s)[0].2, "Space did not check it");
+
+    let buf = render(&s, 160, 30);
+    let text = rows(&buf).join("\n");
+    assert!(
+        row_of(&buf, "] hx-1").contains(
+            "› [x] hx-1  Add the DEPLOY_TOKEN secret.  .orqadence-local/runs/hx-1/manual-work/1"
+        ),
+        "{text}"
+    );
+    let blocking = row_of(&buf, "] hx-2");
+    assert!(
+        blocking
+            .contains("  [-] hx-2  Create the bucket.  .orqadence-local/runs/hx-2/manual-work/1")
+            && blocking.contains("blocking"),
+        "{text}"
+    );
+    assert!(text.contains("MANUAL WORK"), "{text}");
+    assert!(text.contains("[ Mark done ]  [ Close ]"), "{text}");
+
+    s.key(key(KeyCode::Tab)); // to [Mark done]
+    s.key(key(KeyCode::Enter));
+    assert!(s.manual_work.is_none(), "the modal stayed open");
+    assert_eq!(
+        w.called("bd comments add"),
+        ["bd comments add hx-1 Manual work 1 done: Add the DEPLOY_TOKEN secret."]
+    );
+    assert!(!free.exists(), "its folder was kept");
+    assert!(held.exists(), "the blocking item was deleted");
+    assert_eq!(
+        s.events.last().map(line).as_deref(),
+        Some("hx-1 marked Manual work 1 done: Add the DEPLOY_TOKEN secret.")
+    );
+}
+
+/// [Close], by Tab or Esc, changes nothing: no bd comment, every folder kept.
+#[test]
+fn manual_work_close_changes_nothing() {
+    let (w, mut s, free, held) = manual_world();
+    s.key(key(KeyCode::Char(' ')));
+    s.key(key(KeyCode::Tab));
+    s.key(key(KeyCode::Tab)); // to [Close]
+    s.key(key(KeyCode::Enter));
+    assert!(s.manual_work.is_none(), "Close left it open");
+    s.command("/manual-work");
+    s.key(key(KeyCode::Char(' ')));
+    s.key(key(KeyCode::Esc));
+    assert!(s.manual_work.is_none(), "Esc left it open");
+    assert!(w.called("bd").is_empty(), "{:?}", w.calls());
+    assert!(free.exists() && held.exists());
+}
+
+/// An item its session waits on, a Manual work Question pointing at its
+/// folder, blocks even when its first line says Blocks: no.
+#[test]
+fn manual_work_a_question_waits_on_blocks() {
+    let (w, _) = new_world(Vec::new());
+    let folder = w.repo.join(".orqadence-local/runs/hx-1/manual-work/1");
+    write_file(
+        &folder.join("manual-work.md"),
+        "Ticket: hx-1 · Stage: implement · Blocks: no\n\n## What\nAdd the secret.\n",
+    );
+    let mut s = shell(&w);
+    s.push(asking(
+        "hx-1",
+        "manual work in implement (pane 2-1)",
+        Ask::Manual {
+            pane: "w1:p7".to_string(),
+            stage: "implement".to_string(),
+            item: Item {
+                folder: folder.clone(),
+                what: "Add the secret.".to_string(),
+                why: String::new(),
+                how: String::new(),
+                blocks: false,
+            },
+        },
+    ));
+    s.command("/manual-work");
+    s.key(key(KeyCode::Char(' ')));
+    assert_eq!(manual_rows(&s), [("hx-1", "Add the secret.", false)]);
+    assert!(s.manual_work.as_ref().unwrap().rows[0].1.blocks);
+}
+
+/// With no Manual work open, /manual-work is a notice and opens nothing.
+#[test]
+fn manual_work_with_none_open_is_a_notice() {
+    let (w, _) = new_world(Vec::new());
+    let mut s = shell(&w);
+    s.command("/manual-work");
+    assert!(s.manual_work.is_none());
+    assert_eq!(notice(&s), "no Manual work open");
 }
 
 /// The Ticket's label Question docks as a Stage's own question does, with
