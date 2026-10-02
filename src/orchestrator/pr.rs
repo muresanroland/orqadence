@@ -14,10 +14,10 @@ pub(crate) const QUERY: &str = "query($url:URI!){resource(url:$url){...on PullRe
     ...on CheckRun{name status conclusion startedAt
       checkSuite{app{slug} workflowRun{event workflow{name}}}}
     ...on StatusContext{context state description creator{login}}}}}
-  reviewThreads(first:100){nodes{id isResolved path line
-    comments(first:50){nodes{databaseId author{login __typename} body}}}}
-  reviews(last:50){nodes{databaseId url author{login __typename} body}}
-  comments(last:100){nodes{databaseId url author{login __typename} body}}}}}";
+  reviewThreads(first:100){pageInfo{hasNextPage} nodes{id isResolved path line
+    comments(first:50){pageInfo{hasNextPage} nodes{databaseId author{login __typename} body}}}}
+  reviews(last:50){pageInfo{hasPreviousPage} nodes{databaseId url author{login __typename} body}}
+  comments(last:100){pageInfo{hasPreviousPage} nodes{databaseId url author{login __typename} body}}}}}";
 
 /// The PR, the reply's `resource`.
 #[derive(Debug, Default, Deserialize)]
@@ -37,10 +37,18 @@ pub(crate) struct Pr {
     comments: Nodes<Post>,
 }
 
+/// A connection's nodes, and whether it has more than the poll read.
 #[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 struct Nodes<T> {
     nodes: Vec<T>,
+    page_info: PageInfo,
+}
+
+impl<T> Nodes<T> {
+    fn more(&self) -> bool {
+        self.page_info.has_next_page || self.page_info.has_previous_page
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -62,6 +70,8 @@ struct Contexts {
 #[serde(default, rename_all = "camelCase")]
 struct PageInfo {
     has_next_page: bool,
+    /// Of a `last:` connection: it has older nodes.
+    has_previous_page: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -199,6 +209,16 @@ impl Pr {
             other => other,
         };
         self.reviews.nodes.iter().any(|r| r.by(login))
+    }
+
+    /// The poll read every thread, thread comment, review and PR comment:
+    /// with any past its page, items() may miss an open one.
+    pub(crate) fn items_complete(&self) -> bool {
+        let threads = &self.review_threads;
+        !(threads.more()
+            || threads.nodes.iter().any(|t| t.comments.more())
+            || self.reviews.more()
+            || self.comments.more())
     }
 
     /// Its open items, most severe first: unresolved threads, the bots'

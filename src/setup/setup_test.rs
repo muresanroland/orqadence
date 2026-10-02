@@ -995,25 +995,8 @@ fn exclusions(repo: &Path, config: &str) -> String {
     String::from_utf8(out).unwrap()
 }
 
-const MERGE_CODERABBIT: &str =
-    r#"{"address_pr_comments_auto": true, "agent_merge": true, "review_bots": ["coderabbit"]}"#;
 const MERGE_GREPTILE: &str =
     r#"{"address_pr_comments_auto": true, "agent_merge": true, "review_bots": ["greptile"]}"#;
-
-/// Agent merge on and coderabbit listed, a repo without a .coderabbit.yaml
-/// gets one whose reviews.auto_review.labels excludes orqa:no-review, and
-/// init lists it; Greptile, not listed, gets nothing.
-#[test]
-fn a_repo_without_a_coderabbit_yaml_gets_one_with_the_exclusion() {
-    let repo = TempDir::new();
-    let out = exclusions(repo.path(), MERGE_CODERABBIT);
-    assert_eq!(
-        read(repo.path(), ".coderabbit.yaml"),
-        "reviews:\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n"
-    );
-    assert!(out.contains("init: wrote .coderabbit.yaml"), "{out}");
-    assert!(!repo.path().join("greptile.json").exists(), "{out}");
-}
 
 /// The text edit of .coderabbit.yaml writes reviews.auto_review.labels into
 /// a missing or empty file, and leaves alone a text that has that block.

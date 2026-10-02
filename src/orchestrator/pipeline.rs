@@ -313,8 +313,9 @@ impl Orchestrator {
     /// state saved before human_merge was, a label added since or a source
     /// file pushed since must not merge (ADR 0007). Human-merge now is kept
     /// and labelled. A No-review PR that is one no longer loses
-    /// orqa:no-review, so the bots review it, and waits for them. True when
-    /// the merge may go on.
+    /// orqa:no-review, so the bots review it, and waits for them; it stays
+    /// No-review until gh removes the label, so the next poll tries again.
+    /// True when the merge may go on.
     pub(super) fn may_merge(&self, ticket: &str, ts: &TicketState, head: &str) -> bool {
         let pr_ref = pr_ref(&ts.pr);
         if self.is_human_merge(ticket, &ts.pr) {
@@ -333,12 +334,16 @@ impl Orchestrator {
         if !ts.no_review || self.changes_no_review(ticket, &ts.pr, head) {
             return true;
         }
-        self.update(ticket, |ts| ts.no_review = false);
         let name = NO_REVIEW_LABEL.0;
         let argv = ["gh", "pr", "edit", &ts.pr, "--remove-label", name];
         let text = match self.cfg.tools.run(&self.cfg.repo, &argv) {
-            Ok(_) => format!("{pr_ref} changes more than Markdown and skills now: {name} removed, the bots review it"),
-            Err(err) => format!("{pr_ref} changes more than Markdown and skills now, {name} not removed: {err}"),
+            Ok(_) => {
+                self.update(ticket, |ts| ts.no_review = false);
+                format!("{pr_ref} changes more than Markdown and skills now: {name} removed, the bots review it")
+            }
+            Err(err) => format!(
+                "{pr_ref} changes more than Markdown and skills now, {name} not removed: {err}"
+            ),
         };
         self.report(ticket, &text);
         false

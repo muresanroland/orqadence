@@ -874,6 +874,54 @@ fn a_no_review_pr_that_changes_a_source_file_since_loses_its_exemption() {
     assert!(merges(&w).is_empty(), "Greptile has not reviewed");
 }
 
+/// A No-review PR whose orqa:no-review gh failed to remove stays No-review,
+/// so it is not merged and the next poll removes the label again.
+#[test]
+fn a_no_review_label_gh_failed_to_remove_is_removed_on_the_next_poll() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["greptile"]);
+    o.update("hx-1", |ts| ts.no_review = true);
+    changed(&w, "src/main.rs\0");
+    w.fail_once("gh pr edit", "HTTP 502");
+    settle(&w, &o, &clock, &open(PR65, "a"));
+    assert!(merges(&w).is_empty());
+    assert!(o.ticket("hx-1").no_review);
+
+    poll(&o);
+    assert!(merges(&w).is_empty());
+    assert!(!o.ticket("hx-1").no_review);
+    let remove = format!("gh pr edit {URL} --remove-label orqa:no-review");
+    assert_eq!(w.called("gh pr edit"), [remove.clone(), remove]);
+}
+
+/// A reviewed PR with more threads, thread comments, reviews or PR
+/// comments than the poll reads is not merged: an open one may be past them.
+#[test]
+fn a_pr_with_items_past_the_poll_page_is_not_merged() {
+    for (path, page) in [
+        ("/reviewThreads/pageInfo", json!({"hasNextPage": true})),
+        (
+            "/reviewThreads/nodes/0/comments/pageInfo",
+            json!({"hasNextPage": true}),
+        ),
+        ("/reviews/pageInfo", json!({"hasPreviousPage": true})),
+        ("/comments/pageInfo", json!({"hasPreviousPage": true})),
+    ] {
+        let (w, o, clock) = polled();
+        agent_merge(&w, &["coderabbit"]);
+        let mut pr = open(PR65, "a");
+        let (parent, key) = path.rsplit_once('/').unwrap();
+        pr.pointer_mut(parent).unwrap()[key] = page;
+        settle(&w, &o, &clock, &pr);
+        assert!(merges(&w).is_empty(), "{path}");
+
+        pr.pointer_mut(parent).unwrap()[key] = json!({});
+        serve(&w, &pr);
+        poll(&o);
+        assert_eq!(merges(&w).len(), 1, "{path}");
+    }
+}
+
 /// A Ticket whose labels make it human-merge is not merged though its
 /// state says otherwise, as one saved before human_merge was does: the
 /// labels are read again before a merge, and the state and PR keep it.

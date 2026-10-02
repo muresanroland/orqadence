@@ -630,12 +630,13 @@ impl Orchestrator {
     /// Agent merge (ADR 0007): merges a Ticket's settled PR, never a
     /// human-merge one, once its checks are green, GitHub calls it
     /// mergeable and no review asks for changes; a reviewed PR also once
-    /// each bot of review_bots has reviewed it and no item is open, and
-    /// then only if its labels and diff, read again, still allow it
-    /// (may_merge). Until then it waits. With the repo's own method, never --admin, never
-    /// --auto, and only the head these gates were read on. --repo keeps gh
-    /// off the local branch, which the Ticket's worktree holds: the next
-    /// poll's merged handling removes both. GitHub refusing, or a merge
+    /// each bot of review_bots has reviewed it and no item is open, of
+    /// items the poll read all of, and then only if its labels and diff,
+    /// read again, still allow it (may_merge). Until then it waits. With
+    /// the repo's own method, never --admin, never --auto, and only the
+    /// head these gates were read on. --repo keeps gh off the local
+    /// branch, which the Ticket's worktree holds: the next poll's merged
+    /// handling removes both. GitHub refusing, or a merge
     /// queue, which gh would join for it, parks the Ticket at MERGE.
     fn merge(&self, ticket: &str, ts: &TicketState, pr: &Pr) {
         let repo = &self.cfg.repo;
@@ -650,7 +651,7 @@ impl Orchestrator {
             // bots that cannot be read are never read as no bot
             let bots = app::read(repo).and_then(|(_, doc)| app::review_bots_in(&doc));
             let reviewed = bots.is_ok_and(|bots| bots.iter().all(|bot| pr.reviewed_by(bot)));
-            if !reviewed || !pr.items().is_empty() {
+            if !reviewed || !pr.items_complete() || !pr.items().is_empty() {
                 return;
             }
         }
