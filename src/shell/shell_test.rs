@@ -808,7 +808,7 @@ fn up_and_down_move_an_open_lists_cursor_and_with_shift_scroll_recent() {
     for _ in 0..20 {
         s.key(key(KeyCode::Down));
     }
-    assert_eq!(s.pick, 16, "past the last row");
+    assert_eq!(s.pick, 17, "past the last row");
     s.key(key(KeyCode::Up));
     s.key(key(KeyCode::Up));
     s.key(key(KeyCode::Enter));
@@ -933,10 +933,10 @@ fn the_slash_list_renders_above_the_input_with_its_hint() {
         "   /start-ticket         <ticket>…   run Tickets, or add them to the live Ticket run",
         "   /remove-ticket        <ticket>    take a Ticket out of the live Ticket run",
         "   /continue             [<ticket>]  resume the saved run, or unpark one Ticket",
+        "   /brainstorm                       chart an idea into Tickets or a Map, with you",
         "   /stop-work                        stop the run, the panes stay",
         "   /retry                <ticket>    the Ticket's Stage again, in a fresh session",
         "   /park                 <ticket>    take a Ticket out to wait for you",
-        "   /rebase               <ticket>    rebase a PR that conflicts with main",
         "   ↑↓ pick · Tab or Enter fills in · Esc clears",
     ];
     let shown: Vec<String> = (29..38)
@@ -956,7 +956,7 @@ fn the_slash_list_renders_above_the_input_with_its_hint() {
     assert_eq!(at("run every Ticket").0, TEXT);
     assert_eq!(at("run Tickets, or add").0, MUTED);
     // The window follows the cursor to the last row.
-    for _ in 0..16 {
+    for _ in 0..17 {
         s.key(key(KeyCode::Down));
     }
     let buf = render(&s, 120, 40);

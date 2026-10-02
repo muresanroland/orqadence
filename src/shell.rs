@@ -41,14 +41,16 @@ use crate::orchestrator::state::{
     STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING,
 };
 use crate::setup;
-use crate::tools::Tools;
+use crate::tools::{Editor, Tools};
 use crate::update::{self, Checked, Ready, Releases};
+use idea::Idea;
 use summary::Summary;
 
 pub(crate) mod brand;
 mod config;
 mod demo;
 mod draw;
+mod idea;
 mod summary;
 
 /// The screen redraws every 50 ms while a run is live, for the spinner and
@@ -66,7 +68,7 @@ const KEPT_EVENTS: usize = 1000;
 const RETRY: Duration = Duration::from_secs(60);
 /// Every command the Shell takes: its name, arguments and what it does. The
 /// / list shows it, and the README's table.
-const COMMANDS: [(&str, &str, &str); 17] = [
+const COMMANDS: [(&str, &str, &str); 18] = [
     ("/start-epic", "<epic>", "run every Ticket of an open Epic"),
     (
         "/start-ticket",
@@ -82,6 +84,11 @@ const COMMANDS: [(&str, &str, &str); 17] = [
         "/continue",
         "[<ticket>]",
         "resume the saved run, or unpark one Ticket",
+    ),
+    (
+        "/brainstorm",
+        "",
+        "chart an idea into Tickets or a Map, with you",
     ),
     ("/stop-work", "", "stop the run, the panes stay"),
     (
@@ -336,6 +343,14 @@ pub(crate) struct Screen {
     pub(crate) approvals: Vec<Approval>,
     /// /manual-work, while it is open: it takes every key but Ctrl-C.
     pub(crate) manual_work: Option<ManualWork>,
+    /// /brainstorm's idea modal, while it is open: it takes every key but
+    /// Ctrl-C.
+    pub(crate) idea: Option<Idea>,
+    /// Ctrl+G on the idea modal: the run loop hands the terminal to the
+    /// editor, as it re-execs on reexec.
+    pub(crate) editing: bool,
+    /// Where Ctrl+G's editor runs: the terminal, or in tests a FakeEditor.
+    pub(crate) editor: Arc<dyn Editor>,
     /// Esc hid the Question; /questions or Esc on an empty input line brings it back.
     pub(crate) hidden: bool,
     /// The input line is a prompt of the user's own for the front Question.
@@ -452,6 +467,12 @@ impl Screen {
             questions: Vec::new(),
             approvals: Vec::new(),
             manual_work: None,
+            idea: None,
+            editing: false,
+            #[cfg(not(test))]
+            editor: Arc::new(crate::tools::Exec),
+            #[cfg(test)]
+            editor: Arc::new(crate::tools::fake::FakeEditor::default()),
             hidden: false,
             composing: false,
             settings: None,
@@ -1579,6 +1600,9 @@ impl Screen {
                 return;
             }
         }
+        if self.idea.is_some() && !ctrl_c {
+            return self.idea_key(key);
+        }
         if ctrl_c {
             if self.ctrl_c.is_some_and(|at| at.elapsed() < CTRL_C_WINDOW) {
                 self.quit();
@@ -2185,6 +2209,7 @@ impl Screen {
             "/continue",
             "/summary",
             "/demo",
+            "/brainstorm",
         ];
         if self.demo.is_some() && starts.contains(&name) {
             return self.refuse("refused: the demo is on, /stop-demo ends it");
@@ -2301,6 +2326,7 @@ impl Screen {
                 self.summarize(&state, &epic);
             }
             "/manual-work" => self.open_manual_work(),
+            "/brainstorm" => self.idea = Some(Idea::default()),
             "/questions" => match self.questions.is_empty() {
                 true => self.notice("no questions waiting", NOTICE_WINDOW),
                 false => self.hidden = false,
@@ -3033,14 +3059,14 @@ pub(crate) fn open(
 ) -> io::Result<()> {
     let mut screen = Screen::open(repo, tools, env);
     let mut terminal = ratatui::try_init()?;
-    mouse_reporting(true);
+    terminal_modes(true);
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        mouse_reporting(false);
+        terminal_modes(false);
         hook(info)
     }));
     let result = run(&mut terminal, &mut screen);
-    mouse_reporting(false);
+    terminal_modes(false);
     ratatui::restore();
     screen.close();
     if screen.reexec {
@@ -3054,11 +3080,12 @@ pub(crate) fn open(
 /// wheel notch comes as itself and not as the ↑ or ↓ the terminal's
 /// alternate scroll sends (harness-7lz). Plain drag no longer selects text;
 /// Shift or Option held does. Not crossterm's EnableMouseCapture, which
-/// reports every move too, a redraw each.
-fn mouse_reporting(on: bool) {
+/// reports every move too, a redraw each. Bracketed paste with it, so a
+/// pasted newline reaches the idea modal as itself and not as Enter.
+fn terminal_modes(on: bool) {
     let codes = match on {
-        true => "\x1b[?1000h\x1b[?1006h",
-        false => "\x1b[?1006l\x1b[?1000l",
+        true => "\x1b[?1000h\x1b[?1006h\x1b[?2004h",
+        false => "\x1b[?2004l\x1b[?1006l\x1b[?1000l",
     };
     let _ = crossterm::execute!(io::stdout(), crossterm::style::Print(codes));
 }
@@ -3102,10 +3129,28 @@ fn run(terminal: &mut DefaultTerminal, screen: &mut Screen) -> io::Result<()> {
         match event::read()? {
             Input::Key(key) => screen.key(key),
             Input::Mouse(m) => screen.mouse(m),
+            Input::Paste(text) => screen.paste(&text),
             _ => {}
+        }
+        if screen.editing {
+            screen.editing = false;
+            edit(terminal, screen)?;
         }
     }
     Ok(())
+}
+
+/// Ctrl+G's editor over the whole terminal: the Shell's modes off and the
+/// terminal restored, the editor run, then raw mode, the alternate screen
+/// and the modes back, and a clear so the next draw paints every cell.
+fn edit(terminal: &mut DefaultTerminal, screen: &mut Screen) -> io::Result<()> {
+    terminal_modes(false);
+    ratatui::try_restore()?;
+    screen.edit_idea(&|k| std::env::var(k).unwrap_or_default());
+    crossterm::terminal::enable_raw_mode()?;
+    crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+    terminal_modes(true);
+    terminal.clear()
 }
 
 #[cfg(test)]
@@ -3116,5 +3161,7 @@ mod config_test;
 mod demo_test;
 #[cfg(test)]
 mod graphify_test;
+#[cfg(test)]
+mod idea_test;
 #[cfg(test)]
 mod shell_test;

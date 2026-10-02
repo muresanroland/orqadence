@@ -93,8 +93,6 @@ fn brainstorms(repo: &Path) -> PathBuf {
 impl Brainstorm {
     /// Writes its state.json atomically: a reader sees the old or the new
     /// state, never half of one.
-    // Nothing writes one yet but the tests.
-    #[allow(dead_code)]
     pub(crate) fn save(&self, repo: &Path) -> io::Result<()> {
         local_dir(repo)?;
         let dir = brainstorms(repo).join(&self.idea);

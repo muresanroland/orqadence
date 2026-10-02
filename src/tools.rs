@@ -162,6 +162,55 @@ impl Tools for Exec {
     }
 }
 
+/// Runs an editor on a file in the terminal and waits for it: the second
+/// seam beside Tools, since an editor needs the terminal and Tools captures
+/// its output. The error is the warning, "quit unexpectedly (exit code 1)".
+pub trait Editor: Send + Sync {
+    fn edit(&self, editor: &str, file: &Path) -> Result<(), String>;
+}
+
+impl Editor for Exec {
+    /// Through sh, as git does, so an editor with arguments or a quoted
+    /// path runs as the user wrote it.
+    fn edit(&self, editor: &str, file: &Path) -> Result<(), String> {
+        let status = Command::new("sh")
+            .args(["-c", &format!("{editor} \"$@\""), editor])
+            .arg(file)
+            .status()
+            .map_err(|err| format!("could not run: {err}"))?;
+        match status.code() {
+            Some(0) => Ok(()),
+            Some(code) => Err(format!("quit unexpectedly (exit code {code})")),
+            None => Err(format!("quit unexpectedly ({status})")),
+        }
+    }
+}
+
+/// The editor to run: $VISUAL, then $EDITOR (empty counts as unset), else
+/// the first of code -w, vi and nano on PATH; a bare code or subl gets its
+/// wait flag, or it would return before the file is edited.
+pub(crate) fn editor(env: &dyn Fn(&str) -> String) -> Option<String> {
+    let set = ["VISUAL", "EDITOR"]
+        .map(|var| env(var).trim().to_string())
+        .into_iter()
+        .find(|e| !e.is_empty());
+    if let Some(e) = set {
+        return Some(match e.as_str() {
+            "code" | "subl" => format!("{e} -w"),
+            _ => e,
+        });
+    }
+    let path = env("PATH");
+    let on_path = |name: &str| {
+        (path.split(':').filter(|dir| !dir.is_empty()))
+            .any(|dir| Path::new(dir).join(name).is_file())
+    };
+    ["code -w", "vi", "nano"]
+        .into_iter()
+        .find(|e| on_path(e.split(' ').next().unwrap_or(e)))
+        .map(String::from)
+}
+
 /// Kills the process group `pgid` leads; best effort, a no-op off unix.
 fn kill_group(pgid: u32) {
     #[cfg(unix)]
@@ -212,6 +261,41 @@ pub(crate) mod fake {
         /// Every call so far, in order, as space-joined command lines.
         pub(crate) fn calls(&self) -> Vec<String> {
             self.calls.lock().unwrap().clone()
+        }
+    }
+
+    /// What a fake editor does to the file it is given.
+    pub(crate) type EditHandle = dyn Fn(&Path) -> Result<(), String> + Send + Sync;
+
+    /// The test double for the Editor seam: records each editor and file,
+    /// and answers from `handle`; none leaves the file as it is.
+    #[derive(Default)]
+    pub(crate) struct FakeEditor {
+        calls: Mutex<Vec<(String, std::path::PathBuf)>>,
+        handle: Option<Box<EditHandle>>,
+    }
+
+    impl FakeEditor {
+        pub(crate) fn new(
+            handle: impl Fn(&Path) -> Result<(), String> + Send + Sync + 'static,
+        ) -> Arc<Self> {
+            Arc::new(FakeEditor {
+                calls: Mutex::default(),
+                handle: Some(Box::new(handle)),
+            })
+        }
+
+        /// Every editor run so far and the file it was given.
+        pub(crate) fn calls(&self) -> Vec<(String, std::path::PathBuf)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl super::Editor for FakeEditor {
+        fn edit(&self, editor: &str, file: &Path) -> Result<(), String> {
+            let call = (editor.to_string(), file.to_path_buf());
+            self.calls.lock().unwrap().push(call);
+            self.handle.as_ref().map_or(Ok(()), |handle| handle(file))
         }
     }
 
