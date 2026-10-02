@@ -63,6 +63,9 @@
       "repo": "https://github.com/lukasniessen/kubernetes-skill",
       "commit": "34f93c1e409156958cc7c410ab1aa88ab512f10f"
     },
+    "orqa-manual-work": {
+      "shipped": true
+    },
     "orqa-ponytail": {
       "repo": "https://github.com/DietrichGebert/ponytail",
       "path": "skills/ponytail",
