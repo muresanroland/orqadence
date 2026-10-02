@@ -1,5 +1,6 @@
 //! Orqadence: drives a beads Epic through the Pipeline.
 
+pub(crate) mod brainstorm;
 pub mod cli;
 pub(crate) mod graphify;
 pub(crate) mod on_call;

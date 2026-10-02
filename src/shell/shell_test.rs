@@ -1233,7 +1233,7 @@ fn the_idle_tree_renders_from_a_fake_bd_with_the_saved_epic_resumable() {
     );
     let fake = Fake::new(|_, argv| {
         match argv.join(" ").as_str() {
-        "bd list --json --brief --all" => Ok(r#"[
+        "bd list --json --brief --all --limit 0" => Ok(r#"[
             {"id":"harness-kqe.10","title":"The Shell runs the Orchestrator","status":"in_progress","issue_type":"task","parent":"harness-kqe"},
             {"id":"harness-kqe.9","title":"The Shell, idle","status":"in_progress","issue_type":"task","parent":"harness-kqe"},
             {"id":"harness-kqe.8","title":"Events","status":"closed","issue_type":"task","parent":"harness-kqe"},
@@ -1267,7 +1267,7 @@ fn the_idle_tree_renders_from_a_fake_bd_with_the_saved_epic_resumable() {
             "which claude",
             "which claude",
             "which claude",
-            "bd list --json --brief --all"
+            "bd list --json --brief --all --limit 0"
         ],
         "the preflight, then the bd cache"
     );
@@ -1382,7 +1382,7 @@ const SECTIONS: &str = r#"[
 /// `running`, the run is live and 4 is blocked on a question.
 fn sections_screen(running: bool) -> Screen {
     let fake = Fake::new(|_, _| Ok(SECTIONS.to_string()));
-    let epics = super::load_epics(Path::new(""), &*fake, &[]).unwrap();
+    let (epics, _) = super::load_epics(super::bd_list(Path::new(""), &*fake).unwrap(), &[]);
     let mut state = State {
         epic: "harness-a".to_string(),
         ..Default::default()
@@ -1429,6 +1429,162 @@ fn sections_screen(running: bool) -> Screen {
         ));
     }
     s
+}
+
+/// A Map with two Waypoints, one carrying the Map label bd create --parent
+/// copied, and an Idea, beside an ordinary Epic with one Ticket.
+const BRAINSTORMED: &str = r#"[
+    {"id":"hx-m","title":"Wayfinder map: dark mode","status":"open","issue_type":"epic","labels":["brainstorm:map"]},
+    {"id":"hx-m.1","title":"Which palette","status":"open","issue_type":"task","parent":"hx-m","labels":["brainstorm:grilling"]},
+    {"id":"hx-m.2","title":"Write the Epic","status":"open","issue_type":"task","parent":"hx-m","labels":["brainstorm:map","brainstorm:epic"]},
+    {"id":"hx-i","title":"An idea: dark mode","status":"in_progress","issue_type":"task","labels":["brainstorm:idea"]},
+    {"id":"hx-e","title":"Build: the screen","status":"open","issue_type":"epic"},
+    {"id":"hx-e.1","title":"Plan floor","status":"open","issue_type":"task","parent":"hx-e"}
+]"#;
+
+fn brainstormed() -> (Screen, Arc<Fake>) {
+    let fake = Fake::new(|_, argv| match argv.join(" ").as_str() {
+        "bd list --json --brief --all --limit 0" => Ok(BRAINSTORMED.to_string()),
+        other => Err(format!("unexpected {other}")),
+    });
+    let mut s = Screen::new(
+        Config::for_tests(fake.clone(), Path::new(""), Path::new("")),
+        "~/orqa".to_string(),
+        true,
+        Vec::new(),
+        State::default(),
+    );
+    s.reload_epics();
+    (s, fake)
+}
+
+/// A Brainstorm lives in its box, never in TICKETS: only the Epic is there.
+#[test]
+fn tickets_leaves_out_a_map_its_waypoints_and_an_idea() {
+    let (s, _) = brainstormed();
+    let buf = render(&s, 120, 40);
+    assert!(
+        find(&buf, "Build: the screen").is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    assert!(find(&buf, "Plan floor").is_some(), "{:#?}", rows(&buf));
+    for gone in ["dark mode", "Which palette", "Write the Epic", "no Epic"] {
+        assert!(find(&buf, gone).is_none(), "{gone:?} in {:#?}", rows(&buf));
+    }
+}
+
+/// A Map, a Waypoint and an Idea never enter the Pipeline.
+#[test]
+fn starting_a_waypoint_an_idea_or_a_map_is_refused() {
+    let (mut s, fake) = brainstormed();
+    for (line, refusal) in [
+        (
+            "/start-ticket @hx-m.1",
+            "refused: a Waypoint never enters the Pipeline",
+        ),
+        (
+            "/start-ticket @hx-m.2",
+            "refused: a Waypoint never enters the Pipeline",
+        ),
+        (
+            "/start-ticket @hx-i",
+            "refused: an Idea never enters the Pipeline",
+        ),
+        (
+            "/start-epic @hx-m",
+            "refused: hx-m is a Map, /continue @hx-m works it",
+        ),
+    ] {
+        s.notice = None;
+        s.command(line);
+        assert_eq!(notice(&s), refusal, "{line}");
+        assert!(s.run.is_none(), "{line} started a run");
+    }
+    let calls = fake.calls();
+    assert!(
+        calls
+            .iter()
+            .all(|c| c == "bd list --json --brief --all --limit 0"),
+        "{calls:?}"
+    );
+}
+
+/// A Waypoint or an Idea kept off the tree still blocks while open: bd ready
+/// honors it, so a run on what waits on it would idle.
+#[test]
+fn a_ticket_or_an_epic_waiting_on_an_open_brainstorm_issue_is_refused() {
+    let fake = Fake::new(|_, argv| {
+        match argv.join(" ").as_str() {
+        "bd list --json --brief --all --limit 0" => Ok(r#"[
+            {"id":"hx-m","title":"Map","status":"open","issue_type":"epic","labels":["brainstorm:map"]},
+            {"id":"hx-m.1","title":"Which palette","status":"open","issue_type":"task","parent":"hx-m"},
+            {"id":"hx-i","title":"An idea","status":"open","issue_type":"task","labels":["brainstorm:idea"]},
+            {"id":"hx-e","title":"Build","status":"open","issue_type":"epic"},
+            {"id":"hx-e.1","title":"Plan floor","status":"open","issue_type":"task","parent":"hx-e",
+             "dependencies":[{"depends_on_id":"hx-m.1","type":"blocks"}]},
+            {"id":"hx-f","title":"Ship","status":"open","issue_type":"epic",
+             "dependencies":[{"depends_on_id":"hx-i","type":"blocks"}]},
+            {"id":"hx-f.1","title":"Wire it","status":"open","issue_type":"task","parent":"hx-f"}
+        ]"#
+        .to_string()),
+        other => Err(format!("unexpected {other}")),
+    }
+    });
+    let mut s = Screen::new(
+        Config::for_tests(fake.clone(), Path::new(""), Path::new("")),
+        "~/orqa".to_string(),
+        true,
+        Vec::new(),
+        State::default(),
+    );
+    s.reload_epics();
+    for (line, refusal) in [
+        (
+            "/start-ticket @hx-e.1",
+            "refused: hx-e.1 waits on hx-m.1, which is not in the run",
+        ),
+        (
+            "/start-ticket @hx-f.1",
+            "refused: hx-f waits on hx-i, which is not in the run",
+        ),
+    ] {
+        s.notice = None;
+        s.command(line);
+        assert_eq!(notice(&s), refusal, "{line}");
+        assert!(s.run.is_none(), "{line} started a run");
+    }
+}
+
+/// The Shell lists every saved Brainstorm at open, but one whose Map the
+/// user closed in bd, with its brainstorm:map label or without.
+#[test]
+fn the_shell_lists_the_saved_brainstorms_at_open() {
+    let repo = TempDir::new();
+    for (idea, map) in [("hx-i", "hx-m"), ("hx-j", "hx-n"), ("hx-k", "hx-o")] {
+        crate::brainstorm::Brainstorm {
+            phase: crate::brainstorm::Phase::Map,
+            idea: idea.to_string(),
+            map: map.to_string(),
+            ..Default::default()
+        }
+        .save(repo.path())
+        .unwrap();
+    }
+    let fake = Fake::new(|_, argv| {
+        match argv.join(" ").as_str() {
+        "bd list --json --brief --all --limit 0" => Ok(r#"[
+            {"id":"hx-m","title":"Map one","status":"open","issue_type":"epic","labels":["brainstorm:map"]},
+            {"id":"hx-n","title":"Map two","status":"closed","issue_type":"epic","labels":["brainstorm:map"]},
+            {"id":"hx-o","title":"Map three","status":"closed","issue_type":"epic"}
+        ]"#
+        .to_string()),
+        _ => Ok(String::new()),
+    }
+    });
+    let s = Screen::open(repo.path(), fake, &|_| String::new());
+    let ideas: Vec<&str> = s.brainstorms.iter().map(|b| b.idea.as_str()).collect();
+    assert_eq!(ideas, ["hx-i"]);
 }
 
 /// The row where `text` first appears, right-trimmed.
@@ -2101,7 +2257,9 @@ fn a_bd_failure_is_a_notice_over_an_empty_tree() {
     assert_eq!(s.folder, repo.path().display().to_string(), "no HOME, no ~");
     let buf = render(&s, 80, 24);
     assert!(
-        row(&buf, 22).contains("bd list failed: bd list --json --brief --all: exit status 1: boom"),
+        row(&buf, 22).contains(
+            "bd list failed: bd list --json --brief --all --limit 0: exit status 1: boom"
+        ),
         "{:?}",
         row(&buf, 22)
     );
@@ -3131,6 +3289,45 @@ fn a_ticket_with_no_epic_lists_starts_and_shows_alone_live() {
     assert!(s.run.is_none());
     s.command("/start-ticket nothing-like-it");
     assert_eq!(notice(&s), "no open Ticket matches \"nothing-like-it\"");
+}
+
+/// An Idea a run saved before Brainstorm issues were kept out never
+/// resumes into the Pipeline: /continue drops it, its Ticket resumes.
+#[test]
+fn continue_drops_a_saved_brainstorm_issue_and_resumes_the_ticket() {
+    let idea = BdTicket {
+        no_epic: true,
+        labels: vec!["brainstorm:idea".to_string()],
+        ..BdTicket::new("hx-i")
+    };
+    let (w, _) = new_world(vec![BdTicket::new("hx-1"), idea]);
+    w.session(|_| (String::new(), "working".to_string()));
+    let mut saved = State::default();
+    for id in ["hx-1", "hx-i"] {
+        saved.queue.push(id.to_string());
+        saved.tickets.insert(
+            id.to_string(),
+            TicketState {
+                status: STATUS_RUNNING.to_string(),
+                ..Default::default()
+            },
+        );
+    }
+    saved.save(&w.repo).unwrap();
+    let mut s = shell(&w);
+    s.reload_epics();
+    s.command("/continue");
+    s.key(key(KeyCode::Enter));
+    assert!(s.run.is_some(), "{:?}", s.notice);
+    await_line(&mut s, "hx-1 implement started: claude");
+    assert_eq!(s.state.queue, ["hx-1"]);
+    assert!(
+        !s.state.tickets.contains_key("hx-i"),
+        "{:?}",
+        s.state.tickets
+    );
+    s.command("/stop-work");
+    await_end(&mut s);
 }
 
 #[test]

@@ -28,7 +28,7 @@ use super::stage::{
 use super::state::{TicketState, STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
 
 /// One row of a bd JSON reply, the fields the scheduler and the Shell read.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub(crate) struct BdIssue {
     pub(crate) id: String,
@@ -54,7 +54,7 @@ impl BdIssue {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub(crate) struct BdDependency {
     pub(crate) depends_on_id: String,
