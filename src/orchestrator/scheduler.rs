@@ -1334,7 +1334,7 @@ fn listed(items: &[Item]) -> String {
 }
 
 /// Lines as an Input: "none", or one under the other.
-fn bulleted(lines: &[String]) -> String {
+pub(super) fn bulleted(lines: &[String]) -> String {
     match lines.is_empty() {
         true => "none".to_string(),
         false => format!("\n  - {}", lines.join("\n  - ")),

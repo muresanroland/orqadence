@@ -23,7 +23,7 @@ use std::thread;
 
 use serde_json::{json, Value};
 
-use super::app::Row;
+use super::app::{Row, GH_DENY};
 use super::judgment::Action;
 use super::result::{read_stage_result, ResultRequirements, PLANNED};
 use super::stage::{result_name, Answer, Ask, Held, Orchestrator, Stage, IMPLEMENT, SETTLE_TICKS};
@@ -128,6 +128,7 @@ fn plan_dialog(screen: &str) -> Option<Dialog> {
 
 impl Orchestrator {
     /// Writes the Implement session's settings file and returns its path:
+    /// the gh deny rules of claude's code-editing Stages (app::GH_DENY), and
     /// one PreToolUse hook on ExitPlanMode, this binary's hidden mode, which
     /// copies the plan into the run directory and decides nothing, so the
     /// dialog shows as usual. An earlier session's plan goes. On a split the
@@ -146,10 +147,13 @@ impl Orchestrator {
             quoted(self.cfg.exe.display()),
             quoted(dir.join(PLAN).display())
         );
-        let mut settings = json!({ "hooks": { "PreToolUse": [{
-            "matcher": "ExitPlanMode",
-            "hooks": [{ "type": "command", "command": command }],
-        }] } });
+        let mut settings = json!({
+            "permissions": { "deny": GH_DENY },
+            "hooks": { "PreToolUse": [{
+                "matcher": "ExitPlanMode",
+                "hooks": [{ "type": "command", "command": command }],
+            }] },
+        });
         if let Some(plan_model) = &row.plan_model {
             let log = self.cfg.repo.join(LOCAL).join("orchestrator.log");
             let command = format!(

@@ -53,9 +53,17 @@ fn a_rows_model_and_effort_add_the_flags_on_claude_and_on_codex() {
         argv(&w, "review"),
         "--sandbox workspace-write -m gpt-6-sol -c model_reasoning_effort=low"
     );
+    let deny = concat!(
+        r#"{"permissions":{"deny":["Bash(gh secret:*)","Bash(gh variable:*)","#,
+        r#""Bash(gh workflow run:*)","Bash(gh api */secrets*)","Bash(gh api */variables*)","#,
+        r#""Bash(gh api */dispatches*)","Bash(gh api */actions/permissions*)","#,
+        r#""Bash(gh api */environments*)","Bash(gh api */hooks*)","Bash(gh api */protection*)","#,
+        r#""Bash(gh api */rulesets*)","Bash(gh api */collaborators*)","Bash(gh api */keys*)","#,
+        r#""Bash(gh api */pages*)"]}}"#
+    );
     assert_eq!(
         argv(&w, "fix"),
-        format!("--permission-mode auto --add-dir {run} --model sonnet")
+        format!("--permission-mode auto --add-dir {run} --settings {deny} --model sonnet")
     );
     assert!(w.called("herdr agent start h-hx-1-review")[0].contains("--kind codex"));
     w.await_line("hx-1 implement started: claude opus/high (pane 1-1)");
