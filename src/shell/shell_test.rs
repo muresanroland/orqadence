@@ -1233,7 +1233,7 @@ fn the_idle_tree_renders_from_a_fake_bd_with_the_saved_epic_resumable() {
     );
     let fake = Fake::new(|_, argv| {
         match argv.join(" ").as_str() {
-        "bd list --json --brief --all" => Ok(r#"[
+        "bd list --json --brief --all --limit 0" => Ok(r#"[
             {"id":"harness-kqe.10","title":"The Shell runs the Orchestrator","status":"in_progress","issue_type":"task","parent":"harness-kqe"},
             {"id":"harness-kqe.9","title":"The Shell, idle","status":"in_progress","issue_type":"task","parent":"harness-kqe"},
             {"id":"harness-kqe.8","title":"Events","status":"closed","issue_type":"task","parent":"harness-kqe"},
@@ -1267,7 +1267,7 @@ fn the_idle_tree_renders_from_a_fake_bd_with_the_saved_epic_resumable() {
             "which claude",
             "which claude",
             "which claude",
-            "bd list --json --brief --all"
+            "bd list --json --brief --all --limit 0"
         ],
         "the preflight, then the bd cache"
     );
@@ -1444,7 +1444,7 @@ const BRAINSTORMED: &str = r#"[
 
 fn brainstormed() -> (Screen, Arc<Fake>) {
     let fake = Fake::new(|_, argv| match argv.join(" ").as_str() {
-        "bd list --json --brief --all" => Ok(BRAINSTORMED.to_string()),
+        "bd list --json --brief --all --limit 0" => Ok(BRAINSTORMED.to_string()),
         other => Err(format!("unexpected {other}")),
     });
     let mut s = Screen::new(
@@ -1503,9 +1503,57 @@ fn starting_a_waypoint_an_idea_or_a_map_is_refused() {
     }
     let calls = fake.calls();
     assert!(
-        calls.iter().all(|c| c == "bd list --json --brief --all"),
+        calls
+            .iter()
+            .all(|c| c == "bd list --json --brief --all --limit 0"),
         "{calls:?}"
     );
+}
+
+/// A Waypoint or an Idea kept off the tree still blocks while open: bd ready
+/// honors it, so a run on what waits on it would idle.
+#[test]
+fn a_ticket_or_an_epic_waiting_on_an_open_brainstorm_issue_is_refused() {
+    let fake = Fake::new(|_, argv| {
+        match argv.join(" ").as_str() {
+        "bd list --json --brief --all --limit 0" => Ok(r#"[
+            {"id":"hx-m","title":"Map","status":"open","issue_type":"epic","labels":["brainstorm:map"]},
+            {"id":"hx-m.1","title":"Which palette","status":"open","issue_type":"task","parent":"hx-m"},
+            {"id":"hx-i","title":"An idea","status":"open","issue_type":"task","labels":["brainstorm:idea"]},
+            {"id":"hx-e","title":"Build","status":"open","issue_type":"epic"},
+            {"id":"hx-e.1","title":"Plan floor","status":"open","issue_type":"task","parent":"hx-e",
+             "dependencies":[{"depends_on_id":"hx-m.1","type":"blocks"}]},
+            {"id":"hx-f","title":"Ship","status":"open","issue_type":"epic",
+             "dependencies":[{"depends_on_id":"hx-i","type":"blocks"}]},
+            {"id":"hx-f.1","title":"Wire it","status":"open","issue_type":"task","parent":"hx-f"}
+        ]"#
+        .to_string()),
+        other => Err(format!("unexpected {other}")),
+    }
+    });
+    let mut s = Screen::new(
+        Config::for_tests(fake.clone(), Path::new(""), Path::new("")),
+        "~/orqa".to_string(),
+        true,
+        Vec::new(),
+        State::default(),
+    );
+    s.reload_epics();
+    for (line, refusal) in [
+        (
+            "/start-ticket @hx-e.1",
+            "refused: hx-e.1 waits on hx-m.1, which is not in the run",
+        ),
+        (
+            "/start-ticket @hx-f.1",
+            "refused: hx-f waits on hx-i, which is not in the run",
+        ),
+    ] {
+        s.notice = None;
+        s.command(line);
+        assert_eq!(notice(&s), refusal, "{line}");
+        assert!(s.run.is_none(), "{line} started a run");
+    }
 }
 
 /// The Shell lists every saved Brainstorm at open, but one whose Map the
@@ -1525,7 +1573,7 @@ fn the_shell_lists_the_saved_brainstorms_at_open() {
     }
     let fake = Fake::new(|_, argv| {
         match argv.join(" ").as_str() {
-        "bd list --json --brief --all" => Ok(r#"[
+        "bd list --json --brief --all --limit 0" => Ok(r#"[
             {"id":"hx-m","title":"Map one","status":"open","issue_type":"epic","labels":["brainstorm:map"]},
             {"id":"hx-n","title":"Map two","status":"closed","issue_type":"epic","labels":["brainstorm:map"]}
         ]"#
@@ -2208,7 +2256,9 @@ fn a_bd_failure_is_a_notice_over_an_empty_tree() {
     assert_eq!(s.folder, repo.path().display().to_string(), "no HOME, no ~");
     let buf = render(&s, 80, 24);
     assert!(
-        row(&buf, 22).contains("bd list failed: bd list --json --brief --all: exit status 1: boom"),
+        row(&buf, 22).contains(
+            "bd list failed: bd list --json --brief --all --limit 0: exit status 1: boom"
+        ),
         "{:?}",
         row(&buf, 22)
     );

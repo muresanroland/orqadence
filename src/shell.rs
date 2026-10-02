@@ -2444,7 +2444,7 @@ impl Screen {
             let t = find(&self.epics, id)?;
             match t
                 .blockers()
-                .find(|b| unfinished(&self.epics, b) && !theirs(b))
+                .find(|b| unfinished(&self.epics, &self.brainstorm_issues, b) && !theirs(b))
             {
                 Some(b) => Some(format!(
                     "refused: {id} waits on {b}, which is not in the run"
@@ -2469,7 +2469,7 @@ impl Screen {
             .blockers
             .iter()
             .map(String::as_str)
-            .filter(|b| unfinished(&self.epics, b) && !theirs(b))
+            .filter(|b| unfinished(&self.epics, &self.brainstorm_issues, b) && !theirs(b))
             .collect();
         let which = if waits.len() == 1 {
             "which is"
@@ -2932,16 +2932,24 @@ fn find<'a>(epics: &'a [Epic], id: &str) -> Option<&'a BdIssue> {
     epics.iter().flat_map(|e| &e.tickets).find(|t| t.id == id)
 }
 
-/// A blocker still open: an open Epic, or an open Ticket; one off the tree
-/// is closed, as the tree keeps every open Epic and Ticket.
-fn unfinished(epics: &[Epic], id: &str) -> bool {
-    epics.iter().any(|e| e.id == id) || find(epics, id).is_some_and(|t| t.status != "closed")
+/// A blocker still open: an open Epic, an open Ticket, or an open Map,
+/// Waypoint or Idea kept off the tree, which bd ready honors all the same;
+/// any other off the tree is closed, as the tree keeps every open Epic and
+/// Ticket.
+fn unfinished(epics: &[Epic], kept_out: &[BdIssue], id: &str) -> bool {
+    epics.iter().any(|e| e.id == id)
+        || find(epics, id).is_some_and(|t| t.status != "closed")
+        || kept_out.iter().any(|i| i.id == id && i.status != "closed")
 }
 
-/// Every issue, Epics and closed ones too, from one bd list call.
+/// Every issue, Epics and closed ones too, from one bd list call: --limit 0,
+/// as bd's default 50 would cut off a Waypoint's Map.
 fn bd_list(repo: &Path, tools: &dyn Tools) -> Result<Vec<BdIssue>, String> {
     let out = tools
-        .run(repo, &["bd", "list", "--json", "--brief", "--all"])
+        .run(
+            repo,
+            &["bd", "list", "--json", "--brief", "--all", "--limit", "0"],
+        )
         .map_err(|err| err.to_string())?;
     let issues: Option<Vec<BdIssue>> =
         serde_json::from_str(&out).map_err(|err| format!("unreadable reply: {err}"))?;
