@@ -183,20 +183,16 @@ impl Pr {
         self.contexts().iter().any(|c| pending(c.state()))
     }
 
-    /// The head's checks are green: none failed, none pending, and none
-    /// past the 100 the poll reads.
-    pub(crate) fn green(&self) -> bool {
-        let rollup = self.status_check_rollup.as_ref();
-        let more = rollup.is_some_and(|r| r.contexts.page_info.has_next_page);
-        let red = |c: &&Context| failed(c.state()) || pending(c.state());
-        !more && !self.contexts().iter().any(red)
-    }
-
     /// What every merge of the Orchestrator's waits for: its checks green,
-    /// GitHub calling it mergeable, and no review asking for changes.
+    /// each passed, skipped or neutral (a cancelled one never passed), none
+    /// past the 100 the poll reads, GitHub calling it mergeable, and no
+    /// review asking for changes.
     pub(crate) fn ready(&self) -> bool {
+        let more = (self.status_check_rollup.as_ref()).is_some_and(|r| r.contexts.more());
+        let passed = |c: &&Context| matches!(c.state(), "SUCCESS" | "SKIPPED" | "NEUTRAL");
+        let green = !more && self.contexts().iter().all(passed);
         let blocked = self.review_decision.as_deref() == Some("CHANGES_REQUESTED");
-        self.green() && self.mergeable == "MERGEABLE" && !blocked
+        green && self.mergeable == "MERGEABLE" && !blocked
     }
 
     /// Whether the review bot, as review_bots names it, has reviewed the

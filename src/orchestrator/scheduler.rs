@@ -645,10 +645,8 @@ impl Orchestrator {
     /// stop seen before gh is asked merges nothing.
     fn merge(&self, ticket: &str, ts: &TicketState, pr: &Pr) {
         let repo = &self.cfg.repo;
-        if ts.human_merge || ts.merge_asked || !app::switch(repo, &app::AGENT_MERGE) {
-            return;
-        }
-        if !pr.ready() {
+        if ts.human_merge || ts.merge_asked || !app::switch(repo, &app::AGENT_MERGE) || !pr.ready()
+        {
             return;
         }
         if !ts.no_review {

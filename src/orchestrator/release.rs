@@ -199,8 +199,13 @@ impl Orchestrator {
             return Ok(again);
         }
         if !release.tagged {
-            // its merge the Orchestrator's own: tagged with no Question
-            self.ask_tag(id, self.ticket(id).merge_asked)?;
+            // its merge the Orchestrator's own: tagged with no Question,
+            // unless a stop came first: /continue asks it then
+            let unasked = self.ticket(id).merge_asked;
+            if unasked && self.stopping() {
+                return Err(StageError::Stopped);
+            }
+            self.ask_tag(id, unasked)?;
         }
         Ok(false)
     }

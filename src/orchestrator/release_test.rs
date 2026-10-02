@@ -20,7 +20,7 @@ use super::write_file;
 use chrono::{DateTime, Local, TimeDelta};
 use serde_json::json;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 /// The version PR the Release opens.
@@ -891,6 +891,37 @@ fn under_agent_merge_the_version_pr_is_labelled_merged_on_green_and_tagged_with_
     assert!(!o.stopping(), "the run stopped rather than ended");
     let release = o.state.lock().unwrap().release.clone().unwrap();
     assert!(release.tagged && release.commit == "m3rg3d", "{release:?}");
+}
+
+/// A /stop-work while the poll reads the version PR the Orchestrator
+/// merged pushes no tag: /continue asks the tag Question.
+#[test]
+fn a_stop_while_the_merged_version_pr_is_read_pushes_no_tag() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    let orq: Arc<Mutex<Weak<Orchestrator>>> = Arc::default();
+    let hooked = orq.clone();
+    let poll = format!("url={VERSION_PR}");
+    w.hook(move |_, argv| {
+        let read = argv.starts_with(&["gh", "api", "graphql"]) && argv.join(" ").ends_with(&poll);
+        if let Some(o) = hooked
+            .lock()
+            .unwrap()
+            .upgrade()
+            .filter(|o| read && o.ticket("release-hx").merge_asked)
+        {
+            o.stop();
+        }
+        None
+    });
+    let (o, mut run, clock) = agent_merging(&w, o);
+    *orq.lock().unwrap() = Arc::downgrade(&o);
+
+    settle(&w, &clock);
+    run.wait();
+    assert_eq!(w.called("gh pr merge").len(), 1);
+    assert!(w.called("git tag").is_empty(), "tagged after the stop");
+    let release = o.state.lock().unwrap().release.clone().unwrap();
+    assert!(!release.tagged && release.commit == "m3rg3d", "{release:?}");
 }
 
 #[test]

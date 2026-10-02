@@ -827,7 +827,7 @@ fn a_reviewed_pr_waits_for_each_listed_bot_and_for_its_open_items() {
 }
 
 /// A No-review pull request waits for no bot: it merges once its checks
-/// are green and GitHub calls it mergeable.
+/// are green, none failed or cancelled, and GitHub calls it mergeable.
 #[test]
 fn a_no_review_pr_merges_on_green_without_its_bots() {
     let (w, o, clock) = polled();
@@ -841,6 +841,11 @@ fn a_no_review_pr_merges_on_green_without_its_bots() {
     poll(&o);
     assert!(o.ticket("hx-1").settled);
     assert!(merges(&w).is_empty(), "a check failed");
+
+    pr["statusCheckRollup"]["contexts"]["nodes"][0]["state"] = json!("CANCELLED");
+    serve(&w, &pr);
+    poll(&o);
+    assert!(merges(&w).is_empty(), "a cancelled check never passed");
 
     pr["statusCheckRollup"]["contexts"]["nodes"][0]["state"] = json!("SUCCESS");
     pr["mergeable"] = json!("UNKNOWN");
@@ -894,11 +899,16 @@ fn a_no_review_label_gh_failed_to_remove_is_removed_on_the_next_poll() {
     assert_eq!(w.called("gh pr edit"), [remove.clone(), remove]);
 }
 
-/// A reviewed PR with more threads, thread comments, reviews or PR
-/// comments than the poll reads is not merged: an open one may be past them.
+/// A reviewed PR with more threads, thread comments, reviews, PR comments
+/// or checks than the poll reads is not merged: an open one, or a red
+/// check, may be past them.
 #[test]
 fn a_pr_with_items_past_the_poll_page_is_not_merged() {
     for (path, page) in [
+        (
+            "/statusCheckRollup/contexts/pageInfo",
+            json!({"hasNextPage": true}),
+        ),
         ("/reviewThreads/pageInfo", json!({"hasNextPage": true})),
         (
             "/reviewThreads/nodes/0/comments/pageInfo",
@@ -937,22 +947,6 @@ fn a_human_merge_ticket_is_not_merged_whatever_its_saved_state_says() {
         w.called("gh pr edit"),
         [format!("gh pr edit {URL} --add-label orqa:human-merge")]
     );
-}
-
-/// A head with more checks than the poll reads is never green.
-#[test]
-fn checks_past_the_first_hundred_are_not_green() {
-    let (w, o, clock) = polled();
-    agent_merge(&w, &["coderabbit"]);
-    let mut pr = open(PR65, "a");
-    pr["statusCheckRollup"]["contexts"]["pageInfo"] = json!({"hasNextPage": true});
-    settle(&w, &o, &clock, &pr);
-    assert!(merges(&w).is_empty());
-
-    pr["statusCheckRollup"]["contexts"]["pageInfo"] = json!({"hasNextPage": false});
-    serve(&w, &pr);
-    poll(&o);
-    assert_eq!(merges(&w).len(), 1);
 }
 
 /// hx-1's PR merged in a repo whose settings allow `squash` and `rebase`:
