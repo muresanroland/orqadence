@@ -6,7 +6,7 @@ use super::judgment::Action;
 use super::manual::{self, Item};
 use super::stage::{Answer, Ask, AWAY};
 use super::state::STATUS_PARKED;
-use super::world::{new_world, spawn_ticket, succeed, BdTicket, Prompt};
+use super::world::{new_world, spawn_ticket, succeed, wait_until, BdTicket, Prompt};
 use super::write_file;
 use crate::tempdir::TempDir;
 use std::path::Path;
@@ -36,23 +36,23 @@ pub(crate) fn file_item(folder: &Path) {
 }
 
 #[test]
-fn a_folder_reads_its_first_line_four_sections_and_forms() {
+fn a_folder_reads_its_sections() {
     let dir = TempDir::new();
     let folder = dir.path().join("manual-work").join("1");
     file_item(&folder);
+    let item = Item {
+        folder: folder.clone(),
+        what: "Add the DEPLOY_TOKEN secret to the repo.".to_string(),
+        why: "The deploy job reads it; the session has no credential.".to_string(),
+        how: "Run wizard.sh, then check the Actions settings page.".to_string(),
+    };
+    assert_eq!(manual::read(dir.path(), &folder).unwrap(), item);
+    let relative = Path::new("manual-work/1");
     assert_eq!(
-        manual::read(&folder).unwrap(),
+        manual::read(dir.path(), relative).unwrap(),
         Item {
-            folder: folder.clone(),
-            ticket: "hx-1".to_string(),
-            stage: "implement".to_string(),
-            blocks: true,
-            what: "Add the DEPLOY_TOKEN secret to the repo.".to_string(),
-            why: "The deploy job reads it; the session has no credential.".to_string(),
-            how: "Run wizard.sh, then check the Actions settings page.".to_string(),
-            report_back: "The secret's name as set.".to_string(),
-            wizard: true,
-            prompt: false,
+            folder: dir.path().join(relative),
+            ..item
         }
     );
 }
@@ -61,35 +61,50 @@ fn a_folder_reads_its_first_line_four_sections_and_forms() {
 fn a_missing_or_unreadable_folder_is_an_error() {
     let dir = TempDir::new();
     let folder = dir.path().join("manual-work").join("1");
-    assert!(manual::read(&folder).is_err(), "a missing folder read");
+    assert!(
+        manual::read(dir.path(), &folder).is_err(),
+        "a missing folder read"
+    );
     write_file(&folder.join("manual-work.md"), "## What\nsomething\n");
-    assert!(manual::read(&folder).is_err(), "a first line not read");
+    assert!(
+        manual::read(dir.path(), &folder).is_err(),
+        "a first line not read"
+    );
 }
 
+/// Only this Run directory's manual-work/<n>/: never another Ticket's item,
+/// by ../ or an absolute path, nor a folder not named by a number.
 #[test]
-fn a_run_directory_lists_its_items_in_number_order() {
+fn a_folder_outside_the_run_directorys_items_is_an_error() {
     let dir = TempDir::new();
-    for n in ["10", "2", "1", "notes"] {
-        file_item(&dir.path().join("manual-work").join(n));
+    let (mine, other) = (dir.path().join("hx-1"), dir.path().join("hx-2"));
+    file_item(&mine.join("manual-work/1"));
+    file_item(&mine.join("manual-work/notes"));
+    file_item(&other.join("manual-work/1"));
+    for filed in [
+        "../hx-2/manual-work/1",
+        other.join("manual-work/1").to_str().unwrap(),
+        "manual-work/notes",
+        "manual-work",
+        "",
+    ] {
+        assert!(
+            manual::read(&mine, Path::new(filed)).is_err(),
+            "{filed:?} was read"
+        );
     }
-    let listed: Vec<String> = manual::list(dir.path())
-        .iter()
-        .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
-        .collect();
-    assert_eq!(listed, ["1", "2", "10"]);
-    assert!(manual::list(&dir.path().join("none")).is_empty());
 }
 
-/// Done: a bd comment on the id whose Run directory holds the item, with
+/// Done: a bd comment on the Ticket whose Run directory holds the item, with
 /// its What and your facts, then the folder deleted.
 #[test]
 fn done_comments_the_what_and_facts_and_removes_the_folder() {
     let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
     let folder = o.run_dir("hx-1").join("manual-work").join("1");
     file_item(&folder);
-    let item = manual::read(&folder).unwrap();
+    let item = manual::read(&o.run_dir("hx-1"), &folder).unwrap();
 
-    manual::done(&*w, &w.repo, &item, "DEPLOY_TOKEN").unwrap();
+    manual::done(&*w, &w.repo, "hx-1", &item, "DEPLOY_TOKEN").unwrap();
 
     let comments = w.called("bd comments add hx-1 ");
     assert_eq!(
@@ -271,4 +286,48 @@ fn manual_work_whose_folder_cannot_be_read_is_a_wake() {
         let woke = w.lines().iter().filter(|l| l.contains("stuck in")).count();
         assert_eq!(woke, 1, "{filed:?} woke the Ticket again");
     }
+}
+
+/// An item filed anew while the first waits is put to you afresh, and your
+/// Done goes to the one you saw: the first item stays.
+#[test]
+fn manual_work_filed_anew_is_put_to_you_afresh_and_done_marks_that_one() {
+    let (w, mut o) = new_world(vec![BdTicket::new("hx-1")]);
+    o.cfg.typesafe = Fake::down();
+    w.session(|p| match p.text.starts_with("Manual work") {
+        true => (String::new(), "working".to_string()),
+        false if p.stage == "implement" => files_manual(p),
+        false => succeed(p),
+    });
+    let o = Arc::new(o);
+    let mut run = spawn_ticket(o.clone(), "hx-1");
+    w.await_event("manual work in implement");
+
+    let run_dir = o.run_dir("hx-1");
+    file_item(&run_dir.join("manual-work/2"));
+    write_file(
+        &run_dir.join("implement.md"),
+        "STATUS: manual\nmanual-work/2\n",
+    );
+    let Some(Ask::Manual { pane, folder, .. }) = w.await_nth("manual work in implement", 2).ask
+    else {
+        panic!("the new item was not raised");
+    };
+    assert_eq!(folder, run_dir.join("manual-work/2"));
+
+    o.answer("hx-1", &pane, Answer::Prompt(String::new()));
+    w.await_line("hx-1 sent manual work 2 done");
+    wait_until("item 2 marked done", || {
+        !run_dir.join("manual-work/2").exists()
+    });
+    assert!(run_dir.join("manual-work/1").exists(), "item 1 was deleted");
+    let comments = w.called("bd comments add hx-1 Manual work");
+    assert!(
+        comments.len() == 1 && comments[0].starts_with("bd comments add hx-1 Manual work 2 done"),
+        "{comments:?}"
+    );
+    write_file(&run_dir.join("implement.md"), "STATUS: done\n");
+    w.lock().agents.insert(pane.clone(), "idle".to_string());
+    run.wait();
+    w.await_line("hx-1 PR #hx-1 opened");
 }

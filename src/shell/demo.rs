@@ -13,7 +13,6 @@ use super::{About, Epic, Screen};
 use crate::orchestrator::cost::{Cost, Span};
 use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
 use crate::orchestrator::limit::until;
-use crate::orchestrator::manual;
 use crate::orchestrator::scheduler::{BdDependency, BdIssue};
 use crate::orchestrator::stage::{Answer, Ask, Event};
 use crate::orchestrator::state::{
@@ -492,9 +491,6 @@ pub(super) fn answered(s: &mut Screen, id: &str, about: &About, answer: Answer) 
         }
         (About::Asked(Ask::StageQuestion { .. }), Answer::Prompt(_)) => {
             "sent your answer".to_string()
-        }
-        (About::Asked(Ask::Manual { folder, .. }), Answer::Prompt(_)) => {
-            format!("sent manual work {} done", manual::number(folder))
         }
         (_, Answer::Prompt(_)) => "nudged with your prompt".to_string(),
         (_, Answer::Act(Action::Park)) => {
