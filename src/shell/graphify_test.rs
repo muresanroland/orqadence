@@ -395,3 +395,22 @@ fn exit_mid_pass_closes_its_tab_and_records_nothing() {
     );
     assert_eq!(handled(d.repo.path()), None);
 }
+
+#[test]
+fn a_pass_still_working_at_its_limit_records_nothing() {
+    let mut gets = vec!["working"; 2_000];
+    gets.push("built");
+    let d = docs(&gets);
+    let last = crate::graphify::docs_pass(
+        &*d.fake,
+        d.repo.path(),
+        "",
+        "v1.4.0",
+        Duration::from_millis(1),
+        Duration::from_millis(30),
+        &|_| {},
+        &|_| {},
+    );
+    assert_eq!(last, UNFINISHED);
+    assert_eq!(handled(d.repo.path()), None);
+}

@@ -22,6 +22,11 @@ use crate::update::semver;
 /// killed, so a stalled one cannot hold up the Ticket.
 const UPDATE_LIMIT: Duration = Duration::from_secs(300);
 
+/// How long a Docs pass may run before it is given up unfinished: an LLM
+/// over the checkout takes minutes, tens of them on a large one, so two
+/// hours bounds a stuck or blocked session with room for a slow one.
+pub(crate) const DOCS_PASS_LIMIT: Duration = Duration::from_secs(2 * 60 * 60);
+
 /// A new worktree's own code graph, while the "graphify" switch is on: the
 /// checkout's graphify-out/ copied in when it has a graph, then graphify
 /// update . there, which keeps the Docs pass's nodes whose files exist.
@@ -136,22 +141,25 @@ fn platforms(repo: &Path) -> BTreeSet<&'static str> {
 /// it is checked out its cwd, prompted with graphify's skill over `.
 /// --update`. Done once the session, idle after working, has left a
 /// graph.json newer than the pass: the X.Y is recorded and the tab closes.
-/// Anything else records nothing, so the next check asks again, and leaves
-/// the tab open to read why. `say` takes the started line and a start's
-/// error, `opened` the tab once made; the pass's last RECENT line comes
-/// back.
+/// Anything else, past `limit` too, records nothing, so the next check
+/// asks again, and leaves the tab open to read why. `say` takes the
+/// started line and a start's error, `opened` the tab once made; the
+/// pass's last RECENT line comes back.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn docs_pass(
     tools: &dyn Tools,
     repo: &Path,
     workspace: &str,
     tag: &str,
     tick: Duration,
+    limit: Duration,
     say: &dyn Fn(String),
     opened: &dyn Fn(&str),
 ) -> String {
     let unfinished =
         format!("graphify docs pass on {tag} did not finish: asked again at the next check");
     let since = SystemTime::now();
+    let deadline = Instant::now() + limit;
     let (tab, pane) = match start_docs_pass(tools, repo, workspace, tag, tick, say, opened) {
         Ok(started) => started,
         Err(err) => {
@@ -162,6 +170,9 @@ pub(crate) fn docs_pass(
     // idle before the session has worked, or settled, is not believed
     let mut worked = false;
     for ticks in 1.. {
+        if Instant::now() >= deadline {
+            return unfinished;
+        }
         thread::sleep(tick);
         let status = herdr(tools, repo, &["agent", "get", &pane]).map(|r| r.result.agent.status);
         match status.as_deref() {

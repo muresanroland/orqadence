@@ -641,7 +641,16 @@ impl Screen {
         thread::spawn(move || {
             let say = |line| _ = tx.send((line, false));
             let opened = |tab: &str| *docs_tab.lock().unwrap() = Some(tab.to_string());
-            let last = graphify::docs_pass(&*tools, &repo, &workspace, &tag, tick, &say, &opened);
+            let last = graphify::docs_pass(
+                &*tools,
+                &repo,
+                &workspace,
+                &tag,
+                tick,
+                graphify::DOCS_PASS_LIMIT,
+                &say,
+                &opened,
+            );
             let _ = tx.send((last, true));
         });
     }
