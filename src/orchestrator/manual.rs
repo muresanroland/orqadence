@@ -32,10 +32,7 @@ pub(crate) fn read(run_dir: &Path, filed: &Path) -> Result<Item, String> {
         .canonicalize()
         .ok()
         .map(|dir| dir.join("manual-work"));
-    if real.parent().is_none()
-        || real.parent() != items.as_deref()
-        || number(&real).parse::<u64>().is_err()
-    {
+    if real.parent() != items.as_deref() || number(&real).parse::<u64>().is_err() {
         return Err(format!(
             "{} is not a folder manual-work/<n>/ in {}",
             folder.display(),

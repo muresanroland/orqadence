@@ -49,7 +49,7 @@ A task can take both, a wizard for the secrets and a prompt for the cloud work: 
 You decide whether your work can go on without the item.
 
 - **Not blocking**: write the folder and carry on. The pull request lists it. You can file several.
-- **Blocking (planned)**: once the Stage loader and Orchestrator support Manual work, at most one at a time, since you wait on it; put related steps in one item. Write the folder, then the Result file with `STATUS: manual` as its first line and the folder path as its second, and wait in your pane. The answer comes into the pane as the prompt `Manual work <n> done: <facts>`. Carry on with those facts, and overwrite the Result file when you finish.
+- **Blocking**: at most one at a time, since you wait on it; put related steps in one item. Write the folder, then the Result file with `STATUS: manual` as its first line and the folder path as its second, and wait in your pane. The answer comes into the pane as the prompt `Manual work <n> done: <facts>`. Carry on with those facts, and overwrite the Result file when you finish.
 
 ## The wizard
 

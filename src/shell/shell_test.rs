@@ -5937,27 +5937,30 @@ fn the_summary_shows_manual_work_not_done_after_the_parked_tickets() {
     s.command("/summary");
     let buf = render(&s, 120, 50);
     let (_, parked) = find(&buf, "PARKED").expect("no PARKED");
-    let body: Vec<String> = (parked + 3..parked + 13)
+    let body: Vec<String> = (parked + 3..parked + 16)
         .map(|y| cols(&buf, y, 31, 120).trim_end().to_string())
         .collect();
     assert_eq!(
         body,
         [
             "MANUAL WORK NOT DONE",
-            "  hx-2 Ticket hx-2 · does not block",
+            "  hx-2 Ticket hx-2",
+            "    blocks: no",
             "    what: Add the DEPLOY_TOKEN secret.",
             "    folder: .orqadence-local/runs/hx-2/manual-work/2",
-            "  hx-2 Ticket hx-2 · does not block",
+            "  hx-2 Ticket hx-2",
+            "    blocks: no",
             "    what: Set the DNS record.",
             "    folder: .orqadence-local/runs/hx-2/manual-work/10",
-            "  hx-3 Ticket hx-3 · blocks",
+            "  hx-3 Ticket hx-3",
+            "    blocks: yes",
             "    what: Log in to the registry.",
             "    folder: .orqadence-local/runs/hx-3/manual-work/1",
         ],
         "{:#?}",
         rows(&buf)
     );
-    let (x, y) = find(&buf, "hx-3 Ticket hx-3 · blocks").unwrap();
+    let (x, y) = find(&buf, "hx-3 Ticket hx-3").unwrap();
     assert_eq!(buf[(x, y)].fg, ticket_color("hx-3"));
 }
 

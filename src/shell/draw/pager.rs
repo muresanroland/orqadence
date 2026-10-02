@@ -360,13 +360,15 @@ fn sections(summary: &Summary, width: usize) -> (Vec<Line<'static>>, Vec<(usize,
         )));
     }
     for (t, work) in manual {
-        let blocks = if work.blocks {
-            "blocks"
-        } else {
-            "does not block"
-        };
-        let name = format!("  {} {} · {blocks}", suffix(&t.id), t.title);
+        let name = format!("  {} {}", suffix(&t.id), t.title);
         rows.push(Line::from(Span::styled(name, bold(ticket_color(&t.id)))));
+        // its own row, so a long title cannot push it out of view
+        let (blocks, c) = if work.blocks {
+            ("yes", ORANGE)
+        } else {
+            ("no", MUTED)
+        };
+        item(&mut rows, "    blocks: ", blocks, c);
         item(&mut rows, "    what: ", &work.what, TEXT);
         item(
             &mut rows,

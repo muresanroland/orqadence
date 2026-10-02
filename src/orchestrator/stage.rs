@@ -1467,25 +1467,26 @@ impl Orchestrator {
                 }
             };
             if self.cfg.away.load(Ordering::SeqCst) && !self.is_release(ticket) {
-                match &asked {
-                    Waiting::Question(question, options) => {
-                        let lead = format!(
-                            "{label} asked a question while you were away and needs a manual \
-                             resume: /continue @{ticket} in the Orqadence Shell puts it to you, \
-                             its session still waiting in its pane."
-                        );
-                        self.comment_away(ticket, &lead, question, options);
-                    }
-                    Waiting::Manual(item) => {
-                        let lead = format!(
-                            "{label} filed Manual work it waits on while you were away and \
-                             needs a manual resume: /continue @{ticket} in the Orqadence Shell \
-                             puts it to you, its session still waiting in its pane. Folder: {}",
-                            item.folder.display()
-                        );
-                        self.comment_away(ticket, &lead, &item.what, &[]);
-                    }
-                }
+                let (did, text, options, folder) = match &asked {
+                    Waiting::Question(question, options) => (
+                        "asked a question",
+                        question,
+                        options.as_slice(),
+                        String::new(),
+                    ),
+                    Waiting::Manual(item) => (
+                        "filed Manual work it waits on",
+                        &item.what,
+                        &[][..],
+                        format!(" Folder: {}", item.folder.display()),
+                    ),
+                };
+                let lead = format!(
+                    "{label} {did} while you were away and needs a manual resume: \
+                     /continue @{ticket} in the Orqadence Shell puts it to you, its session \
+                     still waiting in its pane.{folder}"
+                );
+                self.comment_away(ticket, &lead, text, options);
                 return Some(Held::Away);
             }
             if raised.as_ref() != Some(&asked) {
