@@ -59,7 +59,7 @@ fn a_pass_refreshes_the_graph_upgrades_graphify_and_finds_a_new_tag() {
     );
     let calls = fake.calls();
     for want in [
-        "graphify update .",
+        "graphify update . [within 300s]",
         "uv tool upgrade graphifyy",
         "graphify install --platform claude",
         "graphify install --platform codex",
@@ -102,7 +102,7 @@ fn a_failed_fetch_is_one_recent_line_and_the_rest_of_the_pass_ran() {
     );
     let calls = fake.calls();
     assert!(
-        calls.contains(&"graphify update .".to_string()),
+        calls.contains(&"graphify update . [within 300s]".to_string()),
         "{calls:?}"
     );
     assert!(
@@ -119,7 +119,7 @@ fn a_second_pass_comes_after_the_period() {
     wait_until("a second pass", || {
         fake.calls()
             .iter()
-            .filter(|c| *c == "graphify update .")
+            .filter(|c| *c == "graphify update . [within 300s]")
             .count()
             >= 2
     });
@@ -133,7 +133,7 @@ fn a_switch_turned_off_since_open_runs_no_more_passes() {
     let updates = || {
         fake.calls()
             .iter()
-            .filter(|c| *c == "graphify update .")
+            .filter(|c| *c == "graphify update . [within 300s]")
             .count()
     };
     wait_until("a first pass", || updates() >= 1);
@@ -434,7 +434,7 @@ fn a_check_during_the_pass_leaves_the_graph_to_it() {
         d.fake
             .calls()
             .iter()
-            .filter(|c| *c == "graphify update .")
+            .filter(|c| *c == "graphify update . [within 300s]")
             .count()
     };
     let before = updates();

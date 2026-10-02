@@ -94,18 +94,21 @@ pub(crate) fn is_new(handled: Option<(u64, u64)>, tag: &str) -> bool {
 /// graph.json at its end is its own.
 pub(crate) fn pass(tools: &dyn Tools, repo: &Path, docs_live: &Mutex<bool>) -> Pass {
     let mut failed = Vec::new();
+    // held through the refresh: a Docs pass setting it waits the refresh
+    // out, its start then after this graph.json
+    let live = docs_live.lock().unwrap();
+    // bounded, so a stalled refresh cannot hold a Docs pass waiting on it
+    if !*live {
+        let _ = tools
+            .run_within(repo, &["graphify", "update", "."], UPDATE_LIMIT)
+            .map_err(|err| failed.push(format!("graphify check failed: {err}")));
+    }
+    drop(live);
     let mut run = |argv: &[&str]| {
         tools
             .run(repo, argv)
             .map_err(|err| failed.push(format!("graphify check failed: {err}")))
     };
-    // held through the refresh: a Docs pass setting it waits the refresh
-    // out, its start then after this graph.json
-    let live = docs_live.lock().unwrap();
-    if !*live {
-        let _ = run(&["graphify", "update", "."]);
-    }
-    drop(live);
     // upgraded by what installed it: uv when uv lists it, else pipx; a
     // failed listing upgrades nothing
     let from_uv = match tools.run(repo, &["which", "uv"]) {
