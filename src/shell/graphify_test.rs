@@ -414,3 +414,25 @@ fn a_pass_still_working_at_its_limit_records_nothing() {
     assert_eq!(last, UNFINISHED);
     assert_eq!(handled(d.repo.path()), None);
 }
+
+#[test]
+fn a_check_during_the_pass_leaves_the_graph_to_it() {
+    let d = docs(&["working"; 500]);
+    let mut s = screen_at(d.fake.clone(), d.repo.path());
+    check(&mut s, &d, "v1.4.0");
+    s.command("y");
+    await_line(
+        &mut s,
+        "graphify docs pass started on v1.4.0: claude (pane 1-1)",
+    );
+    let updates = || {
+        d.fake
+            .calls()
+            .iter()
+            .filter(|c| *c == "graphify update .")
+            .count()
+    };
+    let before = updates();
+    check(&mut s, &d, "v1.4.0");
+    assert_eq!(updates(), before, "a check refreshed the graph mid-pass");
+}

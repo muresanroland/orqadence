@@ -8,6 +8,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -88,15 +89,23 @@ pub(crate) fn is_new(handled: Option<(u64, u64)>, tag: &str) -> bool {
 /// One pass in the checkout: the code graph refreshed, graphify upgraded
 /// and its skill installed for claude and codex as the rows run them, then
 /// the highest tag merged into origin's default branch. A failed step is
-/// one line, and the pass goes on to the next.
-pub(crate) fn pass(tools: &dyn Tools, repo: &Path) -> Pass {
+/// one line, and the pass goes on to the next. While `docs_live` holds
+/// true a Docs pass owns graph.json and the refresh is skipped, so a newer
+/// graph.json at its end is its own.
+pub(crate) fn pass(tools: &dyn Tools, repo: &Path, docs_live: &Mutex<bool>) -> Pass {
     let mut failed = Vec::new();
     let mut run = |argv: &[&str]| {
         tools
             .run(repo, argv)
             .map_err(|err| failed.push(format!("graphify check failed: {err}")))
     };
-    let _ = run(&["graphify", "update", "."]);
+    // held through the refresh: a Docs pass setting it waits the refresh
+    // out, its start then after this graph.json
+    let live = docs_live.lock().unwrap();
+    if !*live {
+        let _ = run(&["graphify", "update", "."]);
+    }
+    drop(live);
     // upgraded by what installed it: uv when uv lists it, else pipx; a
     // failed listing upgrades nothing
     let from_uv = match tools.run(repo, &["which", "uv"]) {

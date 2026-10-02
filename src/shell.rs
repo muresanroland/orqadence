@@ -365,6 +365,8 @@ pub(crate) struct Screen {
     /// The Docs pass's graphify tab once its thread has made it, which
     /// /exit closes while docs_tag is set.
     docs_tab: Arc<Mutex<Option<String>>>,
+    /// True while a Docs pass's thread runs: the checks leave graph.json to it.
+    docs_live: Arc<Mutex<bool>>,
     /// A release downloaded while a run holds the lock: installed when it ends.
     pub(crate) update: Option<Ready>,
     /// When a pending update may try the lock again, from tick().
@@ -459,6 +461,7 @@ impl Screen {
             docs_sender,
             docs_receiver,
             docs_tab: Arc::default(),
+            docs_live: Arc::default(),
             update: None,
             retry: Instant::now(),
             reexec: false,
@@ -582,14 +585,15 @@ impl Screen {
         if !app::graphify(&self.cfg.repo) {
             return;
         }
-        let (tools, repo, tx) = (
+        let (tools, repo, tx, docs_live) = (
             self.cfg.tools.clone(),
             self.cfg.repo.clone(),
             self.graphify_sender.clone(),
+            self.docs_live.clone(),
         );
         thread::spawn(move || loop {
             let pass = match app::graphify(&repo) {
-                true => graphify::pass(&*tools, &repo),
+                true => graphify::pass(&*tools, &repo, &docs_live),
                 false => graphify::Pass::default(),
             };
             if tx.send(pass).is_err() {
@@ -630,15 +634,19 @@ impl Screen {
     fn run_docs_pass(&mut self, tag: String) {
         self.docs_tag = Some(tag.clone());
         *self.docs_tab.lock().unwrap() = None;
-        let (tools, repo, workspace, tick, tx, docs_tab) = (
+        let (tools, repo, workspace, tick, tx, docs_tab, docs_live) = (
             self.cfg.tools.clone(),
             self.cfg.repo.clone(),
             self.cfg.workspace.clone(),
             self.cfg.tick,
             self.docs_sender.clone(),
             self.docs_tab.clone(),
+            self.docs_live.clone(),
         );
         thread::spawn(move || {
+            // waits out a check's graph refresh under way, so the pass
+            // starts after its graph.json
+            *docs_live.lock().unwrap() = true;
             let say = |line| _ = tx.send((line, false));
             let opened = |tab: &str| *docs_tab.lock().unwrap() = Some(tab.to_string());
             let last = graphify::docs_pass(
@@ -651,6 +659,7 @@ impl Screen {
                 &say,
                 &opened,
             );
+            *docs_live.lock().unwrap() = false;
             let _ = tx.send((last, true));
         });
     }

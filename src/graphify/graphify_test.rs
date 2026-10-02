@@ -82,7 +82,7 @@ fn graphify_from_pipx_upgrades_with_pipx_and_from_uv_with_uv() {
             "uv tool list" => Ok(list.to_string()),
             _ => Ok(String::new()),
         });
-        pass(&*fake, repo.path());
+        pass(&*fake, repo.path(), &Default::default());
         fake.calls()
             .into_iter()
             .filter(|c| c.ends_with("upgrade graphifyy"))
@@ -103,7 +103,7 @@ fn a_failed_uv_listing_is_one_line_and_upgrades_and_installs_nothing() {
         "uv tool list" => Err("broken".to_string()),
         _ => Ok(String::new()),
     });
-    let (failed, _) = pass(&*fake, repo.path());
+    let (failed, _) = pass(&*fake, repo.path(), &Default::default());
     assert_eq!(failed.len(), 1, "{failed:?}");
     assert!(failed[0].contains("uv tool list"), "{failed:?}");
     let calls = fake.calls();
