@@ -1,6 +1,6 @@
 [package]
 name = "orqadence"
-version = "1.4.16"
+version = "1.4.17"
 edition = "2021"
 rust-version = "1.89"
 license-file = "LICENSE.md"
