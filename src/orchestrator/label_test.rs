@@ -362,7 +362,7 @@ fn a_missing_github_label_is_created_once() {
         [
             "gh pr edit https://example.test/pr/hx-1 --add-label orqa:no-review",
             "gh label create orqa:no-review --color C5DEF5 --description \
-             Only Markdown and skills changed: the review bots skip it --force",
+             The review bots skip this pull request --force",
             "gh pr edit https://example.test/pr/hx-1 --add-label orqa:no-review",
             "gh pr edit https://example.test/pr/hx-2 --add-label orqa:no-review",
         ]

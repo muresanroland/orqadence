@@ -57,7 +57,7 @@ const HUMAN_MERGE_LABEL: GhLabel = (
 pub(crate) const NO_REVIEW_LABEL: GhLabel = (
     "orqa:no-review",
     "C5DEF5",
-    "Only Markdown and skills changed: the review bots skip it",
+    "The review bots skip this pull request",
 );
 
 /// Where a skill's files live, from the repo's root.
@@ -353,7 +353,11 @@ impl Orchestrator {
     /// fails the label is created and it is tried again: a missing label
     /// is created once, and a repo that has it needs no right to create
     /// one. --force, so creating one already there is no error of its own.
-    fn add_pr_label(&self, pr: &str, (name, color, description): GhLabel) -> Result<(), RunError> {
+    pub(super) fn add_pr_label(
+        &self,
+        pr: &str,
+        (name, color, description): GhLabel,
+    ) -> Result<(), RunError> {
         let (tools, repo) = (&self.cfg.tools, &self.cfg.repo);
         let add = ["gh", "pr", "edit", pr, "--add-label", name];
         if tools.run(repo, &add).is_ok() {

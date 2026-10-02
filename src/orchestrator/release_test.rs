@@ -4,6 +4,7 @@
 use super::app::{set_switch, RELEASE_ON};
 use super::judgment::Action;
 use super::limit_test::{at, hits, now, CLAUDE};
+use super::pr_test::agent_merge;
 use super::question_test::ASKS;
 use super::release::RELEASE_LABEL;
 use super::scheduler_test::run_epic;
@@ -16,8 +17,10 @@ use super::world::{
     Running, World,
 };
 use super::write_file;
+use chrono::{DateTime, Local, TimeDelta};
+use serde_json::json;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 /// The version PR the Release opens.
@@ -774,4 +777,233 @@ fn a_tag_that_fails_says_so_and_asks_again() {
         ]
     );
     assert!(o.state.lock().unwrap().release.clone().unwrap().tagged);
+}
+
+/// The version PR open on head `a`, mergeable, its one check in `state`.
+fn open_version_pr(w: &World, state: &str) {
+    let pr = json!({"state": "OPEN", "mergeable": "MERGEABLE", "headRefOid": "a",
+        "statusCheckRollup": {"commit": {"oid": "a"},
+            "contexts": {"nodes": [{"context": "ci", "state": state}]}}});
+    w.lock().prs.insert(VERSION_PR.to_string(), pr.to_string());
+}
+
+/// Waits for two more polls of the version PR: the first of them is done.
+fn polled(w: &World) {
+    let poll = format!("url={VERSION_PR}");
+    let count = || {
+        let polls = w.called("gh api graphql");
+        polls.iter().filter(|c| c.ends_with(&poll)).count()
+    };
+    let before = count();
+    wait_until("the version PR polled", || count() >= before + 2);
+}
+
+/// Lets the version PR's head, once the poll saw it, hold its quiet
+/// minute: the next poll may merge it, and a merge ends the polls.
+fn settle(w: &World, clock: &Mutex<DateTime<Local>>) {
+    polled(w);
+    *clock.lock().unwrap() += TimeDelta::seconds(60);
+}
+
+/// The version PR's orqa:no-review, as gh is asked for it.
+fn labelled() -> String {
+    format!("gh pr edit {VERSION_PR} --add-label orqa:no-review")
+}
+
+#[test]
+fn with_agent_merge_off_the_version_pr_is_labelled_but_never_merged_and_the_tag_question_is_asked()
+{
+    let (w, mut o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.lock().epic_labels = label();
+    let clock = set_clock(&mut o.cfg, now());
+    open_version_pr(&w, "SUCCESS");
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+
+    w.await_line("version PR #version opened");
+    settle(&w, &clock);
+    polled(&w);
+    assert_eq!(w.called("gh pr edit"), [labelled()], "whatever its files");
+    assert!(w.called("gh pr merge").is_empty(), "merged with it off");
+
+    w.lock().prs.remove(VERSION_PR); // merged by hand
+    w.await_event("Tag v1.5.0 and push it?");
+    tag(&w, &o, &mut run, "no");
+}
+
+/// An Epic run under Agent merge up to its version PR, open on a green,
+/// mergeable head: the run and its clock.
+fn agent_merging(
+    w: &Arc<World>,
+    mut o: Orchestrator,
+) -> (Arc<Orchestrator>, Running, Arc<Mutex<DateTime<Local>>>) {
+    w.lock().epic_labels = label();
+    agent_merge(w, &["coderabbit"]);
+    let clock = set_clock(&mut o.cfg, now());
+    open_version_pr(w, "SUCCESS");
+    let o = Arc::new(o);
+    let run = spawn_epic(o.clone(), "hx");
+    w.await_line("version PR #version opened");
+    (o, run, clock)
+}
+
+#[test]
+fn under_agent_merge_the_version_pr_is_labelled_merged_on_green_and_tagged_with_no_question() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    let (o, mut run, clock) = agent_merging(&w, o);
+    open_version_pr(&w, "FAILURE");
+    settle(&w, &clock);
+    polled(&w);
+    assert!(w.called("gh pr merge").is_empty(), "merged before green");
+
+    let before = w.calls().len();
+    open_version_pr(&w, "SUCCESS");
+    run.wait();
+
+    assert_eq!(w.called("gh pr edit"), [labelled()]);
+    let merge = format!(
+        "gh pr merge {VERSION_PR} --squash --delete-branch --match-head-commit a --repo o/r"
+    );
+    assert_eq!(w.called("gh pr merge"), [merge]);
+    assert_eq!(
+        w.since(before, "git "),
+        [
+            "git branch -D release-hx",
+            "git fetch origin HEAD",
+            "git tag v1.5.0 m3rg3d",
+            "git push origin v1.5.0"
+        ]
+    );
+    let lines = w.lines();
+    let line = |text: &str| {
+        lines
+            .iter()
+            .position(|l| l == text)
+            .unwrap_or_else(|| panic!("no line {text:?}:\n{}", lines.join("\n")))
+    };
+    assert!(line("version PR #version merged by Orqadence") < line("version PR #version merged"));
+    assert!(line("version PR #version merged") < line("tagged v1.5.0 and pushed"));
+    let asked: Vec<_> = w.events().into_iter().filter_map(|e| e.ask).collect();
+    assert!(
+        !asked.iter().any(|ask| matches!(ask, Ask::Tag { .. })),
+        "the tag Question: {asked:?}"
+    );
+    assert!(!o.stopping(), "the run stopped rather than ended");
+    let release = o.state.lock().unwrap().release.clone().unwrap();
+    assert!(release.tagged && release.commit == "m3rg3d", "{release:?}");
+}
+
+/// A /stop-work while the poll reads the version PR the Orchestrator
+/// merged pushes no tag: /continue asks the tag Question.
+#[test]
+fn a_stop_while_the_merged_version_pr_is_read_pushes_no_tag() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    let orq: Arc<Mutex<Weak<Orchestrator>>> = Arc::default();
+    let hooked = orq.clone();
+    let poll = format!("url={VERSION_PR}");
+    w.hook(move |_, argv| {
+        let read = argv.starts_with(&["gh", "api", "graphql"]) && argv.join(" ").ends_with(&poll);
+        if let Some(o) = hooked
+            .lock()
+            .unwrap()
+            .upgrade()
+            .filter(|o| read && o.ticket("release-hx").merge_asked)
+        {
+            o.stop();
+        }
+        None
+    });
+    let (o, mut run, clock) = agent_merging(&w, o);
+    *orq.lock().unwrap() = Arc::downgrade(&o);
+
+    settle(&w, &clock);
+    run.wait();
+    assert_eq!(w.called("gh pr merge").len(), 1);
+    assert!(w.called("git tag").is_empty(), "tagged after the stop");
+    let release = o.state.lock().unwrap().release.clone().unwrap();
+    assert!(!release.tagged && release.commit == "m3rg3d", "{release:?}");
+}
+
+/// A /stop-work during the fetch before the unasked tag tags nothing:
+/// /continue asks the tag Question.
+#[test]
+fn a_stop_during_the_fetch_before_the_unasked_tag_tags_nothing() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    let orq: Arc<Mutex<Weak<Orchestrator>>> = Arc::default();
+    let hooked = orq.clone();
+    w.hook(move |_, argv| {
+        if argv.starts_with(&["git", "fetch"]) {
+            if let Some(o) = hooked.lock().unwrap().upgrade() {
+                o.stop();
+            }
+        }
+        None
+    });
+    let (o, mut run, clock) = agent_merging(&w, o);
+    *orq.lock().unwrap() = Arc::downgrade(&o);
+
+    settle(&w, &clock);
+    run.wait();
+    assert_eq!(w.called("gh pr merge").len(), 1);
+    assert!(w.called("git tag").is_empty(), "tagged after the stop");
+    let release = o.state.lock().unwrap().release.clone().unwrap();
+    assert!(!release.tagged, "{release:?}");
+}
+
+#[test]
+fn a_refused_merge_of_the_version_pr_says_why_and_falls_back_to_the_tag_question() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    let refusal = "the base branch policy prohibits the merge.";
+    w.fail_once("gh pr merge", refusal);
+    let (o, mut run, clock) = agent_merging(&w, o);
+
+    settle(&w, &clock);
+    w.await_line(&format!("version PR #version not merged: {refusal}"));
+    polled(&w);
+    assert_eq!(w.called("gh pr merge").len(), 1, "asked again");
+    assert!(w.called("git tag").is_empty());
+
+    w.lock().prs.remove(VERSION_PR); // merged by hand
+    w.await_event("Tag v1.5.0 and push it?");
+    tag(&w, &o, &mut run, "yes");
+    assert_eq!(w.called("git tag"), ["git tag v1.5.0 m3rg3d"]);
+    assert!(run_level(&w, "tagged v1.5.0 and pushed"));
+}
+
+#[test]
+fn a_tag_push_that_fails_under_agent_merge_says_why_and_asks_the_tag_question() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.fail_once("git push origin v1.5.0", "rejected");
+    let (o, mut run, clock) = agent_merging(&w, o);
+
+    settle(&w, &clock);
+    w.await_event("Tag v1.5.0 and push it?");
+    assert_eq!(w.called("gh pr merge").len(), 1);
+    assert!(
+        w.lines().iter().any(|l| l.ends_with("rejected")),
+        "git's message"
+    );
+    assert!(run_level(&w, "tag v1.5.0 failed: "));
+    assert_eq!(w.called("git tag -d"), ["git tag -d v1.5.0"]);
+    assert!(!o.state.lock().unwrap().release.clone().unwrap().tagged);
+
+    tag(&w, &o, &mut run, "yes");
+    assert!(o.state.lock().unwrap().release.clone().unwrap().tagged);
+}
+
+#[test]
+fn a_version_pr_gh_does_not_label_says_so_and_still_merges_on_green() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    w.fail_once("gh pr edit", "HTTP 502");
+    w.fail_once("gh label create", "HTTP 502");
+    let (_o, mut run, clock) = agent_merging(&w, o);
+
+    settle(&w, &clock);
+    run.wait();
+    assert!(run_level(
+        &w,
+        "version PR #version not labelled orqa:no-review: "
+    ));
+    assert_eq!(w.called("gh pr merge").len(), 1);
+    assert!(run_level(&w, "tagged v1.5.0 and pushed"));
 }
