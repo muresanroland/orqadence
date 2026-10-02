@@ -21,6 +21,7 @@ Your plan lists what you will change and the tests you will write; it covers eac
    Use the {{working-mode}} skill for all your work: load it by name in this session. A hook may load it; do not count on it, and do not skip it because it looks active.
    Use the {{prose}} skill for your commits and result file: load it by name in this session.
    Load every skill under **Label skills** by name in this session, and follow **Label guidance**.
+   When the work needs a credential or a human action this session cannot do, load the orqa-manual-work skill by name and file it as Manual work. Never run a command on its never-run list (`gh secret`, `gh variable`, `gh workflow run` and the rest): a denied attempt is your sign to file it.
 3. Implement the Ticket test-first: a failing test, then the code. The Ticket and the repo's existing tests tell you the seams; you cannot confirm them with anyone, so pick the public interface the acceptance criteria describe.
    Use the {{test-first}} skill for it.
 4. Run the repo's typecheck and the tests you touched as you go, and the full test suite once at the end.
@@ -42,3 +43,5 @@ STATUS: done
 If you cannot finish (the Ticket is impossible as written, tests cannot be made to pass, a tool is missing), commit nothing broken and write `STATUS: failed` followed by the reason and what you tried. A missing file or any other first line counts as not done.
 
 To ask, write the **Result file** with `STATUS: question` as its first line, then the question, then its options as the last lines, one per line starting with `- `, and wait: the answer comes into this pane as a prompt. Carry on, and overwrite the Result file with done or failed when you finish.
+
+For Manual work you cannot go on without, write the **Result file** with `STATUS: manual` as its first line and the item's folder path as its second, and wait: the answer comes into this pane as the prompt `Manual work <n> done: <facts>`. Carry on with those facts, and overwrite the Result file with done or failed when you finish.

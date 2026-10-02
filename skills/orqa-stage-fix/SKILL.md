@@ -11,7 +11,7 @@ You are the Fix Stage of the Orqadence Pipeline, in a fresh session inside the T
 
 **Fix items** under Inputs is everything you have to fix: the items the Debate's Verdict marked fix, one per line as `- [fix] (severity) location — problem | reason | settled`, and, when the Ticket's Area label has an Extra review whose Findings skip the Debate, its Findings as `- [fix] (severity) location — problem | not debated | extra review`. Findings the Verdict marked skip were argued and rejected; you are not shown them, so do not go looking for other things to improve.
 
-The **Ticket file** is the Ticket as `bd show <Ticket>` prints it, with its parent Epic's description under `## Epic context`: context, not scope. Load every skill under **Label skills** by name in this session, and follow **Label guidance**.
+The **Ticket file** is the Ticket as `bd show <Ticket>` prints it, with its parent Epic's description under `## Epic context`: context, not scope. Load every skill under **Label skills** by name in this session, and follow **Label guidance**. When the work needs a credential or a human action this session cannot do, load the orqa-manual-work skill by name and file it as Manual work. Never run a command on its never-run list (`gh secret`, `gh variable`, `gh workflow run` and the rest): a denied attempt is your sign to file it. **Manual work** under Inputs lists the items already filed for this Ticket, or none: never file one of them again.
 
 For each fix item: read the code around the location, make the change, and add or adjust a test when the item is about behaviour. Then run the repo's tests (see `CLAUDE.md` / `AGENTS.md` for the commands) until they pass, and commit to the current branch.
 
@@ -33,6 +33,7 @@ With **Fix items** `none` there is nothing to apply: go to section 2.
    - **Extra review skipped**: if **Unreviewed** says `the extra review skipped too`, say that the label's Extra review did not run because the PR opened unreviewed. Otherwise leave this part out.
    - **Extra review Findings still open at the cap**: if this is Round 3 or the final Fix, list the Extra review's Findings (from **Extra review files**) that came to this Fix as fix items. Mark the ones whose item says `not debated`: the label's Debate is off. Otherwise leave this part out.
    - **Not run**: copy each **Extra review files** file's `## Not run` section, naming its file. Leave this part out when none has one.
+   - **Manual work**: each open item from the **Manual work** Input and each item you filed in this session, with its What and its folder, saying it blocks when it does. Leave this part out when the Input is none and you filed nothing.
 5. Do not merge the PR and do not close the Ticket. The Orchestrator merges, never a session; the Ticket closes when its PR is merged.
 
 If **Open PR** is no, do not push and do not open anything: another Round follows, or, after the last Round, the Extra review before the PR and a final Fix.
@@ -51,3 +52,5 @@ PR: https://github.com/owner/repo/pull/123
 Leave the `PR:` line out when **Open PR** is no. If a fix item cannot be applied, say so here and carry on with the rest; that is still done. Write `STATUS: failed` with the reason only when the tests cannot be made to pass or the PR cannot be opened.
 
 To ask, write the **Result file** with `STATUS: question` as its first line, then the question, then its options as the last lines, one per line starting with `- `, and wait: the answer comes into this pane as a prompt. Carry on, and overwrite the Result file with done or failed when you finish.
+
+For Manual work you cannot go on without, write the **Result file** with `STATUS: manual` as its first line and the item's folder path as its second, and wait: the answer comes into this pane as the prompt `Manual work <n> done: <facts>`. Carry on with those facts, and overwrite the Result file with done or failed when you finish.

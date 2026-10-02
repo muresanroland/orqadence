@@ -455,6 +455,7 @@ fn stage_fix_names_the_orqadence_run_heading_and_its_parts_in_order() {
         "**Extra review skipped**",
         "**Extra review Findings still open at the cap**",
         "`## Not run`",
+        "**Manual work**: each open item from the **Manual work** Input",
     ];
     for pair in parts.windows(2) {
         assert!(at(pair[0]) < at(pair[1]), "{} before {}", pair[0], pair[1]);
@@ -564,4 +565,41 @@ fn manual_work_template_is_vendored_with_its_licence() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// The code-editing Stages load manual-work by name and know STATUS: manual
+/// and the prompt that answers it; the Review and the Debate never file
+/// Manual work.
+#[test]
+fn the_code_editing_stages_load_manual_work_and_the_review_and_debate_do_not() {
+    for name in [
+        "orqa-stage-implement",
+        "orqa-stage-fix",
+        "orqa-stage-rebase",
+        "orqa-stage-address-pr-comments",
+    ] {
+        for text in [
+            "load the orqa-manual-work skill by name",
+            "`gh secret`",
+            "`STATUS: manual` as its first line and the item's folder path as its second",
+            "`Manual work <n> done: <facts>`",
+        ] {
+            assert!(skill(name).contains(text), "{name} lacks {text:?}");
+        }
+    }
+    for name in [
+        "orqa-stage-fix",
+        "orqa-stage-rebase",
+        "orqa-stage-address-pr-comments",
+    ] {
+        assert!(
+            skill(name).contains("never file one of them again"),
+            "{name}"
+        );
+    }
+    for name in ["orqa-stage-review", "orqa-stage-moderate"] {
+        for text in ["manual-work", "STATUS: manual"] {
+            assert!(!skill(name).contains(text), "{name} names {text:?}");
+        }
+    }
 }

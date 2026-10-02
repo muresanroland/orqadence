@@ -170,9 +170,10 @@ fn implement_starts_in_plan_mode_with_the_hook_in_the_run_directory() {
         "{start:?}"
     );
     let fix = w.called("herdr agent start h-hx-1-fix");
+    let deny = r#"{"permissions":{"deny":["Bash(gh secret:*)","Bash(gh variable:*)","Bash(gh workflow run:*)"]}}"#;
     assert!(
         fix[0].ends_with(&format!(
-            " -- --permission-mode auto --add-dir {}",
+            " -- --permission-mode auto --add-dir {} --settings {deny}",
             run.display()
         )),
         "{fix:?}"
@@ -180,10 +181,15 @@ fn implement_starts_in_plan_mode_with_the_hook_in_the_run_directory() {
     let settings: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
     assert_eq!(
         settings,
-        json!({ "hooks": { "PreToolUse": [{ "matcher": "ExitPlanMode", "hooks": [{
-            "type": "command",
-            "command": format!("'/opt/the orqa/orqa' __plan-hook '{}'", run.join("plan.md").display()),
-        }] }] } })
+        json!({
+            "permissions": { "deny": [
+                "Bash(gh secret:*)", "Bash(gh variable:*)", "Bash(gh workflow run:*)",
+            ] },
+            "hooks": { "PreToolUse": [{ "matcher": "ExitPlanMode", "hooks": [{
+                "type": "command",
+                "command": format!("'/opt/the orqa/orqa' __plan-hook '{}'", run.join("plan.md").display()),
+            }] }] },
+        })
     );
 }
 
@@ -774,6 +780,9 @@ fn a_split_starts_opusplan_and_approves_by_clearing_the_context() {
             assert_eq!(
                 settings,
                 json!({
+                    "permissions": { "deny": [
+                        "Bash(gh secret:*)", "Bash(gh variable:*)", "Bash(gh workflow run:*)",
+                    ] },
                     "env": {
                         "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-fable-5-1",
                         "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-5-5",
@@ -793,7 +802,15 @@ fn a_split_starts_opusplan_and_approves_by_clearing_the_context() {
             );
         } else {
             assert!(start.ends_with(" --model opus --effort high"), "{start}");
-            assert_eq!(settings, json!({ "hooks": { "PreToolUse": plan_hook } }));
+            assert_eq!(
+                settings,
+                json!({
+                    "permissions": { "deny": [
+                        "Bash(gh secret:*)", "Bash(gh variable:*)", "Bash(gh workflow run:*)",
+                    ] },
+                    "hooks": { "PreToolUse": plan_hook },
+                })
+            );
             w.await_line("hx-1 implement started: claude opus/high (pane 1-1)");
         }
     }

@@ -53,9 +53,10 @@ fn a_rows_model_and_effort_add_the_flags_on_claude_and_on_codex() {
         argv(&w, "review"),
         "--sandbox workspace-write -m gpt-6-sol -c model_reasoning_effort=low"
     );
+    let deny = r#"{"permissions":{"deny":["Bash(gh secret:*)","Bash(gh variable:*)","Bash(gh workflow run:*)"]}}"#;
     assert_eq!(
         argv(&w, "fix"),
-        format!("--permission-mode auto --add-dir {run} --model sonnet")
+        format!("--permission-mode auto --add-dir {run} --settings {deny} --model sonnet")
     );
     assert!(w.called("herdr agent start h-hx-1-review")[0].contains("--kind codex"));
     w.await_line("hx-1 implement started: claude opus/high (pane 1-1)");
@@ -108,6 +109,27 @@ fn a_worktree_path_is_escaped_in_the_review_settings_on_claude() {
     assert_eq!(
         settings["permissions"]["deny"][0],
         format!("Edit(/{worktree}/**)")
+    );
+}
+
+/// claude's code-editing Stages in the worktree (Fix, Rebase, Address PR
+/// comments) deny gh secret, gh variable and gh workflow run through their
+/// settings; codex's args are as they were.
+#[test]
+fn claudes_worktree_args_deny_the_gh_commands_and_codexs_are_unchanged() {
+    let run = "/tmp/run";
+    let args = (app("claude").unwrap().worktree_args)(run);
+    let at = args.iter().position(|arg| arg == "--settings").unwrap();
+    let settings: Value = serde_json::from_str(&args[at + 1]).unwrap();
+    assert_eq!(
+        settings,
+        json!({ "permissions": { "deny": [
+            "Bash(gh secret:*)", "Bash(gh variable:*)", "Bash(gh workflow run:*)",
+        ] } })
+    );
+    assert_eq!(
+        (app("codex").unwrap().worktree_args)(run),
+        ["--sandbox", "workspace-write", "--add-dir", run]
     );
 }
 
