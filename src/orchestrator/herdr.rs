@@ -1,11 +1,14 @@
 //! What the Orchestrator reads from herdr and how it names things there.
 
+use std::path::Path;
+use std::time::Instant;
+
 use serde::Deserialize;
 #[cfg(test)]
 use serde::Serialize;
 
 use super::stage::Orchestrator;
-use crate::tools::RunError;
+use crate::tools::{RunError, Tools};
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[cfg_attr(test, derive(Serialize))]
@@ -84,27 +87,17 @@ impl Orchestrator {
     /// A failed command's RunError comes back whole, so a caller can read
     /// herdr's stderr (agent_pane_busy, agent_not_ready, ...).
     pub(crate) fn herdr(&self, args: &[&str]) -> Result<HerdrReply, RunError> {
-        let mut argv = vec!["herdr"];
-        argv.extend_from_slice(args);
-        let out = self.cfg.tools.run(&self.cfg.repo, &argv)?;
-        serde_json::from_str(&out).map_err(|err| RunError {
-            command: format!("herdr {}", args[0]),
-            status: "unreadable reply".to_string(),
-            stderr: err.to_string(),
-            stdout: String::new(),
-        })
+        herdr(&*self.cfg.tools, &self.cfg.repo, args)
     }
 
     /// Names a pane the way every event line does: "(pane 2-1)".
     pub(crate) fn locate(&self, pane_id: &str) -> String {
-        let workspace = self.cfg.workspace.as_str();
-        let tabs = self.herdr(&["tab", "list", "--workspace", workspace]);
-        let panes = self.herdr(&["pane", "list", "--workspace", workspace]);
-        let at = match (tabs, panes) {
-            (Ok(tabs), Ok(panes)) => location(&tabs.result.tabs, &panes.result.panes, pane_id),
-            _ => "?".to_string(),
-        };
-        format!("(pane {at})")
+        locate(
+            &*self.cfg.tools,
+            &self.cfg.repo,
+            &self.cfg.workspace,
+            pane_id,
+        )
     }
 
     /// The last `lines` lines of the agent's output, its target a pane id
@@ -134,6 +127,54 @@ impl Orchestrator {
             .ok()
             .map(|reply| reply.result.agent.status)
     }
+}
+
+/// herdr `args` run in dir, its reply read; a failed command's RunError
+/// comes back whole.
+pub(crate) fn herdr(tools: &dyn Tools, dir: &Path, args: &[&str]) -> Result<HerdrReply, RunError> {
+    let mut argv = vec!["herdr"];
+    argv.extend_from_slice(args);
+    let out = tools.run(dir, &argv)?;
+    serde_json::from_str(&out).map_err(|err| RunError {
+        command: format!("herdr {}", args[0]),
+        status: "unreadable reply".to_string(),
+        stderr: err.to_string(),
+        stdout: String::new(),
+    })
+}
+
+/// herdr agent start's `argv` run in dir, giving a pane that has just been
+/// created the moment it needs to get a shell: until it has one herdr
+/// refuses with agent_pane_busy, which is not the pane being unusable.
+/// `give_up` bounds that patience; `sleep` waits a tick between tries, and
+/// its false ends it.
+pub(crate) fn start_agent(
+    tools: &dyn Tools,
+    dir: &Path,
+    argv: &[&str],
+    give_up: Instant,
+    sleep: impl Fn() -> bool,
+) -> Result<(), RunError> {
+    loop {
+        let err = match herdr(tools, dir, argv) {
+            Ok(_) => return Ok(()),
+            Err(err) => err,
+        };
+        if !err.to_string().contains("agent_pane_busy") || Instant::now() > give_up || !sleep() {
+            return Err(err);
+        }
+    }
+}
+
+/// A pane of `workspace` as event lines name it: "(pane 2-1)".
+pub(crate) fn locate(tools: &dyn Tools, dir: &Path, workspace: &str, pane_id: &str) -> String {
+    let tabs = herdr(tools, dir, &["tab", "list", "--workspace", workspace]);
+    let panes = herdr(tools, dir, &["pane", "list", "--workspace", workspace]);
+    let at = match (tabs, panes) {
+        (Ok(tabs), Ok(panes)) => location(&tabs.result.tabs, &panes.result.panes, pane_id),
+        _ => "?".to_string(),
+    };
+    format!("(pane {at})")
 }
 
 /// A terminal cell is about twice as tall as it is wide, so a pane of equal

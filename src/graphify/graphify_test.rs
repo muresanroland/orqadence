@@ -4,7 +4,6 @@ use crate::orchestrator::state::State;
 use crate::orchestrator::write_file;
 use crate::tempdir::TempDir;
 use crate::tools::fake::Fake;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// With no Orchestrator: off runs nothing; on, the checkout's graph is
 /// copied in when it has one, and graphify update . runs in the worktree, bounded.
@@ -52,12 +51,10 @@ fn the_highest_merged_tag_is_the_highest_vxyz_semver_reads() {
 
 #[test]
 fn a_tag_is_new_when_its_major_or_minor_differs_from_the_one_handled() {
-    assert!(!is_new(Some((1, 3)), Some("v1.3.5")), "a patch-only tag");
-    assert!(is_new(Some((1, 3)), Some("v1.4.0")));
-    assert!(is_new(Some((1, 3)), Some("v2.3.0")));
-    assert!(is_new(None, Some("v1.3.0")), "nothing handled yet");
-    assert!(!is_new(None, None), "a repo with no tags");
-    assert!(!is_new(Some((1, 3)), None));
+    assert!(!is_new(Some((1, 3)), "v1.3.5"), "a patch-only tag");
+    assert!(is_new(Some((1, 3)), "v1.4.0"));
+    assert!(is_new(Some((1, 3)), "v2.3.0"));
+    assert!(is_new(None, "v1.3.0"), "nothing handled yet");
 }
 
 #[test]
@@ -77,40 +74,6 @@ fn the_handled_version_is_kept_in_orqadence_local_and_outlives_a_saved_empty_sta
 }
 
 #[test]
-fn an_unset_origin_head_is_set_once_and_the_tags_read_again() {
-    let repo = TempDir::new();
-    let set = AtomicBool::new(false);
-    let fake = Fake::new(move |_, argv| match argv.join(" ").as_str() {
-        "git remote set-head origin --auto" => {
-            set.store(true, Ordering::SeqCst);
-            Ok(String::new())
-        }
-        "git tag --merged origin/HEAD --list v*" if !set.load(Ordering::SeqCst) => {
-            Err("malformed object name origin/HEAD".to_string())
-        }
-        "git tag --merged origin/HEAD --list v*" => Ok("v1.3.0\n".to_string()),
-        _ => Ok(String::new()),
-    });
-    let (failed, tag) = pass(&*fake, repo.path());
-    assert_eq!(failed, Vec::<String>::new());
-    assert_eq!(tag.as_deref(), Some("v1.3.0"));
-    let calls = fake.calls();
-    let tail = &calls[calls.len() - 3..];
-    assert_eq!(
-        tail,
-        [
-            "git tag --merged origin/HEAD --list v*",
-            "git remote set-head origin --auto",
-            "git tag --merged origin/HEAD --list v*",
-        ]
-    );
-
-    // With 1.3 handled, the same tag is not new.
-    set_handled(repo.path(), "v1.3.0").unwrap();
-    assert_eq!(pass(&*fake, repo.path()).1, None);
-}
-
-#[test]
 fn graphify_from_pipx_upgrades_with_pipx_and_from_uv_with_uv() {
     let repo = TempDir::new();
     let upgrade = |list: &'static str| {
@@ -119,7 +82,7 @@ fn graphify_from_pipx_upgrades_with_pipx_and_from_uv_with_uv() {
             "uv tool list" => Ok(list.to_string()),
             _ => Ok(String::new()),
         });
-        pass(&*fake, repo.path());
+        pass(&*fake, repo.path(), &Default::default());
         fake.calls()
             .into_iter()
             .filter(|c| c.ends_with("upgrade graphifyy"))
@@ -140,7 +103,7 @@ fn a_failed_uv_listing_is_one_line_and_upgrades_and_installs_nothing() {
         "uv tool list" => Err("broken".to_string()),
         _ => Ok(String::new()),
     });
-    let (failed, _) = pass(&*fake, repo.path());
+    let (failed, _) = pass(&*fake, repo.path(), &Default::default());
     assert_eq!(failed.len(), 1, "{failed:?}");
     assert!(failed[0].contains("uv tool list"), "{failed:?}");
     let calls = fake.calls();
