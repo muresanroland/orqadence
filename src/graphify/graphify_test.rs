@@ -5,7 +5,7 @@ use crate::tempdir::TempDir;
 use crate::tools::fake::Fake;
 
 /// With no Orchestrator: off runs nothing; on, the checkout's graph is
-/// copied in when it has one, and graphify update . runs in the worktree.
+/// copied in when it has one, and graphify update . runs in the worktree, bounded.
 #[test]
 fn prepare_worktree_copies_the_checkouts_graph_and_updates_it_in_the_worktree() {
     let checkout = TempDir::new();
@@ -24,7 +24,7 @@ fn prepare_worktree_copies_the_checkouts_graph_and_updates_it_in_the_worktree() 
     assert!(calls(&checkout).is_empty(), "off ran something");
 
     set_switch(checkout.path(), &GRAPHIFY, true).unwrap();
-    assert_eq!(calls(&checkout), ["graphify update ."]);
+    assert_eq!(calls(&checkout), ["graphify update . [within 300s]"]);
 
     write_file(&checkout.path().join("graphify-out/graph.json"), "{}");
     assert_eq!(
@@ -35,7 +35,7 @@ fn prepare_worktree_copies_the_checkouts_graph_and_updates_it_in_the_worktree() 
                 checkout.path().display(),
                 tree.path().display()
             ),
-            "graphify update .".to_string(),
+            "graphify update . [within 300s]".to_string(),
         ]
     );
 }

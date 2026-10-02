@@ -1,8 +1,11 @@
 //! Tools is the one seam to every external tool (herdr, bd, gh, git, claude).
 
 use std::fmt;
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, ExitStatus, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 /// A failed command: `Display` is "<command>: <status>: <stderr>".
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +43,45 @@ fn command_line(argv: &[&str]) -> String {
 /// Runs argv in dir and returns stdout; a failure carries stderr.
 pub trait Tools: Send + Sync {
     fn run(&self, dir: &Path, argv: &[&str]) -> Result<String, RunError>;
+
+    /// `run`, killed and failed once it outlasts `limit`. Only Exec enforces
+    /// the limit; a fake answers at once.
+    fn run_within(&self, dir: &Path, argv: &[&str], limit: Duration) -> Result<String, RunError> {
+        let _ = limit;
+        self.run(dir, argv)
+    }
+}
+
+fn no_command() -> RunError {
+    RunError {
+        command: String::new(),
+        status: "no command".to_string(),
+        stderr: String::new(),
+        stdout: String::new(),
+    }
+}
+
+/// stdout on success, else a RunError with the exit status and stderr.
+fn finish(
+    command: String,
+    status: ExitStatus,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<String, RunError> {
+    let stdout = String::from_utf8_lossy(stdout).into_owned();
+    if !status.success() {
+        let status = match status.code() {
+            Some(code) => format!("exit status {code}"),
+            None => status.to_string(),
+        };
+        return Err(RunError {
+            command,
+            status,
+            stderr: String::from_utf8_lossy(stderr).trim().to_string(),
+            stdout,
+        });
+    }
+    Ok(stdout)
 }
 
 /// The real Tools.
@@ -48,12 +90,7 @@ pub struct Exec;
 impl Tools for Exec {
     fn run(&self, dir: &Path, argv: &[&str]) -> Result<String, RunError> {
         let [name, args @ ..] = argv else {
-            return Err(RunError {
-                command: String::new(),
-                status: "no command".to_string(),
-                stderr: String::new(),
-                stdout: String::new(),
-            });
+            return Err(no_command());
         };
         let command = command_line(argv);
         let output = Command::new(name)
@@ -66,20 +103,58 @@ impl Tools for Exec {
                 stderr: String::new(),
                 stdout: String::new(),
             })?;
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        if !output.status.success() {
-            let status = match output.status.code() {
-                Some(code) => format!("exit status {code}"),
-                None => output.status.to_string(),
-            };
-            return Err(RunError {
-                command,
-                status,
-                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-                stdout,
-            });
-        }
-        Ok(stdout)
+        finish(command, output.status, &output.stdout, &output.stderr)
+    }
+
+    fn run_within(&self, dir: &Path, argv: &[&str], limit: Duration) -> Result<String, RunError> {
+        let [name, args @ ..] = argv else {
+            return Err(no_command());
+        };
+        let command = command_line(argv);
+        let fail = |status: String| RunError {
+            command: command.clone(),
+            status,
+            stderr: String::new(),
+            stdout: String::new(),
+        };
+        let mut child = Command::new(name)
+            .args(args)
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|err| fail(err.to_string()))?;
+        // Read both pipes on threads so a chatty command never blocks on a
+        // full pipe while it is polled.
+        let drain = |pipe: Option<Box<dyn Read + Send>>| {
+            thread::spawn(move || {
+                let mut buf = Vec::new();
+                if let Some(mut pipe) = pipe {
+                    let _ = pipe.read_to_end(&mut buf);
+                }
+                buf
+            })
+        };
+        let stdout = drain(child.stdout.take().map(|p| Box::new(p) as _));
+        let stderr = drain(child.stderr.take().map(|p| Box::new(p) as _));
+        let deadline = Instant::now() + limit;
+        let status = loop {
+            match child.try_wait().map_err(|err| fail(err.to_string()))? {
+                Some(status) => break status,
+                None if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    // The readers are left behind: a grandchild may still
+                    // hold the pipes open.
+                    return Err(fail(format!("timed out after {}s", limit.as_secs_f32())));
+                }
+                None => thread::sleep(Duration::from_millis(50)),
+            }
+        };
+        let stdout = stdout.join().unwrap_or_default();
+        let stderr = stderr.join().unwrap_or_default();
+        finish(command, status, &stdout, &stderr)
     }
 }
 
@@ -135,6 +210,21 @@ pub(crate) mod fake {
                     stdout: String::new(),
                 }),
             }
+        }
+
+        /// Records the call with its bound, so a test sees the limit kept.
+        fn run_within(
+            &self,
+            dir: &Path,
+            argv: &[&str],
+            limit: std::time::Duration,
+        ) -> Result<String, RunError> {
+            let result = self.run(dir, argv);
+            let mut calls = self.calls.lock().unwrap();
+            if let Some(last) = calls.last_mut() {
+                last.push_str(&format!(" [within {}s]", limit.as_secs()));
+            }
+            result
         }
     }
 }

@@ -1,9 +1,14 @@
 //! The graphify commands Orqadence runs.
 
 use std::path::Path;
+use std::time::Duration;
 
 use crate::orchestrator::app;
 use crate::tools::{RunError, Tools};
+
+/// How long graphify update . may run (it takes seconds) before it is
+/// killed, so a stalled one cannot hold up the Ticket.
+const UPDATE_LIMIT: Duration = Duration::from_secs(300);
 
 /// A new worktree's own code graph, while the "graphify" switch is on: the
 /// checkout's graphify-out/ copied in when it has a graph, then graphify
@@ -22,7 +27,7 @@ pub(crate) fn prepare_worktree(
         let to = worktree.join("graphify-out").display().to_string();
         tools.run(worktree, &["cp", "-R", &from, &to])?;
     }
-    tools.run(worktree, &["graphify", "update", "."])?;
+    tools.run_within(worktree, &["graphify", "update", "."], UPDATE_LIMIT)?;
     Ok(())
 }
 
