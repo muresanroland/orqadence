@@ -77,11 +77,26 @@ pub(crate) struct App {
 }
 
 /// The deny rules of claude's code-editing Stages: the commands on
-/// manual-work's never-run list that gh, signed in, would run.
-pub(crate) const GH_DENY: [&str; 3] = [
+/// manual-work's never-run list that gh, signed in, would run. gh api's
+/// writes to repo settings are denied by their endpoint, wherever the
+/// flags sit, and so are reads of it; the PR-thread calls (pulls/...,
+/// graphql) stay allowed. A PATCH of repos/{owner}/{repo} itself has no
+/// endpoint of its own to match: the skill's rule alone covers it.
+pub(crate) const GH_DENY: [&str; 14] = [
     "Bash(gh secret:*)",
     "Bash(gh variable:*)",
     "Bash(gh workflow run:*)",
+    "Bash(gh api */secrets*)",
+    "Bash(gh api */variables*)",
+    "Bash(gh api */dispatches*)",
+    "Bash(gh api */actions/permissions*)",
+    "Bash(gh api */environments*)",
+    "Bash(gh api */hooks*)",
+    "Bash(gh api */protection*)",
+    "Bash(gh api */rulesets*)",
+    "Bash(gh api */collaborators*)",
+    "Bash(gh api */keys*)",
+    "Bash(gh api */pages*)",
 ];
 
 /// pi's --thinking levels, the same on every model.
