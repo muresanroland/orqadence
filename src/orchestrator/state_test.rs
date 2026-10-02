@@ -137,6 +137,8 @@ fn every_field_survives_a_save_and_a_missing_file_is_an_empty_state() {
             )]
             .into(),
             pr: String::new(),
+            human_merge: true,
+            no_review: true,
             reason: "review went idle".to_string(),
             retried: true,
             nudged: true,
@@ -173,6 +175,8 @@ fn every_field_survives_a_save_and_a_missing_file_is_an_empty_state() {
         "\"tab\"",
         "\"panes\"",
         "\"sessions\"",
+        "\"human_merge\"",
+        "\"no_review\"",
         "\"reason\"",
         "\"retried\"",
         "\"nudged\"",

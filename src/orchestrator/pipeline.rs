@@ -46,6 +46,39 @@ fn not_debated_items(found: &StageResult) -> Vec<String> {
     found.found.iter().map(mark).collect()
 }
 
+/// A GitHub label a Ticket's PR carries: its name, and the colour and
+/// description it is created with.
+type GhLabel = (&'static str, &'static str, &'static str);
+const HUMAN_MERGE_LABEL: GhLabel = (
+    "orqa:human-merge",
+    "D93F0B",
+    "A human merges this pull request, never Orqadence",
+);
+const NO_REVIEW_LABEL: GhLabel = (
+    "orqa:no-review",
+    "C5DEF5",
+    "Only Markdown and skills changed: the review bots skip it",
+);
+
+/// Where a skill's files live, from the repo's root.
+const SKILL_DIRS: [&str; 4] = [
+    "skills/",
+    ".orqadence/skills/",
+    ".claude/skills/",
+    ".agents/skills/",
+];
+
+/// Whether a PR changing these paths, each ended by a NUL as `git diff -z`
+/// prints them, is a No-review pull request: each is Markdown or a skill's
+/// file. A fixed rule no agent judges; no path at all says nothing, so it
+/// is not one.
+fn is_no_review(paths: &str) -> bool {
+    !paths.is_empty()
+        && paths
+            .split_terminator('\0')
+            .all(|path| path.ends_with(".md") || SKILL_DIRS.iter().any(|d| path.starts_with(d)))
+}
+
 impl Orchestrator {
     /// Moves one Ticket through the Pipeline: Implement, then Rounds of
     /// Review, Debate and Fix until a Verdict has no fix items or the cap is
@@ -184,10 +217,13 @@ impl Orchestrator {
                 fix = self.final_fix(ticket, &extra, &mut verdicts)?;
             }
 
+            let (human_merge, no_review) = self.label_pr(ticket, &fix.pr);
             let tab = self.ticket(ticket).tab;
             self.update(ticket, |ts| {
                 ts.status = STATUS_PR_OPEN.to_string();
                 ts.pr = fix.pr.clone();
+                ts.human_merge = human_merge;
+                ts.no_review = no_review;
                 ts.tab.clear();
                 ts.panes.clear();
                 ts.sessions.clear();
@@ -209,6 +245,75 @@ impl Orchestrator {
             return Ok(());
         }
         Ok(())
+    }
+
+    /// Labels the PR the last Fix opened, whatever agent_merge says, and
+    /// gives back whether it is human-merge and whether it is a No-review
+    /// pull request, for the Ticket's state. Human-merge wins: such a PR is
+    /// never No-review. Labels or a diff that cannot be read fall on the
+    /// safe side, a human merging and the bots reviewing, and RECENT says
+    /// so; gh failing leaves a line there too, and a PR without its
+    /// orqa:no-review is not No-review, since the bots review it.
+    fn label_pr(&self, ticket: &str, pr: &str) -> (bool, bool) {
+        let (tools, repo, pr_ref) = (&self.cfg.tools, &self.cfg.repo, pr_ref(pr));
+        let human_merge = self
+            .labels(ticket)
+            .and_then(|names| Ok(app::human_merge(&app::read(repo)?.1, &names)))
+            .unwrap_or_else(|err| {
+                let text = format!("Ticket labels not read, so a human merges {pr_ref}: {err}");
+                self.report(ticket, &text);
+                true
+            });
+        let label = if human_merge {
+            HUMAN_MERGE_LABEL
+        } else {
+            // --no-renames: a source file renamed to Markdown is a source
+            // file deleted. -z, so a path git would quote comes as it is.
+            let range = format!("{}...HEAD", self.origin_head(ticket));
+            let argv = ["git", "diff", "--no-renames", "--name-only", "-z", &range];
+            let paths = tools.run(&self.worktree(ticket), &argv);
+            let paths = paths.unwrap_or_else(|err| {
+                let text = format!("changed files not read, so {pr_ref} is reviewed: {err}");
+                self.report(ticket, &text);
+                String::new()
+            });
+            if !is_no_review(&paths) {
+                return (false, false);
+            }
+            NO_REVIEW_LABEL
+        };
+        let name = label.0;
+        let labelled = self.add_pr_label(pr, label);
+        match &labelled {
+            Ok(()) => self.log(ticket, &format!("{pr_ref} labelled {name}")),
+            Err(err) => self.report(ticket, &format!("{pr_ref} not labelled {name}: {err}")),
+        }
+        (human_merge, !human_merge && labelled.is_ok())
+    }
+
+    /// Puts the label on the PR. gh refuses one the repo lacks, so when it
+    /// fails the label is created and it is tried again: a missing label
+    /// is created once, and a repo that has it needs no right to create
+    /// one. --force, so creating one already there is no error of its own.
+    fn add_pr_label(&self, pr: &str, (name, color, description): GhLabel) -> Result<(), RunError> {
+        let (tools, repo) = (&self.cfg.tools, &self.cfg.repo);
+        let add = ["gh", "pr", "edit", pr, "--add-label", name];
+        if tools.run(repo, &add).is_ok() {
+            return Ok(());
+        }
+        let create = [
+            "gh",
+            "label",
+            "create",
+            name,
+            "--color",
+            color,
+            "--description",
+            description,
+            "--force",
+        ];
+        tools.run(repo, &create)?;
+        tools.run(repo, &add).map(drop)
     }
 
     /// What follows a last Round's Fix that held the PR: the Extra review

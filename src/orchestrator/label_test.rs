@@ -1,12 +1,15 @@
 //! Ticket labels on the code-editing Stages: the label's skills and
 //! guidance as Inputs, the Epic context in the Ticket file, and a label
-//! skill missing on the base as a Question at Ticket start.
+//! skill missing on the base as a Question at Ticket start. And the GitHub
+//! labels a Ticket's PR gets as it opens: orqa:human-merge, orqa:no-review.
 
 use super::stage::{Answer, Ask};
+use super::state::{load_state, STATUS_PR_OPEN};
 use super::world::{new_world, spawn_epic, spawn_ticket, BdTicket, World};
 use super::write_file;
 use crate::skills::SKILLS;
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// hx-1 with the bd labels given.
@@ -243,4 +246,195 @@ fn the_code_editing_stage_skills_load_the_label_skills_and_bound_the_epic_contex
             "{name} does not bound the Epic context"
         );
     }
+}
+
+/// The PR's changed files, as git lists them against the base.
+const DIFF: &str = "git diff --no-renames --name-only -z origin/main...HEAD";
+
+/// The Ticket's branch changed these paths.
+fn changed(w: &World, paths: &'static [&'static str]) {
+    w.hook(move |_, argv| (argv.join(" ") == DIFF).then(|| Ok(paths.join("\0") + "\0")));
+}
+
+/// Markdown anywhere, and a file of any kind under each skills folder.
+/// docs/café.md, which git quotes unless -z.
+const MARKDOWN_AND_SKILLS: [&str; 7] = [
+    "README.md",
+    "docs/café.md",
+    "docs/adr/0007.md",
+    "skills/orqa-x/fetch.sh",
+    ".orqadence/skills/orqa-x/SKILL.md",
+    ".claude/skills/orqa-x/run.sh",
+    ".agents/skills/orqa-x/check.py",
+];
+
+const PR: &str = "https://example.test/pr/hx-1";
+
+/// A PR whose every changed file is Markdown or a skill is a No-review
+/// pull request: the Orchestrator labels it orqa:no-review as it opens,
+/// and the Ticket's saved state keeps it.
+#[test]
+fn a_pr_of_markdown_and_skills_alone_gets_orqa_no_review() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    changed(&w, &MARKDOWN_AND_SKILLS);
+
+    o.run_ticket("hx-1");
+
+    assert_eq!(
+        w.called("gh pr edit"),
+        [format!("gh pr edit {PR} --add-label orqa:no-review")]
+    );
+    assert_eq!(w.called("gh label create"), Vec::<String>::new());
+    let ts = o.ticket("hx-1");
+    assert!(ts.no_review && !ts.human_merge, "state = {ts:?}");
+    let saved = load_state(&w.repo).unwrap().tickets["hx-1"].clone();
+    assert!(
+        saved.no_review && saved.status == STATUS_PR_OPEN,
+        "{saved:?}"
+    );
+}
+
+/// One file that is neither Markdown nor a skill's, and the PR is reviewed:
+/// no label, and nothing created on GitHub. A skills folder counts from
+/// the repo's root alone.
+#[test]
+fn a_pr_touching_src_gets_no_label() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    changed(&w, &["docs/adr/0007.md", "src/skills/run.sh"]);
+
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    assert_eq!(w.called("gh pr edit"), Vec::<String>::new());
+    assert_eq!(w.called("gh label create"), Vec::<String>::new());
+    let ts = o.ticket("hx-1");
+    assert!(!ts.no_review && !ts.human_merge, "state = {ts:?}");
+}
+
+/// Human-merge wins: a security Ticket's PR, though only Markdown and
+/// skills changed, is labelled orqa:human-merge and never orqa:no-review.
+#[test]
+fn a_security_tickets_pr_of_markdown_alone_gets_orqa_human_merge_and_not_no_review() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
+    let doc = json!({"labels": {"security": {"kind": "area", "human_merge": true}}});
+    write_file(&w.repo.join(".orqadence/config.json"), &doc.to_string());
+    changed(&w, &MARKDOWN_AND_SKILLS);
+
+    o.run_ticket("hx-1");
+
+    assert_eq!(
+        w.called("gh pr edit"),
+        [format!("gh pr edit {PR} --add-label orqa:human-merge")]
+    );
+    let ts = o.ticket("hx-1");
+    assert!(ts.human_merge && !ts.no_review, "state = {ts:?}");
+}
+
+/// gh refuses a label the repo lacks: it is created, with its colour and
+/// description, and put on. The next PR finds it there, so it is created
+/// once.
+#[test]
+fn a_missing_github_label_is_created_once() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    let created = AtomicBool::new(false);
+    w.hook(move |_, argv| match argv {
+        ["git", "diff", ..] => Some(Ok(MARKDOWN_AND_SKILLS.join("\0"))),
+        ["gh", "label", "create", ..] => {
+            created.store(true, Ordering::SeqCst);
+            None
+        }
+        ["gh", "pr", "edit", ..] if !created.load(Ordering::SeqCst) => {
+            Some(Err("'orqa:no-review' not found".to_string()))
+        }
+        _ => None,
+    });
+
+    o.run_ticket("hx-1");
+    o.run_ticket("hx-2");
+
+    let gh: Vec<String> = w
+        .called("gh ")
+        .into_iter()
+        .filter(|call| call.starts_with("gh label") || call.starts_with("gh pr edit"))
+        .collect();
+    assert_eq!(
+        gh,
+        [
+            "gh pr edit https://example.test/pr/hx-1 --add-label orqa:no-review",
+            "gh label create orqa:no-review --color C5DEF5 --description \
+             Only Markdown and skills changed: the review bots skip it --force",
+            "gh pr edit https://example.test/pr/hx-1 --add-label orqa:no-review",
+            "gh pr edit https://example.test/pr/hx-2 --add-label orqa:no-review",
+        ]
+    );
+    assert!(o.ticket("hx-1").no_review && o.ticket("hx-2").no_review);
+}
+
+/// gh failing to label is a line on RECENT and nothing more: the Ticket is
+/// pr-open, and its PR, which the bots review, is not No-review.
+#[test]
+fn gh_failing_to_label_leaves_a_recent_line_and_the_ticket_pr_open() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.hook(|_, argv| match argv {
+        ["git", "diff", ..] => Some(Ok(MARKDOWN_AND_SKILLS.join("\0"))),
+        ["gh", "pr", "edit", ..] => Some(Err("gh: boom".to_string())),
+        _ => None,
+    });
+
+    o.run_ticket("hx-1");
+
+    assert_eq!(
+        w.await_line("hx-1 PR #hx-1 not labelled"),
+        format!(
+            "hx-1 PR #hx-1 not labelled orqa:no-review: \
+             gh pr edit {PR} --add-label orqa:no-review: exit status 1: gh: boom"
+        )
+    );
+    w.await_line("hx-1 PR #hx-1 opened");
+    let ts = o.ticket("hx-1");
+    assert!(
+        ts.status == STATUS_PR_OPEN && ts.pr == PR && !ts.no_review,
+        "state = {ts:?}"
+    );
+}
+
+/// A diff git cannot give says nothing about the PR: it is reviewed, and
+/// RECENT says why.
+#[test]
+fn a_diff_that_cannot_be_read_is_not_no_review() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    w.fail_once("git diff --no-renames", "bad revision");
+
+    o.run_ticket("hx-1");
+
+    assert_eq!(
+        w.await_line("hx-1 changed files not read"),
+        format!("hx-1 changed files not read, so PR #hx-1 is reviewed: {DIFF}: exit status 1: bad revision")
+    );
+    assert_eq!(w.called("gh pr edit"), Vec::<String>::new());
+    assert!(!o.ticket("hx-1").no_review);
+}
+
+/// Ticket labels bd cannot show as the PR opens may be a Human-merge
+/// label's: the PR is human-merge, and RECENT says why.
+#[test]
+fn ticket_labels_not_read_as_the_pr_opens_make_it_human_merge() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    let fix = o.run_dir("hx-1").join("fix-1.md");
+    w.hook(move |_, argv| {
+        (argv.starts_with(&["bd", "show"]) && fix.exists()).then(|| Err("bd down".to_string()))
+    });
+
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 Ticket labels not read, so a human merges PR #hx-1: ");
+    assert_eq!(
+        w.called("gh pr edit"),
+        [format!("gh pr edit {PR} --add-label orqa:human-merge")]
+    );
+    let ts = o.ticket("hx-1");
+    assert!(
+        ts.status == STATUS_PR_OPEN && ts.human_merge && !ts.no_review,
+        "state = {ts:?}"
+    );
 }

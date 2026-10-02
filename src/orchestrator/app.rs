@@ -1057,7 +1057,6 @@ pub(crate) fn ticket_labels(repo: &Path, names: &[String]) -> Result<Vec<(String
 /// Whether a Ticket with these labels, by name, is human-merge: it carries
 /// orqa:human-merge, or a label whose entry in doc says human_merge. The
 /// entry is read raw, so one broken elsewhere still counts.
-#[allow(dead_code)] // harness-72t.3 sets the PR's label from it
 pub(crate) fn human_merge(doc: &Value, names: &[String]) -> bool {
     names
         .iter()
