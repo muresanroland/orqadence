@@ -507,74 +507,22 @@ fn write_bot_exclusions(repo: &Path, out: &mut dyn Write) -> io::Result<()> {
     Ok(())
 }
 
-/// What follows `key:` on a YAML line holding that key, bare or quoted.
-fn after_key<'a>(line: &'a str, key: &str) -> Option<&'a str> {
-    let line = line.trim_start();
-    let rest = ['"', '\'']
-        .into_iter()
-        .find_map(|quote| {
-            line.strip_prefix(quote)?
-                .strip_prefix(key)?
-                .strip_prefix(quote)
-        })
-        .or_else(|| line.strip_prefix(key))?
-        .trim_start()
-        .strip_prefix(':')?;
-    (rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(rest)
-}
-
 /// .coderabbit.yaml's `text` with "!orqa:no-review" in
-/// reviews.auto_review.labels, a label CodeRabbit reads as not to review,
-/// and every other line as it was; None when it has the block this adds.
-/// serde_yaml is not an allowed crate, so the YAML is edited as text and
-/// only where that is safe: a missing file is made, and a file without a
-/// reviews key gains the block at its end. Err for any other, as one with
-/// a reviews key of its own, so init says what to add by hand.
-// ponytail: a file with its own reviews key is left for a human; edit it in
+/// reviews.auto_review.labels, a label CodeRabbit reads as not to review;
+/// None when it has the block this adds. serde_yaml is not an allowed
+/// crate, so only a missing or empty file is written. Err for any other,
+/// so init says what to add by hand.
+// ponytail: a file with settings of its own is left for a human; edit it in
 // place once a YAML crate is allowed.
 fn coderabbit_skipping(text: &str) -> Result<Option<String>, String> {
     let block = format!("reviews:\n  auto_review:\n    labels:\n      - \"!{NO_REVIEW}\"\n");
     if text.starts_with(&block) || text.contains(&format!("\n{block}")) {
         return Ok(None);
     }
-    if text.starts_with('\u{feff}') {
-        return Err("it starts with a byte order mark".to_string());
+    if !text.trim().is_empty() {
+        return Err("it has settings of its own".to_string());
     }
-    let content = |line: &str| !line.trim().is_empty() && !line.trim_start().starts_with('#');
-    // A key added past one of these could land outside the document or
-    // override what a merge key brings in.
-    let mut seen = false;
-    for line in text.lines() {
-        let key = line.trim_start();
-        if key.starts_with("<<") || key == "?" || key.starts_with("? ") {
-            return Err("it has a merge key or a `?` key".to_string());
-        }
-        let marker = |m: &str| line.trim_end() == m || line.starts_with(&format!("{m} "));
-        if marker("...") || seen && marker("---") {
-            return Err("it has more than one YAML document".to_string());
-        }
-        seen |= content(line);
-    }
-    // The root's first line past a document start: a block added at the end
-    // is one of its keys only when they start their lines.
-    let root = text
-        .lines()
-        .find(|line| content(line) && line.trim_end() != "---");
-    if root.is_some_and(|line| line.starts_with([' ', '\t', '-', '{', '['])) {
-        return Err("its keys are not at the start of their lines".to_string());
-    }
-    if text
-        .lines()
-        .any(|line| content(line) && after_key(line, "reviews").is_some())
-    {
-        return Err("it has a reviews key".to_string());
-    }
-    // Added lines end in \n whatever the file's line endings: YAML reads both.
-    let mut text = text.to_string();
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    Ok(Some(text + &block))
+    Ok(Some(block))
 }
 
 /// Greptile's config `text` with orqa:no-review in disabledLabels, the

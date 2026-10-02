@@ -725,6 +725,14 @@ fn merges(w: &World) -> Vec<String> {
     w.called("gh pr merge")
 }
 
+/// hx-1's branch, from main to head `a`, changed these paths.
+fn changed(w: &World, paths: &'static str) {
+    w.hook(move |_, argv| {
+        let diff = "git diff --no-renames --name-only -z origin/main...a";
+        (argv.join(" ") == diff).then(|| Ok(paths.to_string()))
+    });
+}
+
 /// Under Agent merge a reviewed PR, its bot's review in, every PR comment
 /// answered and its checks green, is merged once with the repo's method; the
 /// next poll's merged handling closes the Ticket.
@@ -825,6 +833,7 @@ fn a_no_review_pr_merges_on_green_without_its_bots() {
     let (w, o, clock) = polled();
     agent_merge(&w, &["coderabbit", "greptile"]);
     o.update("hx-1", |ts| ts.no_review = true);
+    changed(&w, "README.md\0");
     let mut pr = open(PR65, "a");
     pr["reviews"]["nodes"] = json!([]);
     pr["statusCheckRollup"]["contexts"]["nodes"][0]["state"] = json!("FAILURE");
@@ -841,6 +850,58 @@ fn a_no_review_pr_merges_on_green_without_its_bots() {
     assert!(merges(&w).is_empty(), "GitHub has not said it is mergeable");
 
     pr["mergeable"] = json!("MERGEABLE");
+    serve(&w, &pr);
+    poll(&o);
+    assert_eq!(merges(&w).len(), 1);
+}
+
+/// A No-review PR whose head now changes a source file is one no longer:
+/// orqa:no-review comes off, so the bots review it, and it waits for them.
+#[test]
+fn a_no_review_pr_that_changes_a_source_file_since_loses_its_exemption() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["greptile"]);
+    o.update("hx-1", |ts| ts.no_review = true);
+    changed(&w, "README.md\0src/main.rs\0");
+    settle(&w, &o, &clock, &open(PR65, "a"));
+    assert!(merges(&w).is_empty());
+    assert!(!o.ticket("hx-1").no_review);
+    assert_eq!(
+        w.called("gh pr edit"),
+        [format!("gh pr edit {URL} --remove-label orqa:no-review")]
+    );
+    poll(&o);
+    assert!(merges(&w).is_empty(), "Greptile has not reviewed");
+}
+
+/// A Ticket whose labels make it human-merge is not merged though its
+/// state says otherwise, as one saved before human_merge was does: the
+/// labels are read again before a merge, and the state and PR keep it.
+#[test]
+fn a_human_merge_ticket_is_not_merged_whatever_its_saved_state_says() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    w.lock().tickets[0].labels = vec!["orqa:human-merge".to_string()];
+    settle(&w, &o, &clock, &open(PR65, "a"));
+    assert!(merges(&w).is_empty());
+    assert!(o.ticket("hx-1").human_merge);
+    assert_eq!(
+        w.called("gh pr edit"),
+        [format!("gh pr edit {URL} --add-label orqa:human-merge")]
+    );
+}
+
+/// A head with more checks than the poll reads is never green.
+#[test]
+fn checks_past_the_first_hundred_are_not_green() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    let mut pr = open(PR65, "a");
+    pr["statusCheckRollup"]["contexts"]["pageInfo"] = json!({"hasNextPage": true});
+    settle(&w, &o, &clock, &pr);
+    assert!(merges(&w).is_empty());
+
+    pr["statusCheckRollup"]["contexts"]["pageInfo"] = json!({"hasNextPage": false});
     serve(&w, &pr);
     poll(&o);
     assert_eq!(merges(&w).len(), 1);
@@ -870,30 +931,6 @@ fn the_merge_takes_the_repos_method_squash_else_rebase_else_a_merge_commit() {
     assert_eq!(merged_with(true, true), "--squash");
     assert_eq!(merged_with(false, true), "--rebase");
     assert_eq!(merged_with(false, false), "--merge");
-}
-
-/// The repo's method is read once per run, however many PRs merge.
-#[test]
-fn the_merge_method_is_read_once_per_run() {
-    let (w, mut o) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
-    let noon = Local.with_ymd_and_hms(2026, 9, 30, 12, 0, 0).unwrap();
-    let clock = set_clock(&mut o.cfg, noon);
-    agent_merge(&w, &["coderabbit"]);
-    for ticket in ["hx-1", "hx-2"] {
-        let url = format!("https://example.test/pr/{ticket}");
-        w.lock()
-            .prs
-            .insert(url.clone(), open(PR65, "a").to_string());
-        o.update(ticket, |ts| {
-            ts.status = STATUS_PR_OPEN.to_string();
-            ts.pr = url;
-        });
-    }
-    o.poll_merges();
-    later(&clock, 60);
-    o.poll_merges();
-    assert_eq!(merges(&w).len(), 2);
-    assert_eq!(w.called("gh api repos/").len(), 1);
 }
 
 const REFUSAL: &str =
@@ -986,6 +1023,7 @@ fn a_pr_is_not_merged_before_it_is_settled() {
     let (w, o, clock) = polled();
     agent_merge(&w, &[]);
     o.update("hx-1", |ts| ts.no_review = true);
+    changed(&w, "README.md\0");
     serve(&w, &open(PR65, "a"));
     poll(&o);
     later(&clock, 59);

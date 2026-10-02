@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -312,9 +312,6 @@ pub(crate) struct Orchestrator {
     /// (ask_shadowed): false while a Ticket asks about it, true once the
     /// user went on with it, for this run alone.
     pub(super) shadows: Mutex<BTreeMap<String, bool>>,
-    /// The Target repo on GitHub, owner/name, and its own merge method as
-    /// gh's flag, read once per run (merge_method).
-    pub(super) merge_method: OnceLock<(String, &'static str)>,
     /// The Ticket threads, which the binary never joins; the tests do, so a
     /// failure on one fails the test.
     #[cfg(test)]
@@ -353,7 +350,6 @@ impl Orchestrator {
             deadlines: Mutex::new(BTreeMap::new()),
             plans: Mutex::new(BTreeMap::new()),
             shadows: Mutex::new(BTreeMap::new()),
-            merge_method: OnceLock::new(),
             #[cfg(test)]
             threads: Mutex::new(Vec::new()),
         }

@@ -1015,60 +1015,20 @@ fn a_repo_without_a_coderabbit_yaml_gets_one_with_the_exclusion() {
     assert!(!repo.path().join("greptile.json").exists(), "{out}");
 }
 
-/// The text edit of .coderabbit.yaml adds reviews.auto_review.labels at the
-/// end of a file without a reviews key, every other line, comment and line
-/// ending kept, and leaves alone a text that has that block. A file with a
-/// reviews key of its own, or that cannot take a key at its end, is refused.
+/// The text edit of .coderabbit.yaml writes reviews.auto_review.labels into
+/// a missing or empty file, and leaves alone a text that has that block.
+/// Any other file is refused: init says what to add by hand.
 #[test]
-fn coderabbit_skipping_adds_the_label_and_keeps_every_other_line() {
+fn coderabbit_skipping_writes_only_an_empty_file() {
     let block = "reviews:\n  auto_review:\n    labels:\n      - \"!orqa:no-review\"\n";
-    let cases = [
-        // No newline ending the file; a comment naming the label is not it.
-        "# \"!orqa:no-review\" goes below\nlanguage: en-US\nchat:\n  auto_reply: true",
-        // A block of text ending the file.
-        "language: en-US\ntone: |\n  hello\n  # heading\n",
-        // A document start before the keys.
-        "---\nlanguage: en-US\n",
-        // Windows line endings stay on the lines that had them.
-        "language: en-US\r\nchat:\r\n  auto_reply: true\r\n",
-        "# only a comment\n",
-        "",
-    ];
-    for before in cases {
-        let newline = if before.is_empty() || before.ends_with('\n') {
-            ""
-        } else {
-            "\n"
-        };
-        let after = format!("{before}{newline}{block}");
-        assert_eq!(
-            coderabbit_skipping(before),
-            Ok(Some(after.clone())),
-            "{before}"
-        );
-        assert_eq!(coderabbit_skipping(&after), Ok(None), "{after}");
+    for empty in ["", "\n"] {
+        assert_eq!(coderabbit_skipping(empty), Ok(Some(block.to_string())));
     }
-    for unreadable in [
-        // A reviews key of its own, however it is written.
-        "reviews:\n  profile: chill\n",
-        "reviews: {}\n",
-        "\"reviews\":\n  auto_review:\n    labels:\n      - bug\n",
-        "reviews:\n  auto_review:\n    labels: [bug]\n",
-        "reviews:\n  auto_review:\n    labels:\n      - '!orqa:no-review # suffix'\n",
-        // Keys that do not start their lines, past a document start too.
-        "---\n  reviews:\n    profile: chill\n",
-        "  language: en-US\n",
-        "{}\n",
-        "- chill\n",
-        "\u{feff}language: en-US\n",
-        // A merge key or a `?` key could hold reviews.auto_review out of sight.
-        "base: &base\n  auto_review:\n    enabled: false\nchat:\n  <<: *base\n",
-        "? reviews\n: {profile: chill}\n",
-        // A key added at the end would land outside the document.
-        "language: en-US\n...\n",
-        "language: en-US\n---\nlanguage: de-DE\n",
-    ] {
-        assert!(coderabbit_skipping(unreadable).is_err(), "{unreadable}");
+    for has in [block.to_string(), format!("language: en-US\n{block}")] {
+        assert_eq!(coderabbit_skipping(&has), Ok(None), "{has}");
+    }
+    for other in ["language: en-US\n", "reviews: {}\n", "# only a comment\n"] {
+        assert!(coderabbit_skipping(other).is_err(), "{other}");
     }
 }
 

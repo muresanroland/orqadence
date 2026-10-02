@@ -10,7 +10,7 @@ use serde::Deserialize;
 /// not their size.
 pub(crate) const QUERY: &str = "query($url:URI!){resource(url:$url){...on PullRequest{
   state mergeable reviewDecision isMergeQueueEnabled headRefOid mergeCommit{oid}
-  statusCheckRollup{commit{oid} state contexts(first:100){nodes{
+  statusCheckRollup{commit{oid} state contexts(first:100){pageInfo{hasNextPage} nodes{
     ...on CheckRun{name status conclusion startedAt
       checkSuite{app{slug} workflowRun{event workflow{name}}}}
     ...on StatusContext{context state description creator{login}}}}}
@@ -47,7 +47,21 @@ struct Nodes<T> {
 #[serde(default)]
 struct Rollup {
     commit: Option<Commit>,
-    contexts: Nodes<Context>,
+    contexts: Contexts,
+}
+
+/// The rollup's first 100 contexts, and whether it has more.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct Contexts {
+    nodes: Vec<Context>,
+    page_info: PageInfo,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct PageInfo {
+    has_next_page: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -166,10 +180,13 @@ impl Pr {
         self.contexts().iter().any(|c| pending(c.state()))
     }
 
-    /// The head's checks are green: none failed, none pending.
+    /// The head's checks are green: none failed, none pending, and none
+    /// past the 100 the poll reads.
     pub(crate) fn green(&self) -> bool {
+        let rollup = self.status_check_rollup.as_ref();
+        let more = rollup.is_some_and(|r| r.contexts.page_info.has_next_page);
         let red = |c: &&Context| failed(c.state()) || pending(c.state());
-        !self.contexts().iter().any(red)
+        !more && !self.contexts().iter().any(red)
     }
 
     /// Whether the review bot, as review_bots names it, has reviewed the

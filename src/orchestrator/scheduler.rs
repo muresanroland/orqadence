@@ -630,8 +630,9 @@ impl Orchestrator {
     /// Agent merge (ADR 0007): merges a Ticket's settled PR, never a
     /// human-merge one, once its checks are green, GitHub calls it
     /// mergeable and no review asks for changes; a reviewed PR also once
-    /// each bot of review_bots has reviewed it and no item is open. Until
-    /// then it waits. With the repo's own method, never --admin, never
+    /// each bot of review_bots has reviewed it and no item is open, and
+    /// then only if its labels and diff, read again, still allow it
+    /// (may_merge). Until then it waits. With the repo's own method, never --admin, never
     /// --auto, and only the head these gates were read on. --repo keeps gh
     /// off the local branch, which the Ticket's worktree holds: the next
     /// poll's merged handling removes both. GitHub refusing, or a merge
@@ -653,6 +654,9 @@ impl Orchestrator {
                 return;
             }
         }
+        if !self.may_merge(ticket, ts, &pr.head_ref_oid) {
+            return;
+        }
         let number = pr_ref(&ts.pr);
         let refused = if pr.is_merge_queue_enabled {
             "its base branch has a merge queue".to_string()
@@ -671,7 +675,7 @@ impl Orchestrator {
                 "--match-head-commit",
                 &pr.head_ref_oid,
                 "--repo",
-                name,
+                &name,
             ];
             match self.cfg.tools.run(repo, &argv) {
                 Ok(_) => {
@@ -701,11 +705,8 @@ impl Orchestrator {
 
     /// The Target repo on GitHub, owner/name, and its own merge method as
     /// gh's flag: squash where the repo allows it, else rebase, else a merge
-    /// commit. Read once per run; a read that fails is tried again.
-    fn merge_method(&self) -> Result<(&str, &'static str), String> {
-        if let Some((name, method)) = self.merge_method.get() {
-            return Ok((name, method));
-        }
+    /// commit. Read before each merge, so a change made mid-run is taken.
+    fn merge_method(&self) -> Result<(String, &'static str), String> {
         let argv = ["gh", "api", "repos/{owner}/{repo}"];
         let out = self.cfg.tools.run(&self.cfg.repo, &argv);
         let github: serde_json::Value = serde_json::from_str(&out.map_err(|err| err.to_string())?)
@@ -718,8 +719,7 @@ impl Orchestrator {
         } else {
             "--merge"
         };
-        let kept = self.merge_method.get_or_init(|| (name.to_string(), method));
-        Ok((&kept.0, kept.1))
+        Ok((name.to_string(), method))
     }
 
     /// An open PR's items not offered before, once its head is quiet and
