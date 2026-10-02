@@ -71,13 +71,20 @@ pub(crate) fn read(run_dir: &Path, filed: &Path) -> Result<Item, String> {
 }
 
 /// The items open in `run_dir`, its manual-work/<n>/ folders read, in
-/// number order; one that does not read is left out.
+/// number order; one that does not read is left out, and so is a link, which
+/// would list its target's item twice.
 pub(crate) fn open(run_dir: &Path) -> Vec<Item> {
     let entries = fs::read_dir(run_dir.join("manual-work"))
         .into_iter()
         .flatten();
     let mut items: Vec<Item> = entries
-        .filter_map(|entry| read(run_dir, &entry.ok()?.path()).ok())
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            if entry.file_type().ok()?.is_symlink() {
+                return None;
+            }
+            read(run_dir, &entry.path()).ok()
+        })
         .collect();
     items.sort_by_key(|item| number(&item.folder).parse::<u64>().unwrap_or_default());
     items
