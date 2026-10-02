@@ -115,6 +115,7 @@ fn graphify_from_pipx_upgrades_with_pipx_and_from_uv_with_uv() {
     let repo = TempDir::new();
     let upgrade = |list: &'static str| {
         let fake = Fake::new(move |_, argv| match argv.join(" ").as_str() {
+            "which uv" if list.is_empty() => Err("no uv".to_string()),
             "uv tool list" => Ok(list.to_string()),
             _ => Ok(String::new()),
         });
@@ -125,8 +126,28 @@ fn graphify_from_pipx_upgrades_with_pipx_and_from_uv_with_uv() {
             .collect::<Vec<_>>()
     };
     assert_eq!(upgrade("ruff v0.6.0\n- ruff\n"), ["pipx upgrade graphifyy"]);
+    assert_eq!(upgrade(""), ["pipx upgrade graphifyy"], "no uv");
     assert_eq!(
         upgrade("graphifyy v0.4.1\n- graphify\n"),
         ["uv tool upgrade graphifyy"]
+    );
+}
+
+#[test]
+fn a_failed_uv_listing_is_one_line_and_upgrades_and_installs_nothing() {
+    let repo = TempDir::new();
+    let fake = Fake::new(|_, argv| match argv.join(" ").as_str() {
+        "uv tool list" => Err("broken".to_string()),
+        _ => Ok(String::new()),
+    });
+    let (failed, _) = pass(&*fake, repo.path());
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert!(failed[0].contains("uv tool list"), "{failed:?}");
+    let calls = fake.calls();
+    assert!(
+        !calls
+            .iter()
+            .any(|c| c.ends_with("upgrade graphifyy") || c.starts_with("graphify install")),
+        "{calls:?}"
     );
 }

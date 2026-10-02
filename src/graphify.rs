@@ -93,16 +93,21 @@ pub(crate) fn pass(tools: &dyn Tools, repo: &Path) -> Pass {
             .map_err(|err| failed.push(format!("graphify check failed: {err}")))
     };
     let _ = run(&["graphify", "update", "."]);
-    // upgraded by what installed it: uv when uv lists it, else pipx
-    let from_uv = tools.run(repo, &["uv", "tool", "list"]).is_ok_and(|list| {
-        list.lines()
-            .any(|line| line.split_whitespace().next() == Some("graphifyy"))
-    });
-    let installer = match from_uv {
-        true => ["uv", "tool", "upgrade", "graphifyy"].as_slice(),
-        false => ["pipx", "upgrade", "graphifyy"].as_slice(),
+    // upgraded by what installed it: uv when uv lists it, else pipx; a
+    // failed listing upgrades nothing
+    let from_uv = match tools.run(repo, &["which", "uv"]) {
+        Ok(_) => run(&["uv", "tool", "list"]).map(|list| {
+            list.lines()
+                .any(|line| line.split_whitespace().next() == Some("graphifyy"))
+        }),
+        Err(_) => Ok(false),
     };
-    if run(installer).is_ok() {
+    let installer = match from_uv {
+        Ok(true) => Some(["uv", "tool", "upgrade", "graphifyy"].as_slice()),
+        Ok(false) => Some(["pipx", "upgrade", "graphifyy"].as_slice()),
+        Err(()) => None,
+    };
+    if installer.is_some_and(|argv| run(argv).is_ok()) {
         for platform in platforms(repo) {
             let _ = run(&["graphify", "install", "--platform", platform]);
         }
