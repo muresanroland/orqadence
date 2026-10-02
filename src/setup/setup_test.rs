@@ -414,6 +414,36 @@ fn install_skills_writes_a_skills_other_files_beside_it_executable() {
     }
 }
 
+/// manual-work goes in .orqadence/skills with its template.sh, linked from
+/// .agents/skills and .claude/skills; a refresh leaves an edited copy alone.
+#[test]
+fn install_skills_installs_manual_work_with_its_template_and_links() {
+    let repo = TempDir::new();
+    install(repo.path(), "");
+    let dir = repo.path().join(".orqadence/skills/orqa-manual-work");
+    assert!(read(&dir, "SKILL.md").contains("name: orqa-manual-work"));
+    assert!(read(&dir, "template.sh").contains("Copyright (c) 2026 Matt Pocock"));
+    let mode = fs::metadata(dir.join("template.sh"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o111, 0o111, "template.sh mode {mode:o}");
+    for link in [".agents/skills", ".claude/skills"] {
+        assert_eq!(
+            fs::read_link(repo.path().join(link).join("orqa-manual-work")).unwrap(),
+            Path::new("../../.orqadence/skills/orqa-manual-work"),
+            "{link}"
+        );
+    }
+    for file in ["SKILL.md", "template.sh"] {
+        fs::write(dir.join(file), "edited").unwrap();
+    }
+    install(repo.path(), "2");
+    for file in ["SKILL.md", "template.sh"] {
+        assert_eq!(read(&dir, file), "edited", "refresh overwrote {file}");
+    }
+}
+
 /// A linked folder inside a skill is the repo's own too: --force does not
 /// write through it.
 #[test]

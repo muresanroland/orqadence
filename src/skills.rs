@@ -1,7 +1,8 @@
 //! The skills Orqadence ships: one Stage skill per Stage, plus orqa-create-pr,
-//! orqa-infra-review with its fetch.sh and orqa-address-pr-comments with its
-//! scripts/threads.sh. 'orqa init' copies them into a Target repo. A new
-//! skill is one more line here.
+//! orqa-infra-review with its fetch.sh, orqa-address-pr-comments with its
+//! scripts/threads.sh and orqa-manual-work with its template.sh. 'orqa init'
+//! copies them into a Target repo. A new skill is one more line here, and
+//! one more in EXTRA_FILES for each file beside its SKILL.md.
 
 use std::fs;
 use std::io;
@@ -20,6 +21,10 @@ pub(crate) const SKILLS: &[(&str, &str)] = &[
     (
         "orqa-infra-review",
         include_str!("../skills/orqa-infra-review/SKILL.md"),
+    ),
+    (
+        "orqa-manual-work",
+        include_str!("../skills/orqa-manual-work/SKILL.md"),
     ),
     (
         "orqa-stage-address-pr-comments",
@@ -63,6 +68,11 @@ pub(crate) const EXTRA_FILES: &[(&str, &str, &str)] = &[
         "orqa-infra-review",
         "fetch.sh",
         include_str!("../skills/orqa-infra-review/fetch.sh"),
+    ),
+    (
+        "orqa-manual-work",
+        "template.sh",
+        include_str!("../skills/orqa-manual-work/template.sh"),
     ),
 ];
 
