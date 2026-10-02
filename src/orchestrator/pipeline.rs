@@ -310,14 +310,18 @@ impl Orchestrator {
     fn label_pr(&self, ticket: &str, pr: &str) -> (bool, bool) {
         let human_merge = self.is_human_merge(ticket, pr);
         let no_review = self.is_no_review_pr(ticket, pr, "HEAD");
-        let doc = app::read(&self.cfg.repo)
-            .map(|(_, doc)| doc)
-            .unwrap_or_default();
         let mut names = Vec::new();
         names.extend(human_merge.then(|| app::HUMAN_MERGE.to_string()));
         names.extend(no_review.then(|| app::NO_REVIEW.to_string()));
-        // unread, is_human_merge has said so; the built-ins are put on above
-        let own = self.labels(ticket).unwrap_or_default();
+        // The Ticket's own, coloured by their kinds in config.json: either
+        // unread, is_human_merge has said so, and only the built-ins above
+        // go on, never an Area label made with a Modifier's colour.
+        let doc = app::read(&self.cfg.repo).map(|(_, doc)| doc);
+        let own = match &doc {
+            Ok(_) => self.labels(ticket).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        let doc = doc.unwrap_or_default();
         let built_in = [app::HUMAN_MERGE, app::NO_REVIEW];
         names.extend(
             own.into_iter()

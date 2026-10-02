@@ -383,6 +383,32 @@ fn a_pr_carries_its_tickets_orqa_labels() {
     assert!(!ts.no_review && !ts.human_merge, "state = {ts:?}");
 }
 
+/// config.json that cannot be read as the PR opens gives no kind to colour
+/// the Ticket's own labels by: only the built-ins go on, the PR
+/// human-merge since its labels were not read.
+#[test]
+fn a_config_unread_as_the_pr_opens_puts_on_no_ticket_label() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:db"])]);
+    config(&w, &[], "");
+    changed(&w, &["src/db.rs"]);
+    let config = w.repo.join(".orqadence/config.json");
+    let fix = o.run_dir("hx-1").join("fix-1.md");
+    w.hook(move |_, argv| {
+        if argv.starts_with(&["bd", "show"]) && fix.exists() {
+            write_file(&config, "{");
+        }
+        None
+    });
+
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 Ticket labels not read, so a human merges PR #hx-1: ");
+    assert_eq!(
+        w.called("gh pr edit"),
+        [format!("gh pr edit {PR} --add-label orqa:human-merge")]
+    );
+}
+
 /// orqa:no-review on a Ticket: Implement, then a Fix that opens the PR
 /// unreviewed and says why, no Review, Extra review or Debate; the PR is
 /// a No-review pull request though it changes source files.
