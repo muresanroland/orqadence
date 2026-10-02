@@ -197,6 +197,22 @@ fn list_reads_each_items_blocks_and_input_lists_them() {
     );
 }
 
+/// An item whose manual-work.md has no What yet is still being written:
+/// left out of input until it has one, though open still lists it.
+#[test]
+fn input_skips_an_item_with_no_what_yet() {
+    let dir = TempDir::new();
+    let folder = dir.path().join("manual-work").join("1");
+    write_file(&folder.join("manual-work.md"), "Blocks: no\n");
+    assert_eq!(manual::open(dir.path()).len(), 1);
+    assert_eq!(manual::input(dir.path()), "none");
+    file_with(&folder, "no", "Set the DNS record.");
+    assert_eq!(
+        manual::input(dir.path()),
+        format!("\n  {} · Blocks: no · Set the DNS record.", folder.display())
+    );
+}
+
 /// A Stage's session that files blocking Manual work: the folder beside
 /// its result file, then STATUS: manual and the folder, and waits idle.
 pub(crate) fn files_manual(p: &Prompt) -> (String, String) {

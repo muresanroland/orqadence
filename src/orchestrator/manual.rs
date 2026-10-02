@@ -91,10 +91,12 @@ pub(crate) fn open(run_dir: &Path) -> Vec<Item> {
 }
 
 /// The Manual work Input: a line per open item, its folder, Blocks and
-/// What, or none.
+/// What, or none. One with no What yet is still being written, listed once
+/// it has one.
 pub(crate) fn input(run_dir: &Path) -> String {
     let lines: Vec<String> = open(run_dir)
         .iter()
+        .filter(|item| !item.what.is_empty())
         .map(|item| {
             let blocks = if item.blocks { "yes" } else { "no" };
             format!(
