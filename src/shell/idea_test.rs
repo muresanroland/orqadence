@@ -65,6 +65,17 @@ fn a_paste_keeps_its_newlines() {
 }
 
 #[test]
+fn a_paste_on_a_button_presses_nothing() {
+    let tools = Fake::quiet();
+    let mut s = opened(tools.clone(), Path::new(""));
+    type_in(&mut s, "an idea");
+    s.key(key(KeyCode::Tab));
+    s.paste("more\n");
+    assert_eq!(text(&s), "an idea");
+    assert!(tools.calls().is_empty(), "{:?}", tools.calls());
+}
+
+#[test]
 fn a_paste_outside_the_modal_types_as_keys() {
     let mut s = screen_at(Fake::quiet(), Path::new(""));
     s.paste("/brainstorm\n");
@@ -278,4 +289,14 @@ fn the_modal_folds_over_the_shell_under_110_columns() {
     ] {
         assert!(find(&buf, want).is_some(), "no {want:?}");
     }
+    // a line longer than the box wraps onto the next row
+    type_in(&mut s, &" word".repeat(20));
+    let buf = render(&s, 90, 40);
+    let (_, y) = find(&buf, "an idea word").unwrap();
+    assert!(
+        row(&buf, y + 1).contains("word word"),
+        "{}",
+        row(&buf, y + 1)
+    );
+    assert!(row(&buf, y + 1).contains('▌'), "{}", row(&buf, y + 1));
 }

@@ -12,6 +12,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::{Screen, NOTICE_WINDOW};
 use crate::brainstorm::{Brainstorm, IDEA};
 use crate::graphify;
+use crate::orchestrator::pipeline::origin_head;
 use crate::orchestrator::stage::worktree;
 use crate::tools;
 
@@ -49,14 +50,15 @@ impl Screen {
     }
 
     /// A bracketed paste: into the idea modal's input with its newlines,
-    /// anywhere else typed key by key, as it came before the Shell asked
-    /// for bracketed paste.
+    /// never pressing its buttons; anywhere else typed key by key, as it
+    /// came before the Shell asked for bracketed paste.
     pub(crate) fn paste(&mut self, text: &str) {
         match &mut self.idea {
             Some(idea) if idea.focus == 0 => {
                 idea.text += &text.replace("\r\n", "\n").replace('\r', "\n")
             }
-            _ => {
+            Some(_) => {}
+            None => {
                 for c in text.chars() {
                     let code = match c {
                         '\n' | '\r' => KeyCode::Enter,
@@ -143,15 +145,10 @@ impl Screen {
         if let Err(err) = tools.run(&repo, &["bd", "update", &id, "--status", "in_progress"]) {
             return tell(self, format!("not marked in_progress: {err}"));
         }
-        let origin = ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"];
-        let base = tools.run(&repo, &origin).unwrap_or_default();
-        let base = match base.trim() {
-            "" => "origin/main",
-            b => b,
-        };
+        let base = origin_head(&*tools, &repo);
         let (path, branch) = (worktree(&repo, &id), format!("brainstorm/{id}"));
         let shown = path.display().to_string();
-        let add = ["git", "worktree", "add", "-b", &branch, &shown, base];
+        let add = ["git", "worktree", "add", "-b", &branch, &shown, &base];
         if let Err(err) = tools.run(&repo, &add) {
             return tell(self, format!("worktree not created: {err}"));
         }
