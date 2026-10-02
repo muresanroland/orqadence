@@ -3,8 +3,8 @@
 
 use super::brand::{PURPLE, RED};
 use super::config::{
-    put, Field, LabelItem, ADDRESS_PR_COMMENTS_PAGE, APPS_PAGE, LABELS_PAGE, ON_CALL_PAGE,
-    REBASE_PAGE, RELEASE_PAGE, RUN_PAGE, SKILLS_PAGE, TYPESAFE_PAGE,
+    put, Field, LabelItem, ADDRESS_PR_COMMENTS_PAGE, APPS_PAGE, GRAPHIFY_PAGE, LABELS_PAGE,
+    ON_CALL_PAGE, REBASE_PAGE, RELEASE_PAGE, RUN_PAGE, SKILLS_PAGE, TYPESAFE_PAGE,
 };
 use super::shell_test::{
     asking, await_line, cols, find, key, logged, notice_modal, render, row, rows, screen_at, shell,
@@ -2156,6 +2156,103 @@ fn the_release_page_lists_its_row_and_switch_and_each_saves_at_once() {
     );
 }
 
+/// The graphify page: the Docs pass's row, then the switch, off by default.
+/// Space turns the switch on and off, each saved at once, uncommitted.
+#[test]
+fn space_on_the_graphify_page_saves_graphify_on_then_off() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, GRAPHIFY_PAGE);
+    keys(&mut s, &[KeyCode::Down; 3]);
+    let buf = render(&s, 160, 45);
+    assert!(
+        find(
+            &buf,
+            "▸ [ ] Turn on graphify (the code graph and the Docs pass)"
+        )
+        .is_some(),
+        "{:#?}",
+        rows(&buf)
+    );
+    let st = s.settings.as_ref().unwrap();
+    let items = st.items();
+    assert_eq!(
+        st.note_of(items[3].0, items[3].1),
+        "On: the code graph kept current in the checkout and each worktree, the Docs pass asked on a new major or minor tag. orqa init installs graphify; /config never does. Space toggles."
+    );
+    // whole in the foot's two lines; the page's text says the install too,
+    // for a narrow terminal that cuts the foot
+    let buf = render(&s, 160, 45);
+    assert!(find(&buf, "Space toggles.").is_some(), "{:#?}", rows(&buf));
+    s.key(key(KeyCode::Char(' ')));
+    assert_eq!(config_json(repo.path()), json!({"graphify": true}));
+    assert_eq!(
+        note(&s),
+        "Turn on graphify (the code graph and the Docs pass): on, saved uncommitted in .orqadence/config.json"
+    );
+    s.key(key(KeyCode::Char(' ')));
+    assert_eq!(config_json(repo.path()), json!({"graphify": false}));
+}
+
+/// The Docs pass's row takes the Stage rows' pickers: codex, then a listed
+/// model, probed, then an effort save in a Stage row's shape; pi, which
+/// graphify installs no skill for, is refused.
+#[test]
+fn picking_the_docs_pass_app_model_and_effort_saves_its_row() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, GRAPHIFY_PAGE);
+    keys(&mut s, &[KeyCode::Enter, KeyCode::Down, KeyCode::Down]);
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        note(&s),
+        "Refused: docs_pass does not run on pi. Nothing changed."
+    );
+    assert!(!repo.path().join(".orqadence/config.json").exists());
+
+    keys(&mut s, &[KeyCode::Enter, KeyCode::Down, KeyCode::Enter]);
+    type_in(&mut s, "6-sol");
+    s.key(key(KeyCode::Enter));
+    await_probe(&mut s);
+    // gpt-6-sol's levels: default, low, medium, high, xhigh.
+    keys(&mut s, &[KeyCode::Down, KeyCode::Down, KeyCode::Enter]);
+    keys(&mut s, &[KeyCode::Down; 3]);
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        config_json(repo.path()),
+        json!({"docs_pass": {"app": "codex", "model": "gpt-6-sol", "effort": "high"}})
+    );
+    assert_eq!(
+        note(&s),
+        "saved: Docs pass codex gpt-6-sol/high, uncommitted in .orqadence/config.json"
+    );
+}
+
+/// The graphify page with the switch on and the row set, and its line on
+/// the left.
+#[test]
+fn the_graphify_page_renders_its_row_and_switch() {
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"graphify": true, "docs_pass": {"app": "codex", "model": "gpt-6-sol", "effort": "high"}}"#,
+    );
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, GRAPHIFY_PAGE);
+    let buf = render(&s, 160, 45);
+    for line in [
+        "graphify  codex",
+        "▸ app                   codex",
+        "  model                 gpt-6-sol  OpenAI",
+        "  effort                high",
+        "  [x] Turn on graphify (the code graph and the Docs pass)",
+        "▸ graphify  on",
+        "never installs it.",
+    ] {
+        assert!(find(&buf, line).is_some(), "{line:?}: {:#?}", rows(&buf));
+    }
+}
+
 /// The countdown takes 0, no countdown, and refuses -1 and text, the text
 /// kept to mend; the runs cap refuses 0. A bad one in config.json is
 /// flagged on the page.
@@ -2376,14 +2473,14 @@ fn the_on_call_page_renders_its_three_rows_and_the_doc_url() {
 }
 
 /// A short terminal drops the PIPELINE's connectors so the left's last
-/// lines, Run and On call, still show.
+/// lines, Run, On call and graphify, still show.
 #[test]
 fn a_short_terminal_shows_every_line_on_the_left() {
     let repo = TempDir::new();
     let mut s = screen_at(apps(""), repo.path());
     type_line(&mut s, "/config");
     let buf = render(&s, 160, 24);
-    for text in ["Run", "On call   off"] {
+    for text in ["Run", "On call   off", "graphify  off"] {
         assert!(find(&buf, text).is_some(), "{text:?}: {:#?}", rows(&buf));
     }
 }

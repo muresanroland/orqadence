@@ -841,6 +841,50 @@ fn preflight_names_each_row_whose_app_is_not_on_path() {
     );
 }
 
+/// The Docs pass's App blocks a run only while graphify is on.
+#[test]
+fn preflight_checks_the_docs_pass_app_only_while_graphify_is_on() {
+    let (repo, home) = (TempDir::new(), TempDir::new());
+    let no_codex = Fake::new(|_, argv| match argv.join(" ").as_str() {
+        "which codex" => Err("codex not found".to_string()),
+        _ => Ok(String::new()),
+    });
+    let config = repo.path().join(".orqadence/config.json");
+    let docs_pass = |body: &str| {
+        write_file(&config, body);
+        preflight(repo.path(), &*no_codex, &home_env(home.path()))
+            .into_iter()
+            .filter(|m| m.starts_with("docs_pass"))
+            .collect::<Vec<String>>()
+    };
+    assert_eq!(
+        docs_pass(r#"{"docs_pass": {"app": "codex"}}"#),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        docs_pass(r#"{"graphify": true, "docs_pass": {"app": "codex"}}"#),
+        ["docs_pass runs on codex, which is not on PATH"]
+    );
+}
+
+/// graphify on but not on PATH is a warning, never a block; off, nothing.
+#[test]
+fn warnings_of_graphify_on_but_not_on_path() {
+    let repo = TempDir::new();
+    let no_graphify = Fake::new(|_, argv| match argv.join(" ").as_str() {
+        "which graphify" => Err("graphify not found".to_string()),
+        _ => Ok(String::new()),
+    });
+    let line = "graphify is on but graphify is not on PATH: run orqa init, or install it with uv tool install graphifyy";
+    let config = repo.path().join(".orqadence/config.json");
+    write_file(&config, r#"{"graphify": false}"#);
+    assert!(!warnings(repo.path(), &*no_graphify).contains(&line.to_string()));
+    write_file(&config, r#"{"graphify": true}"#);
+    assert!(warnings(repo.path(), &*no_graphify).contains(&line.to_string()));
+    let found = Fake::new(|_, _| Ok(String::new()));
+    assert!(!warnings(repo.path(), &*found).contains(&line.to_string()));
+}
+
 /// An installed Stage skill edited to lose a job's placeholder never runs
 /// that job's pick: the preflight warns, naming both.
 #[test]

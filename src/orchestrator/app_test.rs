@@ -3,10 +3,10 @@
 
 use super::app::{
     app, canonical, checks, clash, count, count_in, debate_inputs, extra_review, fallback_row,
-    floor_in, human_merge, labels, review_bots_in, row, runs_on, set_switch, switch, Clash,
-    ExtraReview, Floor, Label, ADDRESS_PR_COMMENTS_AUTO, ADDRESS_PR_COMMENTS_COUNTDOWN,
-    ADDRESS_PR_COMMENTS_RUNS, AGENT_MERGE, BOT_WAIT, IF_LIMITED, MAX_PR_SESSIONS, MAX_TICKETS,
-    REBASE_AUTO, RELEASE_ON,
+    floor_in, graphify, human_merge, labels, review_bots_in, row, runs_on, set_switch, switch,
+    Clash, ExtraReview, Floor, Label, ADDRESS_PR_COMMENTS_AUTO, ADDRESS_PR_COMMENTS_COUNTDOWN,
+    ADDRESS_PR_COMMENTS_RUNS, AGENT_MERGE, BOT_WAIT, DOCS_PASS, GRAPHIFY, IF_LIMITED,
+    MAX_PR_SESSIONS, MAX_TICKETS, REBASE_AUTO, RELEASE_ON,
 };
 use super::stage::{Answer, Ask, Orchestrator, AWAY};
 use super::state::STATUS_PARKED;
@@ -1073,6 +1073,48 @@ fn the_release_row_reads_like_fix_and_its_switch_is_off_unless_set() {
     assert!(!switch(repo.path(), &RELEASE_ON));
     let on = repo_with(&json!({"release_on": true}));
     assert!(switch(on.path(), &RELEASE_ON));
+}
+
+/// graphify is off until config.json sets it true, and turning it on or off
+/// keeps every other key.
+#[test]
+fn graphify_is_off_unless_set_and_its_setter_keeps_the_rest() {
+    assert!(!graphify(repo_with(&json!({})).path()));
+    assert!(!graphify(TempDir::new().path()));
+    let repo = repo_with(&json!({"graphify": true, "fix": {"model": "opus"}}));
+    assert!(graphify(repo.path()));
+    set_switch(repo.path(), &GRAPHIFY, false).unwrap();
+    assert!(!graphify(repo.path()));
+    let doc: Value = serde_json::from_str(
+        &std::fs::read_to_string(repo.path().join(".orqadence/config.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(doc, json!({"graphify": false, "fix": {"model": "opus"}}));
+}
+
+/// The Docs pass's row is claude at its defaults while missing, runs on
+/// claude or codex alone, as graphify installs its skill for those two, and
+/// no label overrides it.
+#[test]
+fn the_docs_pass_row_is_claude_by_default_and_runs_on_claude_or_codex_only() {
+    let said = |repo: &TempDir| row(repo.path(), DOCS_PASS, &[]).map(|r| r.said());
+    assert_eq!(said(&repo_with(&json!({}))), Ok("claude".to_string()));
+    let codex = repo_with(&json!({"docs_pass": {"app": "codex", "effort": "high"}}));
+    assert_eq!(said(&codex), Ok("codex default/high".to_string()));
+    let pi = repo_with(&json!({"docs_pass": {"app": "pi"}}));
+    assert!(said(&pi).is_err_and(|err| err.ends_with("docs_pass does not run on pi")));
+
+    assert_eq!(runs_on(DOCS_PASS, app("claude").unwrap()), Ok(()));
+    assert_eq!(runs_on(DOCS_PASS, app("codex").unwrap()), Ok(()));
+    for other in ["pi", "opencode", "copilot", "cursor"] {
+        assert!(runs_on(DOCS_PASS, app(other).unwrap()).is_err(), "{other}");
+    }
+    let doc = json!({"labels": {"fast": {"kind": "modifier",
+        "rows": {"docs_pass": {"effort": "low"}}}}});
+    assert_eq!(
+        labels(&doc)["fast"],
+        Err("labels fast rows has no row docs_pass".to_string())
+    );
 }
 
 /// hx-1 with the bd labels given.

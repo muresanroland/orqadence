@@ -8,9 +8,9 @@
 //! cloned off the screen thread too, TypeSafe on or off with its key and
 //! the Judgments' floors, the Tickets and PR sessions a run takes at once,
 //! Rebase and Address PR comments' switches, countdown and cap, the
-//! Release's switch, On call's Moshi token, minutes and test push, and the
+//! Release's switch, On call's Moshi token, minutes and test push, the
 //! Ticket labels: each entry of config.json's labels, area or modifier,
-//! with its skills and guidance.
+//! with its skills and guidance, and graphify's switch and Docs pass row.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -27,8 +27,8 @@ use crate::on_call::{self, OnCall, DEFAULT_MINUTES};
 use crate::orchestrator::app::{
     self, app, App, Check, Count, Floor, Label, Model, Row, Switch, ADDRESS_PR_COMMENTS_AUTO,
     ADDRESS_PR_COMMENTS_COUNTDOWN, ADDRESS_PR_COMMENTS_RUNS, AGENT_MERGE, APPS, BOT_WAIT,
-    IF_LIMITED, MAX_PR_SESSIONS, MAX_TICKETS, REBASE_AUTO, RELEASE, RELEASE_ON, REVIEW_BOTS,
-    REVIEW_BOTS_KEY,
+    DOCS_PASS, GRAPHIFY, IF_LIMITED, MAX_PR_SESSIONS, MAX_TICKETS, REBASE_AUTO, RELEASE,
+    RELEASE_ON, REVIEW_BOTS, REVIEW_BOTS_KEY, UNLABELLED,
 };
 use crate::orchestrator::judgment::{PLAN_FLOOR, WAKE_FLOOR};
 use crate::orchestrator::pipeline;
@@ -46,7 +46,7 @@ const SKILL: &str = "; saved uncommitted: Tickets take the change once it is mer
 
 /// One row of config.json: its key, its name, the lead of its settings'
 /// labels on a section's page ("" for the section's own row), the section
-/// it sits in, and what it runs.
+/// it sits in (GRAPHIFY_PAGE for the Docs pass), and what it runs.
 pub(crate) struct ConfigRow {
     pub(crate) key: &'static str,
     pub(crate) name: &'static str,
@@ -55,7 +55,7 @@ pub(crate) struct ConfigRow {
     pub(crate) note: &'static str,
 }
 
-pub(crate) const ROWS: [ConfigRow; 10] = [
+pub(crate) const ROWS: [ConfigRow; 11] = [
     ConfigRow {
         key: "implement",
         name: "Implement",
@@ -126,6 +126,13 @@ pub(crate) const ROWS: [ConfigRow; 10] = [
         section: 6,
         note: "Raises the Target repo's version, adds a changelog entry where the repo keeps one, and opens the version PR.",
     },
+    ConfigRow {
+        key: DOCS_PASS,
+        name: "Docs pass",
+        lead: "",
+        section: GRAPHIFY_PAGE,
+        note: "graphify's LLM pass over the docs and images, on claude or codex: graphify installs its skill for those two.",
+    },
 ];
 
 /// The Pipeline's sections: title, short name on the left, description.
@@ -163,19 +170,26 @@ pub(crate) const SECTIONS: [(&str, &str, &str); 7] = [
     ),
 ];
 
+/// The graphify page's title and description, as SECTIONS has a section's.
+pub(crate) const GRAPHIFY_SECTION: (&str, &str) = (
+    "graphify",
+    "The code graph Orqadence keeps current with graphify, and the Docs pass, graphify's LLM pass over the docs and images, on a new major or minor tag. orqa init installs graphify; /config never installs it.",
+);
+
 /// The Rebase, Address PR comments and Release sections, whose pages have a
 /// switch.
 pub(crate) const REBASE_PAGE: usize = 4;
 pub(crate) const ADDRESS_PR_COMMENTS_PAGE: usize = 5;
 pub(crate) const RELEASE_PAGE: usize = 6;
 /// The Apps page's place on the left, after the Pipeline's sections, and
-/// the Skills, Labels, TypeSafe, Run and On call pages' after it.
+/// the Skills, Labels, TypeSafe, Run, On call and graphify pages' after it.
 pub(crate) const APPS_PAGE: usize = SECTIONS.len();
 pub(crate) const SKILLS_PAGE: usize = APPS_PAGE + 1;
 pub(crate) const LABELS_PAGE: usize = APPS_PAGE + 2;
 pub(crate) const TYPESAFE_PAGE: usize = APPS_PAGE + 3;
 pub(crate) const RUN_PAGE: usize = APPS_PAGE + 4;
 pub(crate) const ON_CALL_PAGE: usize = APPS_PAGE + 5;
+pub(crate) const GRAPHIFY_PAGE: usize = APPS_PAGE + 6;
 /// The row the Extra review runs on: the Review's.
 pub(crate) const REVIEW_ROW: usize = 1;
 /// The Skills page's rows before its skills: the location and your
@@ -235,11 +249,13 @@ pub(crate) static NUMBERS: [Number; 5] = [
     },
 ];
 
-/// Each Stage page's switch: the section and the Switch.
-const SWITCHES: [(usize, &Switch); 3] = [
+/// Each Stage page's switch, and the graphify page's: the section and the
+/// Switch.
+const SWITCHES: [(usize, &Switch); 4] = [
     (REBASE_PAGE, &REBASE_AUTO),
     (ADDRESS_PR_COMMENTS_PAGE, &ADDRESS_PR_COMMENTS_AUTO),
     (RELEASE_PAGE, &RELEASE_ON),
+    (GRAPHIFY_PAGE, &GRAPHIFY),
 ];
 
 /// What turning TypeSafe off changes, asked first.
@@ -1145,6 +1161,7 @@ impl Settings {
             Field::Skills | Field::Template | Field::ExtraSkill => return self.labels_note(),
             Field::Switch(switch) if *switch == RELEASE_ON => "Enter or Space turns it on or off, saved at once, uncommitted.",
             Field::Switch(switch) if *switch == AGENT_MERGE => "Enter or Space turns it on or off, saved at once, uncommitted; only with PR comments and failing checks opened by themselves. On, the Orchestrator merges a Ticket's PR once its checks are green, the ticked review bots are done and every PR comment is fixed or answered; security, db and infra Tickets still wait for you.",
+            Field::Switch(switch) if *switch == GRAPHIFY => return "On: the code graph kept current in the checkout and each worktree, the Docs pass asked on a new major or minor tag. orqa init installs graphify; /config never does. Space toggles.".to_string(),
             Field::Bot(_) => "A review bot this repo has: Agent merge waits for its review. Enter or Space ticks it, saved at once, uncommitted.",
             Field::Switch(_) => "Enter or Space turns it on or off, saved at once, uncommitted; off, the poll only says it in a line and the command still works by hand.",
             Field::Number(n) => return number_note(n),
@@ -1274,8 +1291,8 @@ impl Settings {
 
     /// The open label's page, row by row: kind, skills, guidance, PR
     /// template and whether a human merges; an Area label's Extra review;
-    /// then the Stage rows it overrides, all but the Release's. A label that
-    /// cannot be read has the first three only.
+    /// then the Stage rows it overrides, all but the Release's and the Docs
+    /// pass's. A label that cannot be read has the first three only.
     pub(crate) fn label_items(&self) -> Vec<LabelItem> {
         use LabelItem::{
             Debate, Extra, ExtraSkill, Guidance, HumanMerge, Kind, Position, Row, Skills, Template,
@@ -1289,7 +1306,7 @@ impl Settings {
             items.extend([ExtraSkill, Position, Debate]);
             items.extend(FIELDS.map(Extra));
         }
-        let rows = (0..ROWS.len()).filter(|&r| ROWS[r].key != RELEASE);
+        let rows = (0..ROWS.len()).filter(|&r| !UNLABELLED.contains(&ROWS[r].key));
         items.extend(rows.flat_map(|r| FIELDS.map(|f| Row(r, f))));
         items
     }
@@ -1841,7 +1858,7 @@ impl Screen {
         if !st.open {
             match code {
                 KeyCode::Up => st.section = st.section.saturating_sub(1),
-                KeyCode::Down => st.section = (st.section + 1).min(ON_CALL_PAGE),
+                KeyCode::Down => st.section = (st.section + 1).min(GRAPHIFY_PAGE),
                 KeyCode::Right | KeyCode::Enter => {
                     st.open = true;
                     st.setting = 0;
