@@ -117,14 +117,17 @@ impl Tools for Exec {
             stderr: String::new(),
             stdout: String::new(),
         };
-        let mut child = Command::new(name)
-            .args(args)
+        let mut cmd = Command::new(name);
+        cmd.args(args)
             .current_dir(dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|err| fail(err.to_string()))?;
+            .stderr(Stdio::piped());
+        // Its own process group, so the command's descendants can be killed
+        // with it and never hold the pipes open past the limit.
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+        let mut child = cmd.spawn().map_err(|err| fail(err.to_string()))?;
         // Read both pipes on threads so a chatty command never blocks on a
         // full pipe while it is polled.
         let drain = |pipe: Option<Box<dyn Read + Send>>| {
@@ -143,19 +146,33 @@ impl Tools for Exec {
             match child.try_wait().map_err(|err| fail(err.to_string()))? {
                 Some(status) => break status,
                 None if Instant::now() >= deadline => {
+                    kill_group(child.id());
                     let _ = child.kill();
                     let _ = child.wait();
-                    // The readers are left behind: a grandchild may still
-                    // hold the pipes open.
                     return Err(fail(format!("timed out after {}s", limit.as_secs_f32())));
                 }
                 None => thread::sleep(Duration::from_millis(50)),
             }
         };
+        // A descendant left running would keep the readers blocked.
+        kill_group(child.id());
         let stdout = stdout.join().unwrap_or_default();
         let stderr = stderr.join().unwrap_or_default();
         finish(command, status, &stdout, &stderr)
     }
+}
+
+/// Kills the process group `pgid` leads; best effort, a no-op off unix.
+fn kill_group(pgid: u32) {
+    #[cfg(unix)]
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{pgid}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    #[cfg(not(unix))]
+    let _ = pgid;
 }
 
 /// The test double for the Tools seam.

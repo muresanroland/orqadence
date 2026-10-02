@@ -79,3 +79,27 @@ fn run_within_kills_a_command_that_outlasts_its_limit() {
     );
     assert_eq!(out.as_deref(), Ok("hi\n"));
 }
+
+#[test]
+fn run_within_is_not_held_by_a_descendant_holding_the_pipes() {
+    let dir = TempDir::new();
+    let started = std::time::Instant::now();
+    let out = Exec.run_within(
+        dir.path(),
+        &["sh", "-c", "sleep 30 & echo hi"],
+        std::time::Duration::from_secs(5),
+    );
+    assert_eq!(out.as_deref(), Ok("hi\n"));
+    assert!(started.elapsed().as_secs() < 4, "it waited for the sleep");
+
+    let started = std::time::Instant::now();
+    let err = Exec
+        .run_within(
+            dir.path(),
+            &["sh", "-c", "sleep 30 & sleep 30"],
+            std::time::Duration::from_millis(100),
+        )
+        .unwrap_err();
+    assert!(started.elapsed().as_secs() < 4, "it waited for the sleeps");
+    assert!(err.status.starts_with("timed out"), "{err}");
+}
