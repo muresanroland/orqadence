@@ -38,7 +38,7 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 | dependents now wait on a merge | *on each open dependent:* waiting for PR #12 to merge (Ticket 5) |
 | PR conflicts | PR #12 conflicts with main, /rebase resolves it · *with rebase_auto on, its Rebase starts:* PR #12 conflicts with main, rebasing it |
 | PR session queued | rebase waits for a slot · address pr comments waits for a slot *(past max_pr_sessions, or behind the Ticket's own session; it starts as one ends)* |
-| merged by the Orchestrator | PR #12 merged by Orqadence *(Agent merge, ADR 0007: its checks green, the review bots' reviews in, every PR comment answered; the next poll says merged, Ticket closed)* |
+| merged by the Orchestrator | PR #12 merged by Orqadence *(Agent merge, ADR 0007: its checks green and, unless a No-review pull request, the review bots' reviews in and every PR comment answered; the next poll says merged, Ticket closed)* |
 | merge refused by GitHub | parked: PR #12 not merged: `gh's message` *(branch protection, a required approval, a commit pushed since the poll read the PR; the PR stays open, still polled for a merge; /continue @ticket tries the merge again)* · *a base branch with a merge queue, which gh is not asked to join:* parked: PR #12 not merged: its base branch has a merge queue |
 | merged | merged, Ticket closed |
 | PR closed unmerged | parked: PR #12 closed without merging |
