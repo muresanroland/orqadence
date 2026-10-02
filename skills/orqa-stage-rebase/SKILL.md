@@ -14,7 +14,7 @@ You are in a fresh session inside the kept worktree of a Ticket whose pull reque
    Use the {{merge-conflicts}} skill for the rebase.
    When a conflict cannot keep both intents, stop mid-rebase and ask (see the end): the hunk, what each side meant, and the options ours, theirs, or a merge you describe. The answer resumes the rebase. Never abort it.
 3. Run the repo's tests until they pass. Commit what they needed.
-4. Push to the same PR with `git push --force-with-lease`. Never open a second PR, never merge, never close the Ticket.
+4. Push to the same PR with `git push --force-with-lease`. Never open a second PR, never close the Ticket. The Orchestrator merges, never a session.
 5. Check `gh pr view <PR> --json mergeable` reports `MERGEABLE` (GitHub may need a few seconds after the push).
 
 ## Result file

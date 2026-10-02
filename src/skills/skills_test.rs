@@ -485,3 +485,26 @@ fn stage_address_pr_comments_recaptures_screenshots_and_refreshes_label_sections
         );
     }
 }
+
+/// The Orchestrator merges, never a session (ADR 0007): the skills whose
+/// sessions push to a PR say so, and no shipped skill names `gh pr merge`
+/// except to forbid it.
+#[test]
+fn no_skill_merges_the_orchestrator_does() {
+    for name in [
+        "orqa-create-pr",
+        "orqa-stage-fix",
+        "orqa-stage-rebase",
+        "orqa-stage-address-pr-comments",
+    ] {
+        assert!(
+            skill(name).contains("The Orchestrator merges, never a session"),
+            "{name}"
+        );
+    }
+    for (name, text) in SKILLS {
+        for line in text.lines().filter(|line| line.contains("gh pr merge")) {
+            assert!(line.contains("No `gh pr merge`"), "{name}: {line}");
+        }
+    }
+}

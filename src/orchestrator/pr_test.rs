@@ -7,12 +7,12 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::app::{set_switch, REBASE_AUTO};
+use super::app::{set_review_bots, set_switch, ADDRESS_PR_COMMENTS_AUTO, AGENT_MERGE, REBASE_AUTO};
 use super::pr::{Item, Pr};
 use super::scheduler_test::with_deps;
 use super::stage::{Orchestrator, ADDRESS_PR_COMMENTS, AWAY, REBASE};
 use super::state::{STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
-use super::world::{new_world, set_clock, BdTicket, World};
+use super::world::{new_world, set_clock, spawn_epic, BdTicket, World};
 
 /// Greptile: resolved threads answered with the older marker, six
 /// outside-diff findings, a summary without a Findings list.
@@ -703,4 +703,257 @@ fn dependents_wait_on_the_merge_once_the_pr_is_settled() {
     serve(&w, &pr);
     poll(&o);
     assert!(!settled(), "conflicting");
+}
+
+/// Agent merge on, with `bots` the repo's review bots.
+fn agent_merge(w: &World, bots: &[&str]) {
+    set_switch(&w.repo, &ADDRESS_PR_COMMENTS_AUTO, true).unwrap();
+    set_switch(&w.repo, &AGENT_MERGE, true).unwrap();
+    set_review_bots(&w.repo, bots).unwrap();
+}
+
+/// Polls `pr` until its head has held a minute: the poll that may merge it.
+fn settle(w: &World, o: &Orchestrator, clock: &Mutex<DateTime<Local>>, pr: &Value) {
+    serve(w, pr);
+    poll(o);
+    later(clock, 60);
+    poll(o);
+}
+
+/// The merges asked of gh so far.
+fn merges(w: &World) -> Vec<String> {
+    w.called("gh pr merge")
+}
+
+/// Under Agent merge a reviewed PR, its bot's review in, every PR comment
+/// answered and its checks green, is merged once with the repo's method; the
+/// next poll's merged handling closes the Ticket.
+#[test]
+fn a_reviewed_pr_all_answered_and_green_merges_once_then_its_ticket_closes() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    settle(&w, &o, &clock, &open(PR65, "a"));
+    let merge = format!("gh pr merge {URL} --squash --delete-branch --repo o/r");
+    assert_eq!(merges(&w), [merge]);
+    let said = w.lines();
+    assert!(
+        said.contains(&"hx-1 PR #hx-1 merged by Orqadence".to_string()),
+        "{said:?}"
+    );
+    assert_eq!(o.ticket("hx-1").status, STATUS_PR_OPEN, "the next poll's");
+
+    poll(&o);
+    assert_eq!(o.ticket("hx-1").status, STATUS_MERGED);
+    assert_eq!(w.called("bd close hx-1").len(), 1);
+    poll(&o);
+    assert_eq!(merges(&w).len(), 1);
+}
+
+/// Agent merge off, the Orchestrator never merges: a human does (ADR 0002).
+#[test]
+fn agent_merge_off_never_merges() {
+    let (w, o, clock) = polled();
+    set_review_bots(&w.repo, &["coderabbit"]).unwrap();
+    settle(&w, &o, &clock, &open(PR65, "a"));
+    assert!(o.ticket("hx-1").settled);
+    assert_eq!(merges(&w), [""; 0]);
+}
+
+/// A Ticket whose PR is human-merge is never merged, even under Agent merge.
+#[test]
+fn a_human_merge_pr_is_never_merged() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    o.update("hx-1", |ts| ts.human_merge = true);
+    settle(&w, &o, &clock, &open(PR65, "a"));
+    assert!(o.ticket("hx-1").settled);
+    assert_eq!(merges(&w), [""; 0]);
+}
+
+/// A review by `login`, as the poll's reply holds it.
+fn review(login: &str) -> Value {
+    json!({"databaseId": 7, "author": {"login": login, "__typename": "Bot"}, "body": ""})
+}
+
+/// A human's changes-requested review blocks the merge until it is gone.
+#[test]
+fn changes_requested_blocks_the_merge() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    let mut pr = open(PR65, "a");
+    pr["reviewDecision"] = json!("CHANGES_REQUESTED");
+    settle(&w, &o, &clock, &pr);
+    assert_eq!(merges(&w), [""; 0]);
+
+    pr["reviewDecision"] = json!("APPROVED");
+    serve(&w, &pr);
+    poll(&o);
+    assert_eq!(merges(&w).len(), 1);
+}
+
+/// A reviewed PR waits for a review from each bot review_bots lists, on any
+/// commit, and for every PR comment to be answered.
+#[test]
+fn a_reviewed_pr_waits_for_each_listed_bot_and_for_its_open_items() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit", "greptile"]);
+    let mut pr = open(PR65, "a");
+    settle(&w, &o, &clock, &pr);
+    assert!(o.ticket("hx-1").settled);
+    assert_eq!(merges(&w), [""; 0], "Greptile has not reviewed");
+
+    let reviews = pr["reviews"]["nodes"].as_array_mut().unwrap();
+    reviews.push(review("greptile-apps"));
+    thread(&mut pr, 0)["isResolved"] = json!(false);
+    serve(&w, &pr);
+    poll(&o); // offers the thread
+    poll(&o);
+    assert!(o.ticket("hx-1").settled);
+    assert_eq!(merges(&w), [""; 0], "a thread is open");
+
+    thread(&mut pr, 0)["isResolved"] = json!(true);
+    serve(&w, &pr);
+    poll(&o);
+    assert_eq!(merges(&w).len(), 1);
+}
+
+/// A No-review pull request waits for no bot: it merges once its checks
+/// are green and GitHub calls it mergeable.
+#[test]
+fn a_no_review_pr_merges_on_green_without_its_bots() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit", "greptile"]);
+    o.update("hx-1", |ts| ts.no_review = true);
+    let mut pr = open(PR65, "a");
+    pr["reviews"]["nodes"] = json!([]);
+    pr["statusCheckRollup"]["contexts"]["nodes"][0]["state"] = json!("FAILURE");
+    settle(&w, &o, &clock, &pr);
+    poll(&o);
+    assert!(o.ticket("hx-1").settled);
+    assert_eq!(merges(&w), [""; 0], "a check failed");
+
+    pr["statusCheckRollup"]["contexts"]["nodes"][0]["state"] = json!("SUCCESS");
+    pr["mergeable"] = json!("UNKNOWN");
+    serve(&w, &pr);
+    poll(&o);
+    assert!(o.ticket("hx-1").settled);
+    assert_eq!(merges(&w), [""; 0], "GitHub has not said it is mergeable");
+
+    pr["mergeable"] = json!("MERGEABLE");
+    serve(&w, &pr);
+    poll(&o);
+    assert_eq!(merges(&w).len(), 1);
+}
+
+/// hx-1's PR merged in a repo whose settings allow `squash` and `rebase`:
+/// the method gh was given.
+fn merged_with(squash: bool, rebase: bool) -> String {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    w.hook(move |_, argv| {
+        let settings = json!({"full_name": "o/r", "allow_squash_merge": squash,
+            "allow_rebase_merge": rebase, "allow_merge_commit": true});
+        (argv == ["gh", "api", "repos/{owner}/{repo}"]).then(|| Ok(settings.to_string()))
+    });
+    settle(&w, &o, &clock, &open(PR65, "a"));
+    let merges = merges(&w);
+    assert_eq!(merges.len(), 1, "{merges:?}");
+    merges[0].split(' ').nth(4).unwrap().to_string()
+}
+
+/// The merge takes the repo's own method: squash, else rebase, else a
+/// merge commit.
+#[test]
+fn a_repo_that_disallows_squash_is_rebased_and_one_that_disallows_both_gets_a_merge_commit() {
+    assert_eq!(merged_with(true, true), "--squash");
+    assert_eq!(merged_with(false, true), "--rebase");
+    assert_eq!(merged_with(false, false), "--merge");
+}
+
+/// The repo's method is read once per run, however many PRs merge.
+#[test]
+fn the_merge_method_is_read_once_per_run() {
+    let (w, mut o) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
+    let noon = Local.with_ymd_and_hms(2026, 9, 30, 12, 0, 0).unwrap();
+    let clock = set_clock(&mut o.cfg, noon);
+    agent_merge(&w, &["coderabbit"]);
+    for ticket in ["hx-1", "hx-2"] {
+        let url = format!("https://example.test/pr/{ticket}");
+        w.lock()
+            .prs
+            .insert(url.clone(), open(PR65, "a").to_string());
+        o.update(ticket, |ts| {
+            ts.status = STATUS_PR_OPEN.to_string();
+            ts.pr = url;
+        });
+    }
+    o.poll_merges();
+    later(&clock, 60);
+    o.poll_merges();
+    assert_eq!(merges(&w).len(), 2);
+    assert_eq!(w.called("gh api repos/").len(), 1);
+}
+
+const REFUSAL: &str =
+    "Pull request o/r#1 is not mergeable: the base branch policy prohibits the merge.";
+
+/// hx-1 parked by a merge GitHub refused.
+fn refused() -> (Arc<World>, Orchestrator, Value) {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    w.fail_once("gh pr merge", REFUSAL);
+    let pr = open(PR65, "a");
+    settle(&w, &o, &clock, &pr);
+    (w, o, pr)
+}
+
+/// GitHub refusing the merge parks the Ticket with gh's message. Its PR
+/// stays open, still polled: nothing is asked of it again, and merged by
+/// hand it closes its Ticket.
+#[test]
+fn a_merge_github_refuses_parks_the_ticket_with_ghs_message_its_pr_still_polled() {
+    let (w, o, mut pr) = refused();
+    let ts = o.ticket("hx-1");
+    let reason = format!("PR #hx-1 not merged: {REFUSAL}");
+    assert_eq!((ts.status.as_str(), &ts.reason), (STATUS_PARKED, &reason));
+    let said = w.lines();
+    assert!(said.contains(&format!("hx-1 parked: {reason}")), "{said:?}");
+    poll(&o);
+    assert_eq!(merges(&w).len(), 1, "asked again while parked");
+
+    pr["state"] = json!("MERGED");
+    serve(&w, &pr);
+    poll(&o);
+    assert_eq!(o.ticket("hx-1").status, STATUS_MERGED);
+}
+
+/// /continue gives a Ticket a refused merge parked back to the poll, never
+/// to its Pipeline: the merge is tried again.
+#[test]
+fn continue_gives_a_ticket_parked_by_a_refused_merge_back_to_the_poll() {
+    let (w, o, _) = refused();
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+    o.command("continue-hx-1");
+    w.await_line("hx-1 merged, Ticket closed");
+    run.wait();
+    o.wait_in_flight();
+    assert_eq!(merges(&w).len(), 2);
+    assert_eq!(w.called("herdr agent start"), [""; 0]);
+}
+
+/// A merge gh took is not asked twice while the PR still reads open, as
+/// one a merge queue holds does.
+#[test]
+fn a_merge_gh_took_is_not_asked_twice_while_the_pr_reads_open() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    w.hook(|_, argv| {
+        argv.starts_with(&["gh", "pr", "merge"])
+            .then(|| Ok(String::new()))
+    });
+    settle(&w, &o, &clock, &open(PR65, "a"));
+    poll(&o);
+    assert_eq!(o.ticket("hx-1").status, STATUS_PR_OPEN);
+    assert_eq!(merges(&w).len(), 1);
 }

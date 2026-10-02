@@ -64,6 +64,11 @@ pub(crate) struct BdDependency {
 /// work on it: a bot's context appears seconds after a push.
 const QUIET: chrono::TimeDelta = chrono::TimeDelta::seconds(60);
 
+/// The stage of a Ticket Parked by a merge GitHub refused. No Stage runs
+/// under it: its PR stays open, polled for its merge or close alone, and
+/// /continue gives it back to the poll, which tries the merge again.
+const MERGE: &str = "merge";
+
 /// What a Ticket's thread runs: its Pipeline or a PR session.
 type Work = fn(&Orchestrator, &str);
 
@@ -382,8 +387,18 @@ impl Orchestrator {
                 if busy(&ticket) {
                     continue;
                 }
+                let ts = self.ticket(&ticket);
+                if ts.stage == MERGE {
+                    // back to the poll, which tries its merge again
+                    self.update(&ticket, |ts| {
+                        ts.status = STATUS_PR_OPEN.to_string();
+                        ts.stage.clear();
+                        ts.reason.clear();
+                    });
+                    continue;
+                }
                 // one going back to its PR Stage takes a PR-session slot
-                match pr_stage(&self.ticket(&ticket)) {
+                match pr_stage(&ts) {
                     Some(st) if pr_sessions() < max_pr => {
                         launch(&ticket, Some(st.name), Orchestrator::continue_pr)
                     }
@@ -501,7 +516,10 @@ impl Orchestrator {
             .unwrap()
             .tickets
             .iter()
-            .filter(|(_, ts)| ts.status == STATUS_PR_OPEN || pr_stage(ts).is_some())
+            .filter(|(_, ts)| {
+                let refused = ts.status == STATUS_PARKED && ts.stage == MERGE;
+                ts.status == STATUS_PR_OPEN || pr_stage(ts).is_some() || refused
+            })
             .map(|(id, ts)| (id.clone(), ts.clone()))
             .collect();
         let (tools, repo) = (&self.cfg.tools, &self.cfg.repo);
@@ -600,9 +618,90 @@ impl Orchestrator {
             if flipped {
                 self.wait_dependents(&ticket, &ts.pr);
             }
+            if settled {
+                self.merge(&ticket, &ts, &pr);
+            }
             quiet.extend(fresh.map(|items| (ticket, items)));
         }
         quiet
+    }
+
+    /// Agent merge (ADR 0007): merges a Ticket's settled PR, never a
+    /// human-merge one, once its checks are green, GitHub calls it
+    /// mergeable and no review asks for changes; a reviewed PR also once
+    /// each bot of review_bots has reviewed it and no item is open. Until
+    /// then it waits. With the repo's own method, never --admin, never
+    /// --auto. --repo keeps gh off the local branch, which the Ticket's
+    /// worktree holds: the next poll's merged handling removes both.
+    fn merge(&self, ticket: &str, ts: &TicketState, pr: &Pr) {
+        let repo = &self.cfg.repo;
+        if ts.human_merge || ts.merge_asked || !app::switch(repo, &app::AGENT_MERGE) {
+            return;
+        }
+        let blocked = pr.review_decision.as_deref() == Some("CHANGES_REQUESTED");
+        if !pr.green() || pr.mergeable != "MERGEABLE" || blocked {
+            return;
+        }
+        if !ts.no_review {
+            // bots that cannot be read are never read as no bot
+            let bots = app::read(repo).and_then(|(_, doc)| app::review_bots_in(&doc));
+            let reviewed = bots.is_ok_and(|bots| bots.iter().all(|bot| pr.reviewed_by(bot)));
+            if !reviewed || !pr.items().is_empty() {
+                return;
+            }
+        }
+        let (name, method) = match self.merge_method() {
+            Ok(found) => found,
+            Err(err) => return self.log(ticket, &format!("merge method not read: {err}")),
+        };
+        let argv = [
+            "gh",
+            "pr",
+            "merge",
+            &ts.pr,
+            method,
+            "--delete-branch",
+            "--repo",
+            name,
+        ];
+        let number = pr_ref(&ts.pr);
+        match self.cfg.tools.run(repo, &argv) {
+            Ok(_) => {
+                self.update(ticket, |ts| ts.merge_asked = true);
+                self.report(ticket, &format!("{number} merged by Orqadence"));
+            }
+            // GitHub refused: branch protection, a required approval
+            Err(err) => {
+                self.update(ticket, |ts| {
+                    ts.stage = MERGE.to_string();
+                    ts.round = 0;
+                });
+                self.park_live(ticket, &format!("{number} not merged: {}", err.stderr));
+            }
+        }
+    }
+
+    /// The Target repo on GitHub, owner/name, and its own merge method as
+    /// gh's flag: squash where the repo allows it, else rebase, else a merge
+    /// commit. Read once per run; a read that fails is tried again.
+    fn merge_method(&self) -> Result<(&str, &'static str), String> {
+        if let Some((name, method)) = self.merge_method.get() {
+            return Ok((name, method));
+        }
+        let argv = ["gh", "api", "repos/{owner}/{repo}"];
+        let out = self.cfg.tools.run(&self.cfg.repo, &argv);
+        let repo: serde_json::Value = serde_json::from_str(&out.map_err(|err| err.to_string())?)
+            .map_err(|err| err.to_string())?;
+        let name = repo["full_name"].as_str().ok_or("no full_name")?;
+        let method = if repo["allow_squash_merge"] == true {
+            "--squash"
+        } else if repo["allow_rebase_merge"] == true {
+            "--rebase"
+        } else {
+            "--merge"
+        };
+        let (name, method) = (self.merge_method).get_or_init(|| (name.to_string(), method));
+        Ok((name, method))
     }
 
     /// An open PR's items not offered before, once its head is quiet and

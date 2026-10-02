@@ -9,7 +9,7 @@ use serde::Deserialize;
 /// reads for its marker rule. It costs 1 point: GitHub counts connections,
 /// not their size.
 pub(crate) const QUERY: &str = "query($url:URI!){resource(url:$url){...on PullRequest{
-  state mergeable headRefOid mergeCommit{oid}
+  state mergeable reviewDecision headRefOid mergeCommit{oid}
   statusCheckRollup{commit{oid} state contexts(first:100){nodes{
     ...on CheckRun{name status conclusion startedAt
       checkSuite{app{slug} workflowRun{event workflow{name}}}}
@@ -25,6 +25,8 @@ pub(crate) const QUERY: &str = "query($url:URI!){resource(url:$url){...on PullRe
 pub(crate) struct Pr {
     pub(crate) state: String,
     pub(crate) mergeable: String,
+    /// CHANGES_REQUESTED while a human's review asks for changes.
+    pub(crate) review_decision: Option<String>,
     pub(crate) head_ref_oid: String,
     merge_commit: Option<Commit>,
     status_check_rollup: Option<Rollup>,
@@ -160,6 +162,24 @@ impl Pr {
     /// bucket.
     pub(crate) fn busy(&self) -> bool {
         self.contexts().iter().any(|c| pending(c.state()))
+    }
+
+    /// The head's checks are green: none failed, none pending.
+    pub(crate) fn green(&self) -> bool {
+        let red = |c: &&Context| failed(c.state()) || pending(c.state());
+        !self.contexts().iter().any(red)
+    }
+
+    /// Whether the review bot, as review_bots names it, has reviewed the
+    /// PR, on any commit: a review of its own, not a PR comment, which may
+    /// only say it was skipped or rate limited.
+    pub(crate) fn reviewed_by(&self, bot: &str) -> bool {
+        let login = match bot {
+            "coderabbit" => "coderabbitai",
+            "greptile" => "greptile-apps",
+            other => other,
+        };
+        self.reviews.nodes.iter().any(|r| r.by(login))
     }
 
     /// Its open items, most severe first: unresolved threads, the bots'
