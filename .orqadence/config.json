@@ -14,6 +14,10 @@
     "effort": "high",
     "model": "opus"
   },
+  "implement": {
+    "effort": "high",
+    "model": "opus"
+  },
   "labels": {
     "architecture": {
       "guidance": "Record a decision as an ADR and a new term in CONTEXT.md.",
