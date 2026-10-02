@@ -363,8 +363,8 @@ pub(crate) struct Screen {
     docs_sender: Sender<(String, bool)>,
     docs_receiver: Receiver<(String, bool)>,
     /// The Docs pass's graphify tab once its thread has made it, which
-    /// /exit closes while docs_tag is set.
-    docs_tab: Arc<Mutex<Option<String>>>,
+    /// /exit cancels and closes while docs_tag is set.
+    docs_tab: Arc<Mutex<graphify::DocsTab>>,
     /// True while a Docs pass's thread runs: the checks leave graph.json to it.
     docs_live: Arc<Mutex<bool>>,
     /// A release downloaded while a run holds the lock: installed when it ends.
@@ -633,7 +633,7 @@ impl Screen {
     /// poll(); it never holds the run.
     fn run_docs_pass(&mut self, tag: String) {
         self.docs_tag = Some(tag.clone());
-        *self.docs_tab.lock().unwrap() = None;
+        *self.docs_tab.lock().unwrap() = graphify::DocsTab::default();
         let (tools, repo, workspace, tick, tx, docs_tab, docs_live) = (
             self.cfg.tools.clone(),
             self.cfg.repo.clone(),
@@ -648,7 +648,6 @@ impl Screen {
             // starts after its graph.json
             *docs_live.lock().unwrap() = true;
             let say = |line| _ = tx.send((line, false));
-            let opened = |tab: &str| *docs_tab.lock().unwrap() = Some(tab.to_string());
             let last = graphify::docs_pass(
                 &*tools,
                 &repo,
@@ -657,7 +656,7 @@ impl Screen {
                 tick,
                 graphify::DOCS_PASS_LIMIT,
                 &say,
-                &opened,
+                &docs_tab,
             );
             *docs_live.lock().unwrap() = false;
             let _ = tx.send((last, true));
@@ -729,7 +728,12 @@ impl Screen {
     pub(crate) fn close(&mut self) {
         // ponytail: a tab still being created goes on with its thread, the
         // process ends; the next check asks again and its tab is a new one
-        let tab = self.docs_tab.lock().unwrap().take();
+        // cancelled under the lock the pass records under: it records nothing after
+        let tab = {
+            let mut docs = self.docs_tab.lock().unwrap();
+            docs.cancelled = true;
+            docs.tab.take()
+        };
         if let (Some(_), Some(tab)) = (&self.docs_tag, tab) {
             let _ = herdr(&*self.cfg.tools, &self.cfg.repo, &["tab", "close", &tab]);
         }

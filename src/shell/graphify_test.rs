@@ -377,7 +377,11 @@ fn idle_without_ever_working_records_nothing_even_with_a_newer_graph() {
 
 #[test]
 fn exit_mid_pass_closes_its_tab_and_records_nothing() {
-    let d = docs(&["working"; 50]);
+    // the session goes on to a newer graph after /exit: the pass, cancelled,
+    // records nothing
+    let mut gets = vec!["working"; 500];
+    gets.push("built");
+    let d = docs(&gets);
     let mut s = screen_at(d.fake.clone(), d.repo.path());
     check(&mut s, &d, "v1.4.0");
     s.command("y");
@@ -393,6 +397,7 @@ fn exit_mid_pass_closes_its_tab_and_records_nothing() {
         calls.contains(&"herdr tab close t9".to_string()),
         "{calls:?}"
     );
+    await_line(&mut s, UNFINISHED);
     assert_eq!(handled(d.repo.path()), None);
 }
 
@@ -409,7 +414,7 @@ fn a_pass_still_working_at_its_limit_records_nothing() {
         Duration::from_millis(1),
         Duration::from_millis(30),
         &|_| {},
-        &|_| {},
+        &Default::default(),
     );
     assert_eq!(last, UNFINISHED);
     assert_eq!(handled(d.repo.path()), None);

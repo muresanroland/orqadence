@@ -150,10 +150,10 @@ fn platforms(repo: &Path) -> BTreeSet<&'static str> {
 /// it is checked out its cwd, prompted with graphify's skill over `.
 /// --update`. Done once the session, idle after working, has left a
 /// graph.json newer than the pass: the X.Y is recorded and the tab closes.
-/// Anything else, past `limit` too, records nothing, so the next check
-/// asks again, and leaves the tab open to read why. `say` takes the
-/// started line and a start's error, `opened` the tab once made; the
-/// pass's last RECENT line comes back.
+/// Anything else, past `limit` too or after close() has cancelled it,
+/// records nothing, so the next check asks again, and leaves the tab open
+/// to read why. `say` takes the started line and a start's error,
+/// `docs_tab` the tab once made; the pass's last RECENT line comes back.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn docs_pass(
     tools: &dyn Tools,
@@ -163,13 +163,14 @@ pub(crate) fn docs_pass(
     tick: Duration,
     limit: Duration,
     say: &dyn Fn(String),
-    opened: &dyn Fn(&str),
+    docs_tab: &Mutex<DocsTab>,
 ) -> String {
     let unfinished =
         format!("graphify docs pass on {tag} did not finish: asked again at the next check");
     let since = SystemTime::now();
     let deadline = Instant::now() + limit;
-    let (tab, pane) = match start_docs_pass(tools, repo, workspace, tag, tick, say, opened) {
+    let opened = |tab: &str| docs_tab.lock().unwrap().tab = Some(tab.to_string());
+    let (tab, pane) = match start_docs_pass(tools, repo, workspace, tag, tick, say, &opened) {
         Ok(started) => started,
         Err(err) => {
             say(format!("graphify docs pass on {tag} did not start: {err}"));
@@ -196,12 +197,27 @@ pub(crate) fn docs_pass(
     if !worked || !built.is_ok_and(|at| at > since) {
         return unfinished;
     }
+    // under the lock close() cancels with, so a pass it interrupted is
+    // never recorded
+    let docs = docs_tab.lock().unwrap();
+    if docs.cancelled {
+        return unfinished;
+    }
     if let Err(err) = set_handled(repo, tag) {
         say(format!("graphify docs pass on {tag}: {err}"));
         return unfinished;
     }
+    drop(docs);
     let _ = herdr(tools, repo, &["tab", "close", &tab]);
     format!("graphify docs pass done on {tag}")
+}
+
+/// A Docs pass's graphify tab once its thread has made it, and whether the
+/// Shell's close() has interrupted it: shared by the Shell and the thread.
+#[derive(Default)]
+pub(crate) struct DocsTab {
+    pub(crate) tab: Option<String>,
+    pub(crate) cancelled: bool,
 }
 
 /// The graphify tab and its root pane, the session started and prompted
