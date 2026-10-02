@@ -93,10 +93,14 @@ pub(crate) fn pass(tools: &dyn Tools, repo: &Path) -> Pass {
             .map_err(|err| failed.push(format!("graphify check failed: {err}")))
     };
     let _ = run(&["graphify", "update", "."]);
-    // the installer init used: uv, or pipx with no uv on PATH
-    let installer = match tools.run(repo, &["which", "uv"]) {
-        Ok(_) => ["uv", "tool", "upgrade", "graphifyy"].as_slice(),
-        Err(_) => ["pipx", "upgrade", "graphifyy"].as_slice(),
+    // upgraded by what installed it: uv when uv lists it, else pipx
+    let from_uv = tools.run(repo, &["uv", "tool", "list"]).is_ok_and(|list| {
+        list.lines()
+            .any(|line| line.split_whitespace().next() == Some("graphifyy"))
+    });
+    let installer = match from_uv {
+        true => ["uv", "tool", "upgrade", "graphifyy"].as_slice(),
+        false => ["pipx", "upgrade", "graphifyy"].as_slice(),
     };
     if run(installer).is_ok() {
         for platform in platforms(repo) {

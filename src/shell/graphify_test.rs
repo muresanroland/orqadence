@@ -23,6 +23,7 @@ fn graphify_on(fails: &'static str) -> (TempDir, Arc<Fake>, Arc<Mutex<Vec<PathBu
         seen.lock().unwrap().push(dir.to_path_buf());
         match argv.join(" ") {
             call if call == fails => Err("offline".to_string()),
+            call if call == "uv tool list" => Ok("graphifyy v0.4.1\n- graphify\n".to_string()),
             call if call.starts_with("git tag --merged") => Ok("v1.2.0\nv1.3.0\n".to_string()),
             _ => Ok(String::new()),
         }
@@ -112,4 +113,43 @@ fn a_second_pass_comes_after_the_period() {
             .count()
             >= 2
     });
+}
+
+#[test]
+fn a_pass_that_cannot_read_the_tags_keeps_the_tag_found_before() {
+    let (repo, fake, _) = graphify_on("");
+    let mut s = screen_at(fake.clone(), repo.path());
+    s.refresh_graphify(EVERY);
+    await_tag(&mut s);
+    // a later pass, offline: the read and set-head both fail
+    let offline = Fake::new(|_, argv| match argv[0] {
+        "git" => Err("offline".to_string()),
+        _ => Ok(String::new()),
+    });
+    s.cfg.tools = offline.clone();
+    s.refresh_graphify(EVERY);
+    await_line(
+        &mut s,
+        "graphify check failed: git remote set-head origin --auto",
+    );
+    assert_eq!(s.docs_tag.as_deref(), Some("v1.3.0"));
+}
+
+#[test]
+fn a_switch_turned_off_since_open_runs_no_more_passes() {
+    let (repo, fake, _) = graphify_on("");
+    let s = screen_at(fake.clone(), repo.path());
+    s.refresh_graphify(Duration::from_millis(1));
+    let updates = || {
+        fake.calls()
+            .iter()
+            .filter(|c| *c == "graphify update .")
+            .count()
+    };
+    wait_until("a first pass", || updates() >= 1);
+    set_switch(repo.path(), &GRAPHIFY, false).unwrap();
+    thread::sleep(Duration::from_millis(20)); // a pass under way ends
+    let after = updates();
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(updates(), after, "a pass ran with the switch off");
 }

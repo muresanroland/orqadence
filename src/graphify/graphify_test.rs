@@ -109,3 +109,24 @@ fn an_unset_origin_head_is_set_once_and_the_tags_read_again() {
     set_handled(repo.path(), "v1.3.0").unwrap();
     assert_eq!(pass(&*fake, repo.path()).1, None);
 }
+
+#[test]
+fn graphify_from_pipx_upgrades_with_pipx_and_from_uv_with_uv() {
+    let repo = TempDir::new();
+    let upgrade = |list: &'static str| {
+        let fake = Fake::new(move |_, argv| match argv.join(" ").as_str() {
+            "uv tool list" => Ok(list.to_string()),
+            _ => Ok(String::new()),
+        });
+        pass(&*fake, repo.path());
+        fake.calls()
+            .into_iter()
+            .filter(|c| c.ends_with("upgrade graphifyy"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(upgrade("ruff v0.6.0\n- ruff\n"), ["pipx upgrade graphifyy"]);
+    assert_eq!(
+        upgrade("graphifyy v0.4.1\n- graphify\n"),
+        ["uv tool upgrade graphifyy"]
+    );
+}

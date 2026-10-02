@@ -351,7 +351,7 @@ pub(crate) struct Screen {
     /// The graphify thread's passes, applied in poll() as the checks are.
     graphify_sender: Sender<graphify::Pass>,
     graphify_receiver: Receiver<graphify::Pass>,
-    /// A new X.Y tag the last graphify pass found, for the Docs pass.
+    /// A new X.Y tag a graphify pass found, kept for the Docs pass.
     pub(crate) docs_tag: Option<String>,
     /// A release downloaded while a run holds the lock: installed when it ends.
     pub(crate) update: Option<Ready>,
@@ -692,7 +692,8 @@ impl Screen {
             for line in failed {
                 self.say(&line);
             }
-            self.docs_tag = tag;
+            // a pass that read no new tag keeps one found before for the Docs pass
+            self.docs_tag = tag.or(self.docs_tag.take());
         }
         while let Ok(rung) = self.ring_receiver.try_recv() {
             self.pushes -= 1;
