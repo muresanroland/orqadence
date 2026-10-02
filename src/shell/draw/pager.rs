@@ -2,8 +2,8 @@
 //! of harness-0sx.5): the title bar, the run's Version line after a Release,
 //! the Epic's cost and time, the lead and the totals, a TICKETS outline on
 //! the left from 100 columns, the cost table, a section per Ticket then
-//! PARKED, and the position line. No cursor: a PR opens by Cmd-clicking its
-//! url.
+//! PARKED and MANUAL WORK NOT DONE, and the position line. No cursor: a PR
+//! opens by Cmd-clicking its url.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier};
@@ -281,7 +281,8 @@ fn hm(d: chrono::TimeDelta) -> String {
 
 /// The body rows `width` wide, and the row each Ticket starts on: a section
 /// per Ticket not Parked (its rule, its PR, its counts, each Finding skipped
-/// and each left on the PR), then PARKED with each reason.
+/// and each left on the PR), then PARKED with each reason, then MANUAL WORK
+/// NOT DONE with each open item's Ticket, whether it blocks, What and folder.
 fn sections(summary: &Summary, width: usize) -> (Vec<Line<'static>>, Vec<(usize, &Ticket)>) {
     let (mut rows, mut heads) = (Vec::new(), Vec::new());
     let item = |rows: &mut Vec<Line<'static>>, first: &str, text: &str, c: Color| {
@@ -346,6 +347,33 @@ fn sections(summary: &Summary, width: usize) -> (Vec<Line<'static>>, Vec<(usize,
         rows.push(Line::from(Span::styled(name, bold(ticket_color(&t.id)))));
         let reason = t.parked.as_deref().unwrap_or_default();
         item(&mut rows, "    parked: ", reason, MUTED);
+    }
+    let manual: Vec<_> = summary
+        .tickets
+        .iter()
+        .flat_map(|t| t.manual.iter().map(move |work| (t, work)))
+        .collect();
+    if !manual.is_empty() {
+        rows.push(Line::from(Span::styled(
+            "MANUAL WORK NOT DONE",
+            bold(MUTED),
+        )));
+    }
+    for (t, work) in manual {
+        let blocks = if work.blocks {
+            "blocks"
+        } else {
+            "does not block"
+        };
+        let name = format!("  {} {} · {blocks}", suffix(&t.id), t.title);
+        rows.push(Line::from(Span::styled(name, bold(ticket_color(&t.id)))));
+        item(&mut rows, "    what: ", &work.what, TEXT);
+        item(
+            &mut rows,
+            "    folder: ",
+            &work.folder.display().to_string(),
+            MUTED,
+        );
     }
     (rows, heads)
 }

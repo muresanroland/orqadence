@@ -16,6 +16,8 @@ pub(crate) struct Item {
     pub(crate) what: String,
     pub(crate) why: String,
     pub(crate) how: String,
+    /// Its session waits on it: `Blocks: yes` on manual-work.md's first line.
+    pub(crate) blocks: bool,
 }
 
 /// Reads the item `filed` names, relative to `run_dir` or absolute: an
@@ -62,8 +64,26 @@ pub(crate) fn read(run_dir: &Path, filed: &Path) -> Result<Item, String> {
         what: section("What"),
         why: section("Why"),
         how: section("How"),
+        blocks: body.lines().next().is_some_and(|first| {
+            first
+                .split('·')
+                .any(|field| field.trim().eq_ignore_ascii_case("Blocks: yes"))
+        }),
         folder,
     })
+}
+
+/// The items open in `run_dir`, its manual-work/<n>/ folders read, in
+/// number order; one that does not read is left out.
+pub(crate) fn open(run_dir: &Path) -> Vec<Item> {
+    let entries = fs::read_dir(run_dir.join("manual-work"))
+        .into_iter()
+        .flatten();
+    let mut items: Vec<Item> = entries
+        .filter_map(|entry| read(run_dir, &entry.ok()?.path()).ok())
+        .collect();
+    items.sort_by_key(|item| number(&item.folder).parse::<u64>().unwrap_or_default());
+    items
 }
 
 /// An item's number, its folder's name: the n of manual-work/<n>/.

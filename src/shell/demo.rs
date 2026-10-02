@@ -533,6 +533,7 @@ fn summary(s: &Screen) -> Summary {
                 skipped: vec![skipped.to_string()],
                 left: Vec::new(),
                 parked: (ts.status == STATUS_PARKED).then_some(ts.reason),
+                manual: Vec::new(),
                 cost: Cost {
                     tokens,
                     dollars,

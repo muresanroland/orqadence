@@ -43,6 +43,7 @@ fn a_folder_reads_its_sections() {
         what: "Add the DEPLOY_TOKEN secret to the repo.".to_string(),
         why: "The deploy job reads it; the session has no credential.".to_string(),
         how: "Run wizard.sh, then check the Actions settings page.".to_string(),
+        blocks: false,
     };
     assert_eq!(manual::read(dir.path(), &folder).unwrap(), item);
     let relative = Path::new("manual-work/1");

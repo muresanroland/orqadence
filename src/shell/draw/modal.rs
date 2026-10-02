@@ -441,6 +441,7 @@ pub(super) fn asked(f: &mut Frame, s: &Screen) {
                     what,
                     why,
                     how,
+                    ..
                 },
             ..
         }) => {
