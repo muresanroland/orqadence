@@ -1,4 +1,4 @@
-use super::SKILLS;
+use super::{EXTRA_FILES, SKILLS};
 use crate::orchestrator::write_file;
 use crate::tempdir::TempDir;
 use std::fs;
@@ -507,4 +507,66 @@ fn no_skill_merges_the_orchestrator_does() {
             assert!(line.contains("No `gh pr merge`"), "{name}: {line}");
         }
     }
+}
+
+/// manual-work names the folder a session files, its first line and
+/// headings, the forms it takes, the blocking result and every command a
+/// session never runs.
+#[test]
+fn manual_work_names_its_folder_status_and_never_run_list() {
+    let manual = skill("orqa-manual-work");
+    for text in [
+        "name: orqa-manual-work",
+        "<Run directory>/manual-work/<n>/",
+        "`manual-work.md`",
+        "Ticket: <id> · Stage: <stage> · Blocks: yes|no",
+        "## What",
+        "## Why",
+        "## How",
+        "## Report back",
+        "`wizard.sh`",
+        "`prompt.md`",
+        "`STATUS: manual` as its first line and the folder path as its second",
+        "Manual work <n> done: <facts>",
+        "`gh secret`",
+        "`gh variable`",
+        "`gh workflow run`",
+        "`gh api` writes to repo settings",
+        "cloud CLIs acting on real accounts",
+        "`terraform plan`",
+        "`terraform apply`",
+        "`terraform init`",
+        "mattpocock/skills",
+    ] {
+        assert!(manual.contains(text), "manual-work lacks {text:?}");
+    }
+}
+
+/// manual-work's template.sh ships as vendored, with the MIT notice of
+/// mattpocock/skills, and still parses.
+#[test]
+fn manual_work_template_is_vendored_with_its_licence() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("skills/orqa-manual-work/template.sh");
+    let shipped = EXTRA_FILES
+        .iter()
+        .find(|(skill, file, _)| *skill == "orqa-manual-work" && *file == "template.sh")
+        .unwrap()
+        .2;
+    assert_eq!(shipped, fs::read_to_string(&path).unwrap());
+    assert!(shipped.starts_with("#!/usr/bin/env bash\n"));
+    for text in [
+        "github.com/mattpocock/skills",
+        "MIT License",
+        "Copyright (c) 2026 Matt Pocock",
+        "The above copyright notice and this permission notice shall be included",
+        "# STAGES: author this section.",
+    ] {
+        assert!(shipped.contains(text), "template.sh lacks {text:?}");
+    }
+    let out = Command::new("bash").arg("-n").arg(&path).output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
