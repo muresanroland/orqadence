@@ -199,8 +199,8 @@ fn docs(gets: &[&'static str]) -> Docs {
 fn check(s: &mut Screen, d: &Docs, tag: &'static str) {
     *d.tags.lock().unwrap() = tag;
     let reads = || {
-        let calls = d.fake.calls();
-        calls
+        d.fake
+            .calls()
             .iter()
             .filter(|c| c.starts_with("git tag --merged"))
             .count()
@@ -387,6 +387,7 @@ fn exit_mid_pass_closes_its_tab_and_records_nothing() {
     );
     s.command("/exit");
     assert!(s.quit);
+    s.close();
     let calls = herdr_calls(&d.fake);
     assert!(
         calls.contains(&"herdr tab close t9".to_string()),

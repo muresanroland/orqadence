@@ -51,12 +51,10 @@ fn the_highest_merged_tag_is_the_highest_vxyz_semver_reads() {
 
 #[test]
 fn a_tag_is_new_when_its_major_or_minor_differs_from_the_one_handled() {
-    assert!(!is_new(Some((1, 3)), Some("v1.3.5")), "a patch-only tag");
-    assert!(is_new(Some((1, 3)), Some("v1.4.0")));
-    assert!(is_new(Some((1, 3)), Some("v2.3.0")));
-    assert!(is_new(None, Some("v1.3.0")), "nothing handled yet");
-    assert!(!is_new(None, None), "a repo with no tags");
-    assert!(!is_new(Some((1, 3)), None));
+    assert!(!is_new(Some((1, 3)), "v1.3.5"), "a patch-only tag");
+    assert!(is_new(Some((1, 3)), "v1.4.0"));
+    assert!(is_new(Some((1, 3)), "v2.3.0"));
+    assert!(is_new(None, "v1.3.0"), "nothing handled yet");
 }
 
 #[test]

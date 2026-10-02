@@ -46,7 +46,7 @@ pub(crate) fn prepare_worktree(
 /// The file under LOCAL holding the last X.Y handled, as "1.3".
 const HANDLED: &str = "graphify-docs-pass";
 
-/// A pass's failed steps, one RECENT line each, and the new tag it found.
+/// A pass's failed steps, one RECENT line each, and the highest tag it read.
 pub(crate) type Pass = (Vec<String>, Option<String>);
 
 /// The last X.Y handled; none recorded, or one that cannot be read, is None.
@@ -75,12 +75,9 @@ fn latest(tags: &str) -> Option<String> {
 }
 
 /// Whether tag is new: its X or Y differs from the X.Y handled, or none is.
-/// A patch-only tag never counts, and no tag is never new.
-pub(crate) fn is_new(handled: Option<(u64, u64)>, tag: Option<&str>) -> bool {
-    match tag.and_then(semver) {
-        Some((x, y, _)) => handled != Some((x, y)),
-        None => false,
-    }
+/// A patch-only tag never counts.
+pub(crate) fn is_new(handled: Option<(u64, u64)>, tag: &str) -> bool {
+    semver(tag).is_some_and(|(x, y, _)| handled != Some((x, y)))
 }
 
 /// One pass in the checkout: the code graph refreshed, graphify upgraded
@@ -121,10 +118,7 @@ pub(crate) fn pass(tools: &dyn Tools, repo: &Path) -> Pass {
     let _ = tools.run(repo, &["git", "remote", "set-head", "origin", "--auto"]);
     let tags = run(&["git", "tag", "--merged", "origin/HEAD", "--list", "v*"]);
     let tag = tags.ok().and_then(|tags| latest(&tags));
-    let new = is_new(handled(repo), tag.as_deref())
-        .then_some(tag)
-        .flatten();
-    (failed, new)
+    (failed, tag)
 }
 
 /// claude and codex, each that a row of config.json runs on: graphify

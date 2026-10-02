@@ -607,7 +607,7 @@ impl Screen {
     fn ask_docs_pass(&mut self, tag: String) {
         let asked = self.questions.iter().any(is_docs_pass);
         // a no answered since the check read the tags has handled it
-        let handled = !graphify::is_new(graphify::handled(&self.cfg.repo), Some(&tag));
+        let handled = !graphify::is_new(graphify::handled(&self.cfg.repo), &tag);
         if asked || handled || self.docs_tag.is_some() || self.demo.is_some() {
             return;
         }
@@ -705,7 +705,16 @@ impl Screen {
     /// The Shell's last act, after the terminal is back: the run goes, its
     /// lock with it, and then the release that waited on it installs (/exit
     /// and Ctrl-C twice, with no re-exec). Another process's lock drops it.
+    /// A live Docs pass is interrupted, an idle-Shell update's re-exec too:
+    /// its tab closes, its session with it, and nothing is recorded, so the
+    /// next check asks again.
     pub(crate) fn close(&mut self) {
+        // ponytail: a tab still being created goes on with its thread, the
+        // process ends; the next check asks again and its tab is a new one
+        let tab = self.docs_tab.lock().unwrap().take();
+        if let (Some(_), Some(tab)) = (&self.docs_tag, tab) {
+            let _ = herdr(&*self.cfg.tools, &self.cfg.repo, &["tab", "close", &tab]);
+        }
         if let Some(mut run) = self.run.take() {
             run.o.stop();
             if let Some(scheduler) = run.scheduler.take() {
@@ -2637,16 +2646,10 @@ impl Screen {
         }
     }
 
-    /// Ends the Shell; a live run is stopped first and its panes stay. A
-    /// live Docs pass is interrupted: its tab closes, its session with it,
-    /// and nothing is recorded, so the next check asks again.
+    /// Ends the Shell; a live run is stopped first and its panes stay.
     fn quit(&mut self) {
         if let Some(run) = &self.run {
             run.o.stop();
-        }
-        let tab = self.docs_tab.lock().unwrap().take();
-        if let (Some(_), Some(tab)) = (&self.docs_tag, tab) {
-            let _ = herdr(&*self.cfg.tools, &self.cfg.repo, &["tab", "close", &tab]);
         }
         self.quit = true;
     }
