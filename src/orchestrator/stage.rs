@@ -1887,7 +1887,9 @@ impl Orchestrator {
                  {what}. Folder: {}. The PR will list it.",
                 item.folder.display()
             );
-            let line = format!("manual work in {stage}, not blocking: {}", item.what);
+            // one physical line in RECENT and orchestrator.log; the Notice keeps the What
+            let flat = item.what.split_whitespace().collect::<Vec<_>>().join(" ");
+            let line = format!("manual work in {stage}, not blocking: {flat}");
             self.notices(ticket, &line, notice);
         }
     }

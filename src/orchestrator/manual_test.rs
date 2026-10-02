@@ -452,11 +452,21 @@ fn fix_and_address_pr_comments_get_the_open_manual_work() {
 /// An Implement session that files an item, Blocks: `blocks`, while it
 /// works, and goes on working: the item's folder.
 fn files_while_working(w: &World, o: &Orchestrator, blocks: &'static str) -> std::path::PathBuf {
+    files_what_while_working(w, o, blocks, "Set the DNS record.")
+}
+
+/// files_while_working, the item's What `what`.
+fn files_what_while_working(
+    w: &World,
+    o: &Orchestrator,
+    blocks: &'static str,
+    what: &'static str,
+) -> std::path::PathBuf {
     let folder = o.run_dir("hx-1").join("manual-work/1");
     let filed = folder.clone();
     w.session(move |p| match p.stage == "implement" {
         true => {
-            file_with(&filed, blocks, "Set the DNS record.");
+            file_with(&filed, blocks, what);
             working(p)
         }
         false => succeed(p),
@@ -543,5 +553,25 @@ fn blocking_manual_work_is_never_noticed() {
         !w.lines().iter().any(|l| l.contains("not blocking")),
         "{:#?}",
         w.lines()
+    );
+}
+
+/// A What over several lines is one RECENT line, its whitespace flattened;
+/// the Notice keeps the What as filed.
+#[test]
+fn a_multi_line_what_is_noticed_on_one_line() {
+    let (w, o) = new_world(vec![BdTicket::new("hx-1")]);
+    files_what_while_working(&w, &o, "no", "Set the DNS record.\n  Then wait an hour.");
+    let o = Arc::new(o);
+    let _run = spawn_ticket(o.clone(), "hx-1");
+    w.await_event("manual work in implement, not blocking");
+    let (line, notice) = notices(&w).remove(0);
+    assert_eq!(
+        line,
+        "manual work in implement, not blocking: Set the DNS record. Then wait an hour."
+    );
+    assert!(
+        notice.contains("Set the DNS record.\n  Then wait an hour"),
+        "{notice}"
     );
 }
