@@ -2581,7 +2581,7 @@ fn adding_a_label_as_an_area_with_an_installed_skill_writes_the_entry() {
     let repo = TempDir::new();
     let tools = clones();
     add(repo.path(), &*tools, "mattpocock/skills", Some("tdd")).unwrap();
-    let mut s = labels_page(tools, repo.path());
+    let mut s = labels_page(tools.clone(), repo.path());
     s.key(key(KeyCode::Char('a')));
     type_in(&mut s, "mobile");
     s.key(key(KeyCode::Enter));
@@ -2591,7 +2591,18 @@ fn adding_a_label_as_an_area_with_an_installed_skill_writes_the_entry() {
     );
     assert_eq!(
         note(&s),
-        "added orqa:mobile, an area label, saved uncommitted in .orqadence/config.json"
+        "added orqa:mobile, an area label, saved uncommitted in .orqadence/config.json; \
+         orqa:mobile kept on GitHub"
+    );
+    // made on GitHub, or coloured as an area label again
+    let gh: Vec<String> = tools
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("gh label"))
+        .collect();
+    assert_eq!(
+        gh,
+        ["gh label create orqa:mobile --color 5319E7 --description Orqadence Area label --force"]
     );
     let text =
         |buf: &_, y: u16, from: usize, to: usize| cols(buf, y, from, to).trim_end().to_string();
@@ -2720,7 +2731,8 @@ fn renaming_fe_to_web_moves_the_entry_and_keeps_its_pr_template() {
     assert_eq!(labels["web"]["skills"], json!(["orqa-a11y"]));
     assert_eq!(
         note(&s),
-        "renamed orqa:fe to orqa:web, saved uncommitted in .orqadence/config.json"
+        "renamed orqa:fe to orqa:web, saved uncommitted in .orqadence/config.json; \
+         orqa:web kept on GitHub"
     );
     let buf = render(&s, 160, 45);
     assert!(find(&buf, "▸ orqa:web").is_some(), "{:#?}", rows(&buf));
@@ -2799,23 +2811,26 @@ fn a_name_that_is_not_a_valid_label_is_refused() {
     );
 }
 
-/// orqa:human-merge is built in: /config adds no label of that name.
+/// orqa:human-merge and orqa:no-review are built in: /config adds no
+/// label of either name.
 #[test]
-fn the_built_in_human_merge_label_is_refused_as_a_new_labels_name() {
-    let repo = TempDir::new();
-    write_file(&repo.path().join(".orqadence/config.json"), LABELS);
-    let mut s = labels_page(clones(), repo.path());
-    s.key(key(KeyCode::Char('a')));
-    type_in(&mut s, "orqa:human-merge");
-    s.key(key(KeyCode::Enter));
-    assert_eq!(
-        note(&s),
-        "Refused: orqa:human-merge is built in. Nothing changed."
-    );
-    assert_eq!(
-        config_json(repo.path()),
-        serde_json::from_str::<Value>(LABELS).unwrap()
-    );
+fn the_built_in_labels_are_refused_as_a_new_labels_name() {
+    for built_in in ["orqa:human-merge", "orqa:no-review"] {
+        let repo = TempDir::new();
+        write_file(&repo.path().join(".orqadence/config.json"), LABELS);
+        let mut s = labels_page(clones(), repo.path());
+        s.key(key(KeyCode::Char('a')));
+        type_in(&mut s, built_in);
+        s.key(key(KeyCode::Enter));
+        assert_eq!(
+            note(&s),
+            format!("Refused: {built_in} is built in. Nothing changed.")
+        );
+        assert_eq!(
+            config_json(repo.path()),
+            serde_json::from_str::<Value>(LABELS).unwrap()
+        );
+    }
 }
 
 /// A label added to config.json since /config opened clashes as well: the

@@ -18,3 +18,4 @@ ADR 0002 left every merge to a human, so an Epic paused at each dependency edge 
 - With Agent merge on, the Release's version pull request is merged and its tag pushed without the tag Question.
 - `orqa init` writes the No-review exclusion into the Target repo's `.coderabbit.yaml` and Greptile's config.
 - Dependent Tickets still wait for the merge (ADR 0002); they just wait less.
+- Amended (harness-yfx): a Ticket carrying the built-in `orqa:no-review` makes its pull request No-review too, its Review, Extra review and Debate skipped. Human-merge and No-review are independent, so a pull request may carry both: nothing reviews it and a human merges it. `orqa init` asks for `review_bots`, and writes their exclusion, whether Agent merge is on or not.
