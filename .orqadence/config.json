@@ -7,6 +7,8 @@
     "effort": "high",
     "model": "opus"
   },
+  "address_pr_comments_auto": true,
+  "address_pr_comments_runs": 2,
   "fix": {
     "effort": "high",
     "model": "opus"
@@ -24,8 +26,14 @@
   "plan_floor": 0.7,
   "rebase": {
     "effort": "high",
-    "model": "opus"
+    "model": "sonnet"
   },
+  "rebase_auto": true,
+  "release": {
+    "effort": "low",
+    "model": "sonnet"
+  },
+  "release_on": true,
   "review": {
     "effort": "high",
     "model": "gpt-6.1-sol"
