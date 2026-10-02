@@ -292,3 +292,37 @@ fn a_later_brainstorm_pane_replaces_the_previous_one() {
     let panes: Vec<String> = w.lock().panes.iter().map(|p| p.pane_id.clone()).collect();
     assert_eq!(panes, ["w1:shell", "w1:mine", second.as_str()]);
 }
+
+#[test]
+fn a_failed_lookup_of_the_previous_brainstorm_pane_does_not_split_the_shell_again() {
+    let (w, o) = shell_world();
+    let first = o
+        .place_beside_shell("w1:shell", "", &["--no-focus"])
+        .unwrap();
+    let before = w.calls().len();
+    w.fail_once(
+        &format!("herdr pane get {first}"),
+        r#"{"error":{"code":"internal_error"}}"#,
+    );
+
+    assert!(o
+        .place_beside_shell("w1:shell", &first, &["--no-focus"])
+        .is_err());
+
+    assert!(w.since(before, "herdr pane split").is_empty());
+}
+
+#[test]
+fn a_previous_brainstorm_pane_that_is_gone_gives_way_to_a_shell_split() {
+    let (w, o) = shell_world();
+    let before = w.calls().len();
+
+    o.place_beside_shell("w1:shell", "w1:gone", &["--no-focus"])
+        .unwrap();
+
+    let split = w.since(before, "herdr pane split");
+    assert!(
+        split.len() == 1 && split[0].starts_with("herdr pane split w1:shell "),
+        "{split:?}"
+    );
+}

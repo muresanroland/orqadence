@@ -186,11 +186,15 @@ impl Orchestrator {
         placement: &[&str],
     ) -> Result<String, RunError> {
         let tab = self.herdr(&["pane", "get", shell])?.result.pane.tab_id;
+        // Only pane_not_found means the previous pane is gone; another
+        // failed lookup must not split the Shell a second time.
         let beside = !previous.is_empty()
             && previous != shell
-            && self
-                .herdr(&["pane", "get", previous])
-                .is_ok_and(|r| r.result.pane.tab_id == tab);
+            && match self.herdr(&["pane", "get", previous]) {
+                Ok(r) => r.result.pane.tab_id == tab,
+                Err(err) if err.to_string().contains("pane_not_found") => false,
+                Err(err) => return Err(err),
+            };
         if beside {
             let mut argv = vec!["pane", "split", previous, "--direction", "right"];
             argv.extend_from_slice(placement);
