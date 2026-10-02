@@ -9,13 +9,89 @@
   },
   "address_pr_comments_auto": true,
   "address_pr_comments_runs": 2,
+  "agent_merge": true,
   "fix": {
     "effort": "high",
     "model": "opus"
   },
   "labels": {
+    "architecture": {
+      "guidance": "Record a decision as an ADR and a new term in CONTEXT.md.",
+      "kind": "area",
+      "pr_template": "architecture.md",
+      "skills": [
+        "orqa-codebase-design",
+        "orqa-domain-modeling"
+      ]
+    },
+    "backend": {
+      "guidance": "Keep the contract explicit: requests, responses, status codes, compatibility.",
+      "kind": "area",
+      "pr_template": "backend.md",
+      "skills": [
+        "orqa-api-and-interface-design"
+      ]
+    },
+    "codex-review": {
+      "guidance": "",
+      "kind": "modifier",
+      "rows": {
+        "review": {
+          "app": "codex"
+        }
+      },
+      "skills": []
+    },
+    "database": {
+      "guidance": "Expand/contract migrations; say what locks or rewrites a table; give a rollback path.",
+      "human_merge": true,
+      "kind": "area",
+      "pr_template": "database.md",
+      "skills": [
+        "orqa-supabase-postgres-best-practices",
+        "orqa-deprecation-and-migration"
+      ]
+    },
     "frontend": {
-      "kind": "area"
+      "guidance": "Front-end work: the pull request carries screenshots of every changed screen.",
+      "kind": "area",
+      "pr_template": "frontend.md",
+      "skills": [
+        "orqa-frontend-design"
+      ]
+    },
+    "infra": {
+      "extra_review": {
+        "debate": false,
+        "position": "every",
+        "skill": "orqa-infra-review"
+      },
+      "guidance": "Validate with offline commands only: never terraform plan, apply, destroy, state, import, force-unlock or workspace, init with a backend, kubectl or helm against a cluster, docker push or login, gh secret, gh variable or gh workflow run, or anything that reads a secret; terraform test with mock_provider only. Anything needing a credential is filed as Manual work. Commit a .terraform.lock.hcl change only when the Ticket adds or upgrades a provider, regenerated with terraform providers lock for every platform the lock file lists; without network, file it as Manual work.",
+      "human_merge": true,
+      "kind": "area",
+      "pr_template": "infra.md",
+      "skills": [
+        "orqa-terraform-style-guide",
+        "orqa-terraform-test",
+        "orqa-docker-build-strategies",
+        "orqa-kubernetes-skill",
+        "orqa-ci-cd-and-automation",
+        "orqa-github-actions-hardening"
+      ]
+    },
+    "security": {
+      "extra_review": {
+        "debate": true,
+        "position": "every",
+        "skill": "orqa-security-review"
+      },
+      "guidance": "An item of security-and-hardening's Ask First tier (a new auth flow, a new PII category, CORS, upload handlers, rate limits) goes in the Plan under Open question.",
+      "human_merge": true,
+      "kind": "area",
+      "pr_template": "security.md",
+      "skills": [
+        "orqa-security-and-hardening"
+      ]
     }
   },
   "max_tickets": 4,
@@ -38,6 +114,9 @@
     "effort": "high",
     "model": "gpt-6.1-sol"
   },
+  "review_bots": [
+    "coderabbit"
+  ],
   "review_if_limited": {
     "effort": "high",
     "model": "fable"
