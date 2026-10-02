@@ -1,6 +1,6 @@
 //! Session ids in the State, and /continue resuming a Stage by its id.
 
-use super::manual_test::file_item;
+use super::manual_test::file_blocking_item;
 use super::question_test::ASKS;
 use super::stage::{Answer, Orchestrator};
 use super::state::{load_state, Session};
@@ -186,7 +186,7 @@ fn a_stage_resumed_by_id_that_asked_is_put_its_question_not_continue() {
 fn a_stage_resumed_by_id_waiting_on_manual_work_is_put_it_not_continue() {
     let (w, stopped) = stopped_at("implement", "implement", true);
     let folder = stopped.run_dir("hx-1").join("manual-work/1");
-    file_item(&folder);
+    file_blocking_item(&folder);
     let filed = format!("STATUS: manual\n{}\n", folder.display());
     write_file(&stopped.run_dir("hx-1").join("implement.md"), &filed);
     panes_gone(&w);

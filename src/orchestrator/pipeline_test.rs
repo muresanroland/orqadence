@@ -216,6 +216,10 @@ fn open_pr_prunes_build_scratch_and_keeps_evidence() {
                 &dir.join("manual-work/1/manual-work.md"),
                 "Ticket: hx-1 · Stage: review · Blocks: no\n\n## What\nSet the DNS record.\n",
             );
+            write_file(
+                &dir.join("manual-work/1/wizard.sh"),
+                "#!/usr/bin/env bash\n",
+            );
         }
         succeed(p)
     });
@@ -236,6 +240,7 @@ fn open_pr_prunes_build_scratch_and_keeps_evidence() {
         "fix-1.md",
         "diff-1.patch",
         "manual-work/1/manual-work.md",
+        "manual-work/1/wizard.sh",
     ] {
         assert!(run_dir.join(kept).exists(), "evidence pruned: {kept}");
     }

@@ -249,6 +249,9 @@ pub(crate) struct Event {
     /// A PR's items for the approval modal: never a Question. Empty on
     /// every other Event.
     pub(crate) offer: Vec<Item>,
+    /// The info Notice modal the Shell shows for the line: non-blocking
+    /// Manual work filed. None on every other Event.
+    pub(crate) notice: Option<String>,
 }
 
 /// What the Shell knows when it starts a run: kept whole by the Shell and
@@ -431,18 +434,23 @@ impl Orchestrator {
     /// the Event to the Shell. A `detail` (a PR's url) goes on the log line
     /// alone, in parentheses.
     pub(crate) fn emit(&self, ticket: &str, text: &str, panel: bool, detail: &str) {
-        self.event(ticket, text, panel, detail, None, Vec::new());
+        self.event(ticket, text, panel, detail, None, Vec::new(), None);
     }
 
     /// A panel line that asks the user: the Shell puts it as a Question.
     pub(super) fn asks(&self, ticket: &str, text: &str, ask: Ask) {
-        self.event(ticket, text, true, "", Some(ask), Vec::new());
+        self.event(ticket, text, true, "", Some(ask), Vec::new(), None);
     }
 
     /// A PR's items put to the user in the approval modal, with a line in
     /// the log alone.
     pub(super) fn offers(&self, ticket: &str, text: &str, items: Vec<Item>) {
-        self.event(ticket, text, false, "", None, items);
+        self.event(ticket, text, false, "", None, items, None);
+    }
+
+    /// A panel line the Shell also shows as an info Notice modal, `notice`.
+    fn notices(&self, ticket: &str, text: &str, notice: String) {
+        self.event(ticket, text, true, "", None, Vec::new(), Some(notice));
     }
 
     /// A Question with no line of its own, after the lines that led to it:
@@ -455,9 +463,11 @@ impl Orchestrator {
             panel: false,
             ask: Some(ask),
             offer: Vec::new(),
+            notice: None,
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn event(
         &self,
         ticket: &str,
@@ -466,6 +476,7 @@ impl Orchestrator {
         detail: &str,
         ask: Option<Ask>,
         offer: Vec<Item>,
+        notice: Option<String>,
     ) {
         let time = chrono::Local::now();
         let detail = if detail.is_empty() {
@@ -483,6 +494,7 @@ impl Orchestrator {
             panel,
             ask,
             offer,
+            notice,
         });
     }
 
@@ -1822,8 +1834,10 @@ impl Orchestrator {
     /// saving the session id herdr reports there as the Stage's: the id
     /// /continue resumes it by once the pane is gone. Saved only while herdr
     /// still names the Stage's own agent in that pane, so another agent's
-    /// id is never resumed as the Stage's.
+    /// id is never resumed as the Stage's. Each look notices the
+    /// non-blocking Manual work filed since the last (notice_manual).
     pub(super) fn watch(&self, ticket: &str, st: &Stage, pane: &str) -> Option<String> {
+        self.notice_manual(ticket, st);
         let agent = self.herdr(&["agent", "get", pane]).ok()?.result.agent;
         let id = agent.agent_session.map(|s| s.value).unwrap_or_default();
         if !id.is_empty()
@@ -1843,6 +1857,39 @@ impl Orchestrator {
             });
         }
         Some(agent.status)
+    }
+
+    /// Non-blocking Manual work in the Ticket's Run directory not noticed
+    /// yet: a RECENT line and an info Notice each, once, kept noticed in
+    /// TicketState until its folder is gone. One with no What yet is still
+    /// being written, noticed on a later tick. Never a Question, so it never
+    /// rings On call nor parks under Away; a blocking item is STATUS:
+    /// manual's Question, never noticed here.
+    fn notice_manual(&self, ticket: &str, st: &Stage) {
+        let run_dir = self.run_dir(ticket);
+        let noticed = self.ticket(ticket).noticed;
+        let mut kept = noticed.clone();
+        kept.retain(|n| run_dir.join("manual-work").join(n).exists());
+        let new: Vec<manual::Item> = manual::open(&run_dir)
+            .into_iter()
+            .filter(|item| !item.blocks && !item.what.is_empty())
+            .filter(|item| kept.insert(manual::number(&item.folder)))
+            .collect();
+        if kept == noticed {
+            return;
+        }
+        self.update(ticket, |ts| ts.noticed = kept);
+        let stage = st.name.replace('-', " ");
+        for item in new {
+            let what = item.what.trim_end_matches('.');
+            let notice = format!(
+                "{ticket} {stage} filed Manual work (not blocking, the session carries on): \
+                 {what}. Folder: {}. The PR will list it.",
+                item.folder.display()
+            );
+            let line = format!("manual work in {stage}, not blocking: {}", item.what);
+            self.notices(ticket, &line, notice);
+        }
     }
 
     /// One tick of every polling loop. False once /stop-work has arrived.

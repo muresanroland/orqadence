@@ -213,6 +213,7 @@ fn event(ticket: Option<&str>, text: &str, panel: bool) -> Event {
         panel,
         ask: None,
         offer: Vec::new(),
+        notice: None,
     }
 }
 
@@ -7335,6 +7336,49 @@ fn an_autoclose_notice_closes_by_itself_until_a_key_is_pressed() {
     *clock.lock().unwrap() = at(230);
     s.tick();
     assert_eq!(notice_modal(&s), "");
+}
+
+/// Non-blocking Manual work's Event: its RECENT line and a green Notice
+/// modal that closes by itself after 60s with no key pressed, the Ticket's
+/// Question left open.
+#[test]
+fn a_manual_work_notice_shows_and_closes_by_itself_after_60s() {
+    let now = chrono::Local::now();
+    let mut s = screen();
+    let clock = set_clock(&mut s.cfg, now);
+    s.push(asking(
+        "hx-1",
+        "question in implement (pane 2-1)",
+        Ask::StageQuestion {
+            pane: "w1:p7".to_string(),
+            question: "Queue them?".to_string(),
+            options: vec!["yes".to_string()],
+        },
+    ));
+    let text = "hx-1 implement filed Manual work (not blocking, the session carries on): \
+                Set the DNS record. Folder: manual-work/1. The PR will list it.";
+    s.push(Event {
+        notice: Some(text.to_string()),
+        ..event(
+            Some("hx-1"),
+            "manual work in implement, not blocking: Set the DNS record.",
+            true,
+        )
+    });
+    assert_eq!(notice_modal(&s), text);
+    assert!(matches!(s.notices[0].kind, NoticeKind::Info));
+    assert_eq!(
+        s.events.last().map(|e| e.text.as_str()),
+        Some("manual work in implement, not blocking: Set the DNS record.")
+    );
+    assert_eq!(s.questions.len(), 1, "the notice closed the Question");
+
+    *clock.lock().unwrap() = now + chrono::Duration::seconds(59);
+    s.tick();
+    assert_eq!(notice_modal(&s), text, "closed early");
+    *clock.lock().unwrap() = now + chrono::Duration::seconds(60);
+    s.tick();
+    assert_eq!(notice_modal(&s), "", "did not close by itself");
 }
 
 /// An Error Notice modal over the Shell, at 80x24 and 160x48: a 60-column

@@ -17,6 +17,7 @@ use std::time::Instant;
 
 use super::app;
 use super::judgment::WAKE_FLOOR;
+use super::manual;
 use super::pr::{self, Item, Pr};
 use super::release::RELEASE_LABEL;
 use super::result::ResultRequirements;
@@ -1174,10 +1175,10 @@ impl Orchestrator {
     /// of the PR's reviews, comments and checks, the other open Tickets, the
     /// PR template the last Fix had, for the body's sections, and a fresh
     /// run's `lists`, its approved and won't-fix items, which count it
-    /// toward the cap; without gh's view or bd's list it does not run. Its tab
-    /// closes once it is done, said as "<rebased|addressed> PR #n". Away,
-    /// its question parks the Ticket; a long usage limit leaves it running
-    /// for /continue.
+    /// toward the cap; without gh's view or bd's list it does not run. Both
+    /// get the open Manual work. Its tab closes once it is done, said as
+    /// "<rebased|addressed> PR #n". Away, its question parks the Ticket; a
+    /// long usage limit leaves it running for /continue.
     fn on_pr(&self, ticket: &str, st: &Stage, resumed: bool, lists: Option<(&[Item], &[Item])>) {
         let pr = self.ticket(ticket).pr;
         let rebase = st.name == REBASE.name;
@@ -1225,6 +1226,8 @@ impl Orchestrator {
         if let Some(template) = &template {
             inputs.push(("PR template", template));
         }
+        let manual = manual::input(&self.run_dir(ticket));
+        inputs.push(("Manual work", &manual));
         let cap = app::count(&self.cfg.repo, &app::ADDRESS_PR_COMMENTS_RUNS);
         // the poll may have merged or closed it while the input was fetched:
         // checked under the lock, before the stage it reads is cleared

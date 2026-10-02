@@ -75,6 +75,10 @@ pub(crate) struct TicketState {
     /// was offered once.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(crate) offered: BTreeSet<String>,
+    /// The numbers of its Run directory's non-blocking Manual work items
+    /// already noticed, each until its folder is gone.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(crate) noticed: BTreeSet<String>,
     /// The Address PR comments runs started on its PR, which
     /// address_pr_comments_runs caps for the poll.
     #[serde(default, skip_serializing_if = "is_zero")]

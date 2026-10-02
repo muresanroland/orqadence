@@ -149,7 +149,7 @@ Decided on the map ticket "Delegate skills" (harness-0sx.12, Asks). A Stage writ
 
 ## Manual work
 
-Decided on the map ticket "Manual work: the file, the modal, marking it done, and Away" (harness-bsg.18, Blocking). A Stage writes its item's folder, `manual-work/<n>/` in the Run directory, then `STATUS: manual` and the folder's path on the next line, and waits in its session: a Question as a Stage's own question is.
+Decided on the map ticket "Manual work: the file, the modal, marking it done, and Away" (harness-bsg.18, Blocking and Non-blocking). A Stage writes its item's folder, `manual-work/<n>/` in the Run directory, then `STATUS: manual` and the folder's path on the next line, and waits in its session: a Question as a Stage's own question is.
 
 | Moment | Wording |
 |---|---|
@@ -159,6 +159,7 @@ Decided on the map ticket "Manual work: the file, the modal, marking it done, an
 | carried on in the pane instead | carrying on |
 | filed while Away | parked: asked you while away *(a bd comment with the What asks for a manual resume, /continue @ticket; the pane and the folder stay)* |
 | its folder missing or unreadable | stuck in implement: filed Manual work that cannot be read: `err` |
+| a Stage files non-blocking Manual work | manual work in implement, not blocking: `What` *(once per item, kept noticed in the state file until its folder goes; an info Notice modal: `ticket` implement filed Manual work (not blocking, the session carries on): `What`. Folder: `path`. The PR will list it. It closes by itself after 60s with no key pressed; never On call, never parked under Away)* |
 
 ## Ticket-start questions
 

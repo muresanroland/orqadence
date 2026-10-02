@@ -90,6 +90,26 @@ pub(crate) fn open(run_dir: &Path) -> Vec<Item> {
     items
 }
 
+/// The Manual work Input: a line per open item, its folder, Blocks and
+/// What, or none.
+pub(crate) fn input(run_dir: &Path) -> String {
+    let lines: Vec<String> = open(run_dir)
+        .iter()
+        .map(|item| {
+            let blocks = if item.blocks { "yes" } else { "no" };
+            format!(
+                "\n  {} · Blocks: {blocks} · {}",
+                item.folder.display(),
+                item.what
+            )
+        })
+        .collect();
+    match lines.is_empty() {
+        true => "none".to_string(),
+        false => lines.concat(),
+    }
+}
+
 /// An item's number, its folder's name: the n of manual-work/<n>/.
 pub(crate) fn number(folder: &Path) -> String {
     folder
