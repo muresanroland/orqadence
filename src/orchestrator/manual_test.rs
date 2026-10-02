@@ -188,7 +188,7 @@ fn list_reads_each_items_blocks_and_input_lists_them() {
     assert_eq!(
         manual::input(dir.path()),
         format!(
-            "\n  {} · Blocks: yes · Add the secret.\n  {} · Blocks: no · Add the DEPLOY_TOKEN secret to the repo.\n  {} · Blocks: no · Rotate the key.\n  {} · Blocks: no · Set the DNS record.",
+            "\n  - {} · Blocks: yes · Add the secret.\n  - {} · Blocks: no · Add the DEPLOY_TOKEN secret to the repo.\n  - {} · Blocks: no · Rotate the key.\n  - {} · Blocks: no · Set the DNS record.",
             at("2"),
             at("3"),
             at("5"),
@@ -209,7 +209,10 @@ fn input_skips_an_item_with_no_what_yet() {
     file_with(&folder, "no", "Set the DNS record.");
     assert_eq!(
         manual::input(dir.path()),
-        format!("\n  {} · Blocks: no · Set the DNS record.", folder.display())
+        format!(
+            "\n  - {} · Blocks: no · Set the DNS record.",
+            folder.display()
+        )
     );
 }
 
@@ -222,7 +225,7 @@ fn input_flattens_a_multi_line_what() {
     assert_eq!(
         manual::input(dir.path()),
         format!(
-            "\n  {} · Blocks: no · Set the DNS record. Then wait an hour.",
+            "\n  - {} · Blocks: no · Set the DNS record. Then wait an hour.",
             folder.display()
         )
     );
@@ -455,7 +458,7 @@ fn fix_and_address_pr_comments_get_the_open_manual_work() {
     run.wait();
     o.wait_in_flight();
     let want = format!(
-        "\n- Manual work: \n  {} · Blocks: no · Set the DNS record.\n",
+        "\n- Manual work: \n  - {} · Blocks: no · Set the DNS record.\n",
         folder.display()
     );
     for file in ["fix-1.md", "address-pr-comments.md"] {

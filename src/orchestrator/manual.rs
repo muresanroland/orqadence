@@ -6,6 +6,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::scheduler::bulleted;
 use crate::tools::Tools;
 
 /// One item, as its folder holds it.
@@ -100,16 +101,13 @@ pub(crate) fn input(run_dir: &Path) -> String {
         .map(|item| {
             let blocks = if item.blocks { "yes" } else { "no" };
             format!(
-                "\n  {} · Blocks: {blocks} · {}",
+                "{} · Blocks: {blocks} · {}",
                 item.folder.display(),
                 item.what.split_whitespace().collect::<Vec<_>>().join(" ")
             )
         })
         .collect();
-    match lines.is_empty() {
-        true => "none".to_string(),
-        false => lines.concat(),
-    }
+    bulleted(&lines)
 }
 
 /// An item's number, its folder's name: the n of manual-work/<n>/.
