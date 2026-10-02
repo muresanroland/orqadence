@@ -290,17 +290,10 @@ impl Orchestrator {
         let mut waiting = BTreeSet::new();
 
         let mut last_poll: Option<Instant> = None;
-        // the answers to merge Questions the last pass saw waiting
-        let mut answered = 0;
         loop {
-            // a new answer to a merge Question does not wait out the
-            // interval; one no poll takes brings no poll after its first
-            let answers = self.merge_answers();
-            let early = answers > answered;
-            answered = answers;
             // polled before the commands: after a restart /rebase goes by a
             // poll of this run, not the false `conflicting` starts with
-            if early || last_poll.is_none_or(|at| at.elapsed() >= self.cfg.poll_prs) {
+            if last_poll.is_none_or(|at| at.elapsed() >= self.cfg.poll_prs) {
                 for (ticket, items) in self.poll_merges() {
                     self.offer(&ticket, items);
                 }
@@ -660,8 +653,15 @@ impl Orchestrator {
     /// stop seen before gh is asked merges nothing.
     fn merge(&self, ticket: &str, ts: &TicketState, pr: &Pr) {
         let repo = &self.cfg.repo;
-        if ts.human_merge || ts.merge_asked || !app::switch(repo, &app::AGENT_MERGE) || !pr.ready()
-        {
+        if ts.human_merge || ts.merge_asked || !app::switch(repo, &app::AGENT_MERGE) {
+            return;
+        }
+        if !pr.ready() {
+            // park answered to a Question asked before a gate closed again
+            if !ts.merge_question.is_empty() && self.take_park(ticket) {
+                let reason = format!("{} not merged: you parked it", pr_ref(&ts.pr));
+                self.park_merge(ticket, &reason);
+            }
             return;
         }
         // the head the user, or the Judgment, said to merge as it is
@@ -719,7 +719,6 @@ impl Orchestrator {
         }
     }
 
-<<<<<<< HEAD
     /// Asks gh to merge the PR at `url`, a Ticket's or the Release's version
     /// PR, with the repo's own method: true once gh took it, which its
     /// state keeps (merge_asked). False when gh was not asked, the method
@@ -737,11 +736,15 @@ impl Orchestrator {
                 return Ok(false);
             }
         };
-        // the reads before this block: a stop, or comments approved, that
-        // came during them wins; the version PR is never approved or settled
-        let approved = self.approved.lock().unwrap().contains_key(id);
+        // held through gh: comments approved during the reads above are
+        // fixed first, and one approved now waits for it; the version PR is
+        // never approved or settled
         let unsettled = !self.is_release(id) && !self.ticket(id).settled;
-        if self.stopping() || approved || unsettled {
+        let approved = self.approved.lock().unwrap();
+        let pr_stage = (self.active.lock().unwrap())
+            .get(id)
+            .is_some_and(Option::is_some);
+        if self.stopping() || approved.contains_key(id) || pr_stage || unsettled {
             return Ok(false);
         }
         let argv = [
@@ -756,7 +759,9 @@ impl Orchestrator {
             "--repo",
             &name,
         ];
-        match self.cfg.tools.run(&self.cfg.repo, &argv) {
+        let merged = self.cfg.tools.run(&self.cfg.repo, &argv);
+        drop(approved);
+        match merged {
             Ok(_) => {
                 self.update(id, |ts| ts.merge_asked = true);
                 Ok(true)
@@ -767,7 +772,6 @@ impl Orchestrator {
         }
     }
 
-=======
     /// The merge Question (ADR 0007): the PR's gate fails only because of
     /// `items`, PR comments still open once Address PR comments' flow is
     /// over, or of `silent`, listed bots with no review bot_wait after it
@@ -852,6 +856,16 @@ impl Orchestrator {
         }
     }
 
+    /// Takes park answered to the Ticket's merge Question, leaving any
+    /// other answer for merge_open: whether there was one.
+    fn take_park(&self, ticket: &str) -> bool {
+        let mut answers = self.answers.lock().unwrap();
+        let park = (answers.iter()).position(|(t, pane, answer)| {
+            t == ticket && pane.is_empty() && matches!(answer, Answer::Prompt(p) if p == "park")
+        });
+        park.map(|i| answers.remove(i)).is_some()
+    }
+
     /// The Shell closed the Ticket's merge Question unanswered, as a line
     /// of the Ticket closes any: the next poll that finds it due asks again.
     pub(crate) fn unasked(&self, ticket: &str) {
@@ -913,20 +927,6 @@ impl Orchestrator {
         false
     }
 
-    /// How many answers to merge Questions wait for the poll: those for no
-    /// pane, to a Ticket whose PR is open.
-    fn merge_answers(&self) -> usize {
-        let answers = self.answers.lock().unwrap();
-        let tickets: Vec<String> = (answers.iter())
-            .filter(|(_, pane, _)| pane.is_empty())
-            .map(|(ticket, _, _)| ticket.clone())
-            .collect();
-        drop(answers);
-        let open = |ticket: &&String| self.ticket(ticket).status == STATUS_PR_OPEN;
-        tickets.iter().filter(open).count()
-    }
-
->>>>>>> ebd9c91 (feat(orchestrator): the merge Question: PR comments left open or a silent bot ask merge or park; Away asks TypeSafe (harness-72t.7))
     /// The Target repo on GitHub, owner/name, and its own merge method as
     /// gh's flag: squash where the repo allows it, else rebase, else a merge
     /// commit. Read before each merge, so a change made mid-run is taken.

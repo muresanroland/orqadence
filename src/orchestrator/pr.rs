@@ -187,12 +187,15 @@ impl Pr {
 
     /// What every merge of the Orchestrator's waits for: its checks green,
     /// each passed, skipped or neutral (a cancelled one never passed), none
-    /// past the 100 the poll reads, GitHub calling it mergeable, and no
-    /// review asking for changes.
+    /// past the 100 the poll reads, and the rollup the head's own (a rollup
+    /// of another commit is not its checks), GitHub calling it mergeable,
+    /// and no review asking for changes.
     pub(crate) fn ready(&self) -> bool {
-        let more = (self.status_check_rollup.as_ref()).is_some_and(|r| r.contexts.more());
+        let unread = self.status_check_rollup.as_ref().is_some_and(|r| {
+            r.contexts.more() || r.commit.as_ref().is_none_or(|c| c.oid != self.head_ref_oid)
+        });
         let passed = |c: &&Context| matches!(c.state(), "SUCCESS" | "SKIPPED" | "NEUTRAL");
-        let green = !more && self.contexts().iter().all(passed);
+        let green = !unread && self.contexts().iter().all(passed);
         let blocked = self.review_decision.as_deref() == Some("CHANGES_REQUESTED");
         green && self.mergeable == "MERGEABLE" && !blocked
     }

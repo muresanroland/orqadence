@@ -508,9 +508,9 @@ impl Orchestrator {
             });
         }
         let score = self.ask_typesafe(ticket, key, &merge_request(state), |reply| {
-            let score = reply["answers"]["merge"]["noul"].as_f64();
-            score
-                .filter(|score| (0.0..=1.0).contains(score))
+            reply["answers"]["merge"]["noul"]
+                .as_f64()
+                .filter(|s| (0.0..=1.0).contains(s))
                 .ok_or("no merge in the reply")
         });
         score.ok_or("TypeSafe gave no answer")

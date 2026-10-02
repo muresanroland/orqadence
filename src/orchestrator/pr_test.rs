@@ -6,7 +6,6 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use super::app::{
     set_review_bots, set_switch, set_typesafe, ADDRESS_PR_COMMENTS_AUTO, AGENT_MERGE, REBASE_AUTO,
@@ -953,6 +952,44 @@ fn a_human_merge_ticket_is_not_merged_whatever_its_saved_state_says() {
     );
 }
 
+/// A rollup still naming an earlier commit is not the new head's checks,
+/// green or red: it is never green.
+#[test]
+fn a_rollup_of_an_earlier_commit_is_not_green() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    let mut pr = open(PR65, "b");
+    pr["statusCheckRollup"]["commit"]["oid"] = json!("a");
+    pr["statusCheckRollup"]["contexts"]["nodes"][0]["conclusion"] = json!("FAILURE");
+    settle(&w, &o, &clock, &pr);
+    assert!(merges(&w).is_empty());
+
+    pr["statusCheckRollup"] = Value::Null; // no check on b at all
+    serve(&w, &pr);
+    poll(&o);
+    assert_eq!(merges(&w).len(), 1);
+}
+
+/// PR comments approved while the merge reads its labels and method are
+/// fixed first: the PR does not merge under them.
+#[test]
+fn pr_comments_approved_during_the_merges_reads_hold_the_merge() {
+    let (w, o, clock) = polled();
+    let o = Arc::new(o);
+    agent_merge(&w, &["coderabbit"]);
+    let weak = Arc::downgrade(&o);
+    w.hook(move |_, argv| {
+        if argv == ["gh", "api", "repos/{owner}/{repo}"] {
+            let o = weak.upgrade().unwrap();
+            o.approve_comments("hx-1", Vec::new(), Vec::new(), true);
+        }
+        None
+    });
+    settle(&w, &o, &clock, &open(PR65, "a"));
+    assert!(merges(&w).is_empty());
+    assert_eq!(o.ticket("hx-1").status, STATUS_PR_OPEN);
+}
+
 /// hx-1's PR merged in a repo whose settings allow `squash` and `rebase`:
 /// the method gh was given.
 fn merged_with(squash: bool, rebase: bool) -> String {
@@ -1270,6 +1307,24 @@ fn park_answered_parks_the_ticket_with_its_pr_open() {
     assert_eq!(o.ticket("hx-1").status, STATUS_MERGED);
 }
 
+/// park answered after a changes-requested review closed a gate the
+/// Question was asked past still parks the Ticket.
+#[test]
+fn park_answered_after_changes_were_requested_still_parks() {
+    let (w, o, _) = left_open(&["coderabbit"]);
+    let mut pr = open_thread("a");
+    pr["reviewDecision"] = json!("CHANGES_REQUESTED");
+    serve(&w, &pr);
+    answer(&o, "park");
+    poll(&o);
+    let ts = o.ticket("hx-1");
+    let reason = "PR #hx-1 not merged: you parked it";
+    assert_eq!(
+        (ts.status.as_str(), ts.reason.as_str()),
+        (STATUS_PARKED, reason)
+    );
+}
+
 /// /continue gives a Ticket the merge Question parked back to the poll,
 /// which asks again.
 #[test]
@@ -1286,22 +1341,6 @@ fn continue_asks_the_merge_question_again() {
     run.wait();
     o.wait_in_flight();
     assert_eq!(merges(&w).len(), 1);
-}
-
-/// An answer to the merge Question is acted on at the scheduler's next
-/// pass, not a poll interval later.
-#[test]
-fn an_answer_to_the_merge_question_does_not_wait_for_the_next_poll() {
-    let (w, mut o, _) = left_open(&["coderabbit"]);
-    o.cfg.poll_prs = Duration::from_secs(3600);
-    let o = Arc::new(o);
-    let mut run = spawn_epic(o.clone(), "hx");
-    // bd is asked what is ready once the pass's poll is over
-    wait_until("the run's first poll", || !w.called("bd ready").is_empty());
-    answer(&o, "merge");
-    wait_until("the merge", || merges(&w).len() == 1);
-    o.stop();
-    run.wait();
 }
 
 /// hx-1's PR at head `a`, its thread open and just offered by the poll, as
@@ -1527,23 +1566,6 @@ fn away_turned_on_while_the_question_waits_takes_the_judgment() {
     o.cfg.away.store(true, Ordering::SeqCst);
     poll(&o);
     assert_eq!(merges(&w).len(), 1);
-}
-
-/// An answer the poll cannot take, its PR no longer waiting on the
-/// Question, brings the poll forward once, not at every pass.
-#[test]
-fn an_answer_nothing_takes_does_not_poll_at_every_pass() {
-    let (w, mut o, _) = polled();
-    serve(&w, &open(PR65, "a"));
-    o.cfg.poll_prs = Duration::from_secs(3600);
-    let o = Arc::new(o);
-    answer(&o, "merge");
-    let mut run = spawn_epic(o.clone(), "hx");
-    wait_until("five passes", || w.called("bd ready").len() >= 5);
-    o.stop();
-    run.wait();
-    let polls = w.called("gh api graphql").len();
-    assert!(polls <= 2, "{polls} polls in five passes");
 }
 
 /// A PR comment that comes on the head already asked about is a new
