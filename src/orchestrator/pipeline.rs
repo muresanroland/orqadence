@@ -4,9 +4,10 @@
 use std::fs;
 use std::path::Path;
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::app::{self, ExtraReview};
+use super::release::RELEASE_LABEL;
 use super::result::{read_stage_result, ResultRequirements, StageResult};
 use super::stage::{
     plural, pr_ref, result_name, stage_label, Ask, Orchestrator, Stage, StageError,
@@ -14,7 +15,7 @@ use super::stage::{
     REVIEW,
 };
 use super::state::{local_dir, TicketState, LOCAL, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
-use crate::setup::{DEFAULT_TEMPLATE, TEMPLATE_DIR};
+use crate::setup::{put_gh_label, DEFAULT_TEMPLATE, TEMPLATE_DIR};
 use crate::skills::manifest::{placeholder, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS};
 use crate::skills::{stage_skill, CREATE_PR};
 use crate::tools::RunError;
@@ -46,10 +47,10 @@ fn not_debated_items(found: &StageResult) -> Vec<String> {
     found.found.iter().map(mark).collect()
 }
 
-/// A GitHub label a Ticket's PR carries: its name, and the colour and
-/// description it is created with.
-type GhLabel = (&'static str, &'static str, &'static str);
-const HUMAN_MERGE_LABEL: GhLabel = (
+/// A GitHub label a PR carries: its name, and the colour and description
+/// it is created with.
+pub(crate) type GhLabel = (&'static str, &'static str, &'static str);
+pub(crate) const HUMAN_MERGE_LABEL: GhLabel = (
     "orqa:human-merge",
     "D93F0B",
     "A human merges this pull request, never Orqadence",
@@ -59,6 +60,48 @@ pub(crate) const NO_REVIEW_LABEL: GhLabel = (
     "C5DEF5",
     "The review bots skip this pull request",
 );
+/// The version PR's, beside orqa:no-review.
+pub(crate) const RELEASE_GH_LABEL: GhLabel = (
+    RELEASE_LABEL,
+    "0E8A16",
+    "The Release's version pull request",
+);
+/// A Ticket label's colour and description on GitHub, by its kind.
+const AREA_GH_LABEL: (&str, &str) = ("5319E7", "Orqadence Area label");
+const MODIFIER_GH_LABEL: (&str, &str) = ("FBCA04", "Orqadence Modifier label");
+
+/// The GitHub label of the Ticket label under name, by its entry in doc:
+/// orqa:<name>, coloured and described by its kind; the built-ins' own.
+pub(crate) fn ticket_gh_label(doc: &Value, name: &str) -> (String, &'static str, &'static str) {
+    let (color, description) = match name {
+        app::HUMAN_MERGE => (HUMAN_MERGE_LABEL.1, HUMAN_MERGE_LABEL.2),
+        app::NO_REVIEW => (NO_REVIEW_LABEL.1, NO_REVIEW_LABEL.2),
+        _ if doc["labels"][name]["kind"] == "area" => AREA_GH_LABEL,
+        _ => MODIFIER_GH_LABEL,
+    };
+    (format!("orqa:{name}"), color, description)
+}
+
+/// Every GitHub label the Orchestrator puts on a PR in the repo doc is the
+/// config.json of, as init and /config keep them on GitHub: the built-ins,
+/// each Ticket label in doc, and orqa:release with releases on.
+pub(crate) fn gh_labels(doc: &Value) -> Vec<(String, &'static str, &'static str)> {
+    let built_in = [app::HUMAN_MERGE, app::NO_REVIEW];
+    let configured = app::labels(doc)
+        .into_keys()
+        .filter(|name| !built_in.contains(&name.as_str()));
+    let mut labels: Vec<_> = built_in
+        .into_iter()
+        .map(String::from)
+        .chain(configured)
+        .map(|name| ticket_gh_label(doc, &name))
+        .collect();
+    if app::switch_in(doc, &app::RELEASE_ON) {
+        let (name, color, description) = RELEASE_GH_LABEL;
+        labels.push((name.to_string(), color, description));
+    }
+    labels
+}
 
 /// Where a skill's files live, from the repo's root.
 const SKILL_DIRS: [&str; 4] = [
@@ -119,14 +162,22 @@ impl Orchestrator {
         let mut verdicts = Vec::new();
         for round in 1..=MAX_ROUNDS {
             let review_file = self.run_dir(ticket).join(result_name(&REVIEW, round));
-            let review =
-                self.run_read_only(ticket, &REVIEW, round, &[], ResultRequirements::default())?;
-            // The Area label's Extra review, after the Review in every Round
-            // or in Round 1 only; one before the PR runs once, after the
-            // last Round's Fix.
             let labels = self
                 .labels(ticket)
                 .map_err(|err| StageError::Parked(format!("Ticket labels not read: {err}")))?;
+            // orqa:no-review opens the PR unreviewed, as a Limited Review's
+            // App can: no Review runs.
+            let review = if app::no_review(&labels) {
+                StageResult {
+                    unreviewed: format!("the Ticket carries orqa:{}", app::NO_REVIEW),
+                    ..Default::default()
+                }
+            } else {
+                self.run_read_only(ticket, &REVIEW, round, &[], ResultRequirements::default())?
+            };
+            // The Area label's Extra review, after the Review in every Round
+            // or in Round 1 only; one before the PR runs once, after the
+            // last Round's Fix.
             let extra = app::extra_review(&self.cfg.repo, &labels).map_err(StageError::Parked)?;
             let (before_pr, extra) = match extra {
                 Some(extra) if extra.position == "before_pr" => (Some(extra), None),
@@ -135,9 +186,9 @@ impl Orchestrator {
                     extra.filter(|extra| extra.position != "first" || round == 1),
                 ),
             };
-            // Its App Limited and the PR to open unreviewed: this Round's
-            // Review, Extra review and Debate are skipped, and nothing is
-            // left to fix.
+            // Its App Limited and the PR to open unreviewed, or
+            // orqa:no-review: this Round's Review, Extra review and Debate
+            // are skipped, and nothing is left to fix.
             let mut unreviewed = review.unreviewed;
             let fixes = if !unreviewed.is_empty() {
                 self.report(
@@ -249,27 +300,46 @@ impl Orchestrator {
 
     /// Labels the PR the last Fix opened, whatever agent_merge says, and
     /// gives back whether it is human-merge and whether it is a No-review
-    /// pull request, for the Ticket's state. Human-merge wins: such a PR is
-    /// never No-review. Labels or a diff that cannot be read fall on the
-    /// safe side, a human merging and the bots reviewing, and RECENT says
-    /// so; gh failing leaves a line there too, and a PR without its
-    /// orqa:no-review is not No-review, since the bots review it.
+    /// pull request, for the Ticket's state: orqa:human-merge and
+    /// orqa:no-review, each on its own, so a PR may carry both, then each
+    /// other orqa: label the Ticket carries. Labels or a diff that cannot
+    /// be read fall on the safe side, a human merging and the bots
+    /// reviewing, and RECENT says so; gh failing leaves a line there too,
+    /// and a PR without its orqa:no-review is not No-review, since the bots
+    /// review it.
     fn label_pr(&self, ticket: &str, pr: &str) -> (bool, bool) {
         let human_merge = self.is_human_merge(ticket, pr);
-        let label = if human_merge {
-            HUMAN_MERGE_LABEL
-        } else if self.changes_no_review(ticket, pr, "HEAD") {
-            NO_REVIEW_LABEL
-        } else {
-            return (false, false);
+        let no_review = self.is_no_review_pr(ticket, pr, "HEAD");
+        let mut names = Vec::new();
+        names.extend(human_merge.then(|| app::HUMAN_MERGE.to_string()));
+        names.extend(no_review.then(|| app::NO_REVIEW.to_string()));
+        // The Ticket's own, coloured by their kinds in config.json: either
+        // unread, is_human_merge has said so, and only the built-ins above
+        // go on, never an Area label made with a Modifier's colour.
+        let doc = app::read(&self.cfg.repo).map(|(_, doc)| doc);
+        let own = match &doc {
+            Ok(_) => self.labels(ticket).unwrap_or_default(),
+            Err(_) => Vec::new(),
         };
-        let (pr_ref, name) = (pr_ref(pr), label.0);
-        let labelled = self.add_pr_label(pr, label);
-        match &labelled {
-            Ok(()) => self.log(ticket, &format!("{pr_ref} labelled {name}")),
-            Err(err) => self.report(ticket, &format!("{pr_ref} not labelled {name}: {err}")),
+        let doc = doc.unwrap_or_default();
+        let built_in = [app::HUMAN_MERGE, app::NO_REVIEW];
+        names.extend(
+            own.into_iter()
+                .filter(|name| !built_in.contains(&name.as_str())),
+        );
+        let mut no_review_labelled = false;
+        for name in names {
+            let (name, color, description) = ticket_gh_label(&doc, &name);
+            let pr_ref = pr_ref(pr);
+            match self.add_pr_label(pr, (&name, color, description)) {
+                Ok(()) => {
+                    no_review_labelled |= name == NO_REVIEW_LABEL.0;
+                    self.log(ticket, &format!("{pr_ref} labelled {name}"))
+                }
+                Err(err) => self.report(ticket, &format!("{pr_ref} not labelled {name}: {err}")),
+            }
         }
-        (human_merge, !human_merge && labelled.is_ok())
+        (human_merge, no_review && no_review_labelled)
     }
 
     /// Whether the Ticket's labels make its PR human-merge; labels that
@@ -285,6 +355,15 @@ impl Orchestrator {
                 self.report(ticket, &text);
                 true
             })
+    }
+
+    /// Whether the Ticket's PR is a No-review pull request at `head`: the
+    /// Ticket carries orqa:no-review, or its branch changed only Markdown
+    /// and skills. Labels that cannot be read leave it to the diff.
+    fn is_no_review_pr(&self, ticket: &str, pr: &str, head: &str) -> bool {
+        self.labels(ticket)
+            .is_ok_and(|names| app::no_review(&names))
+            || self.changes_no_review(ticket, pr, head)
     }
 
     /// Whether the Ticket's branch, from its base to `head`, changed only
@@ -312,7 +391,8 @@ impl Orchestrator {
     /// the Ticket's labels, and the diff to the head about to merge. A
     /// state saved before human_merge was, a label added since or a source
     /// file pushed since must not merge (ADR 0007). Human-merge now is kept
-    /// and labelled. A No-review PR that is one no longer loses
+    /// and labelled. A No-review PR that is one no longer, its Ticket
+    /// without orqa:no-review and its diff past Markdown and skills, loses
     /// orqa:no-review, so the bots review it, and waits for them; it stays
     /// No-review until gh removes the label, so the next poll tries again.
     /// True when the merge may go on.
@@ -331,7 +411,7 @@ impl Orchestrator {
             self.report(ticket, &text);
             return false;
         }
-        if !ts.no_review || self.changes_no_review(ticket, &ts.pr, head) {
+        if !ts.no_review || self.is_no_review_pr(ticket, &ts.pr, head) {
             return true;
         }
         let name = NO_REVIEW_LABEL.0;
@@ -356,25 +436,14 @@ impl Orchestrator {
     pub(super) fn add_pr_label(
         &self,
         pr: &str,
-        (name, color, description): GhLabel,
+        (name, color, description): (&str, &str, &str),
     ) -> Result<(), RunError> {
         let (tools, repo) = (&self.cfg.tools, &self.cfg.repo);
         let add = ["gh", "pr", "edit", pr, "--add-label", name];
         if tools.run(repo, &add).is_ok() {
             return Ok(());
         }
-        let create = [
-            "gh",
-            "label",
-            "create",
-            name,
-            "--color",
-            color,
-            "--description",
-            description,
-            "--force",
-        ];
-        tools.run(repo, &create)?;
+        put_gh_label(repo, tools.as_ref(), (name, color, description))?;
         tools.run(repo, &add).map(drop)
     }
 

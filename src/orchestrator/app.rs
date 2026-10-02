@@ -1016,15 +1016,24 @@ impl Clash {
 /// The built-in Modifier label orqa:human-merge, by name: known with no
 /// entry in config.json's labels, and an entry under its name is not read.
 pub(crate) const HUMAN_MERGE: &str = "human-merge";
+/// The built-in Modifier label orqa:no-review, by name, as HUMAN_MERGE is:
+/// its Ticket's Review, Extra review and Debate are skipped and its PR is
+/// a No-review pull request.
+pub(crate) const NO_REVIEW: &str = "no-review";
+
+/// Whether a Ticket with these labels, by name, carries orqa:no-review.
+pub(crate) fn no_review(names: &[String]) -> bool {
+    names.iter().any(|name| name == NO_REVIEW)
+}
 
 /// The label under name as a Ticket carries it: its entry in doc, or why
-/// it cannot be read; None with no entry. orqa:human-merge is the built-in
-/// Modifier, which sets no row.
+/// it cannot be read; None with no entry. orqa:human-merge and
+/// orqa:no-review are the built-in Modifiers, which set no row.
 fn known(doc: &Value, name: &str) -> Option<Result<Label, String>> {
-    if name == HUMAN_MERGE {
+    if name == HUMAN_MERGE || name == NO_REVIEW {
         return Some(Ok(Label {
             kind: "modifier".to_string(),
-            human_merge: true,
+            human_merge: name == HUMAN_MERGE,
             ..Default::default()
         }));
     }

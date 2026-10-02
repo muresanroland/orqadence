@@ -1,7 +1,9 @@
 //! Ticket labels on the code-editing Stages: the label's skills and
 //! guidance as Inputs, the Epic context in the Ticket file, and a label
 //! skill missing on the base as a Question at Ticket start. And the GitHub
-//! labels a Ticket's PR gets as it opens: orqa:human-merge, orqa:no-review.
+//! labels a Ticket's PR gets as it opens: orqa:human-merge, orqa:no-review
+//! and the Ticket's own; and orqa:no-review on a Ticket, which skips its
+//! Review.
 
 use super::stage::{Answer, Ask};
 use super::state::{load_state, STATUS_PR_OPEN};
@@ -311,10 +313,11 @@ fn a_pr_touching_src_gets_no_label() {
     assert!(!ts.no_review && !ts.human_merge, "state = {ts:?}");
 }
 
-/// Human-merge wins: a security Ticket's PR, though only Markdown and
-/// skills changed, is labelled orqa:human-merge and never orqa:no-review.
+/// Human-merge and No-review are each on their own: a security Ticket's
+/// PR of Markdown and skills alone is labelled both, then orqa:security,
+/// so the bots skip it and a human merges it.
 #[test]
-fn a_security_tickets_pr_of_markdown_alone_gets_orqa_human_merge_and_not_no_review() {
+fn a_security_tickets_pr_of_markdown_alone_gets_orqa_human_merge_and_no_review() {
     let (w, o) = new_world(vec![labelled_ticket(&["orqa:security"])]);
     let doc = json!({"labels": {"security": {"kind": "area", "human_merge": true}}});
     write_file(&w.repo.join(".orqadence/config.json"), &doc.to_string());
@@ -324,10 +327,130 @@ fn a_security_tickets_pr_of_markdown_alone_gets_orqa_human_merge_and_not_no_revi
 
     assert_eq!(
         w.called("gh pr edit"),
-        [format!("gh pr edit {PR} --add-label orqa:human-merge")]
+        [
+            format!("gh pr edit {PR} --add-label orqa:human-merge"),
+            format!("gh pr edit {PR} --add-label orqa:no-review"),
+            format!("gh pr edit {PR} --add-label orqa:security"),
+        ]
     );
     let ts = o.ticket("hx-1");
-    assert!(ts.human_merge && !ts.no_review, "state = {ts:?}");
+    assert!(ts.human_merge && ts.no_review, "state = {ts:?}");
+}
+
+/// A PR carries its Ticket's orqa: labels, in bd's order, made on GitHub
+/// by their kind where the repo lacks them; a bd label without orqa: stays
+/// in bd.
+#[test]
+fn a_pr_carries_its_tickets_orqa_labels() {
+    let (w, o) = new_world(vec![labelled_ticket(&[
+        "orqa:db",
+        "bug",
+        "orqa:codex-review",
+    ])]);
+    config(&w, &[], "");
+    changed(&w, &["src/db.rs"]);
+    w.hook(|_, argv| match argv {
+        ["gh", "pr", "edit", .., "orqa:db"] => Some(Err("'orqa:db' not found".to_string())),
+        _ => None,
+    });
+
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 PR #hx-1 opened");
+    let gh: Vec<String> = w
+        .called("gh ")
+        .into_iter()
+        .filter(|call| call.starts_with("gh label") || call.starts_with("gh pr edit"))
+        .collect();
+    assert_eq!(
+        gh,
+        [
+            format!("gh pr edit {PR} --add-label orqa:db"),
+            "gh label create orqa:db --color 5319E7 --description Orqadence Area label --force"
+                .to_string(),
+            format!("gh pr edit {PR} --add-label orqa:db"),
+            format!("gh pr edit {PR} --add-label orqa:codex-review"),
+        ]
+    );
+    assert_eq!(
+        w.await_line("hx-1 PR #hx-1 not labelled"),
+        format!(
+            "hx-1 PR #hx-1 not labelled orqa:db: \
+             gh pr edit {PR} --add-label orqa:db: exit status 1: 'orqa:db' not found"
+        )
+    );
+    let ts = o.ticket("hx-1");
+    assert!(!ts.no_review && !ts.human_merge, "state = {ts:?}");
+}
+
+/// config.json that cannot be read as the PR opens gives no kind to colour
+/// the Ticket's own labels by: only the built-ins go on, the PR
+/// human-merge since its labels were not read.
+#[test]
+fn a_config_unread_as_the_pr_opens_puts_on_no_ticket_label() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:db"])]);
+    config(&w, &[], "");
+    changed(&w, &["src/db.rs"]);
+    let config = w.repo.join(".orqadence/config.json");
+    let fix = o.run_dir("hx-1").join("fix-1.md");
+    w.hook(move |_, argv| {
+        if argv.starts_with(&["bd", "show"]) && fix.exists() {
+            write_file(&config, "{");
+        }
+        None
+    });
+
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 Ticket labels not read, so a human merges PR #hx-1: ");
+    assert_eq!(
+        w.called("gh pr edit"),
+        [format!("gh pr edit {PR} --add-label orqa:human-merge")]
+    );
+}
+
+/// orqa:no-review on a Ticket: Implement, then a Fix that opens the PR
+/// unreviewed and says why, no Review, Extra review or Debate; the PR is
+/// a No-review pull request though it changes source files.
+#[test]
+fn a_no_review_ticket_skips_its_review_and_its_pr_gets_orqa_no_review() {
+    let (w, o) = new_world(vec![labelled_ticket(&["orqa:security", "orqa:no-review"])]);
+    let doc = json!({"labels": {"security": {
+        "kind": "area",
+        "human_merge": true,
+        "extra_review": {"skill": "orqa-security-review", "position": "before_pr"},
+    }}});
+    write_file(&w.repo.join(".orqadence/config.json"), &doc.to_string());
+    changed(&w, &["src/auth.rs"]);
+
+    o.run_ticket("hx-1");
+
+    w.await_line("hx-1 review 1 and debate 1 skipped: the Ticket carries orqa:no-review");
+    w.await_line("hx-1 PR #hx-1 opened after 1 round");
+    let prompts = w.called("herdr agent prompt");
+    assert!(
+        prompts
+            .iter()
+            .all(|p| !p.contains("review-1.md") && !p.contains("verdict-1.md")),
+        "{prompts:#?}"
+    );
+    let fix = w.prompt("fix-1.md");
+    assert!(
+        fix.contains(
+            "- Unreviewed: the Ticket carries orqa:no-review, the extra review skipped too"
+        ),
+        "{fix}"
+    );
+    assert_eq!(
+        w.called("gh pr edit"),
+        [
+            format!("gh pr edit {PR} --add-label orqa:human-merge"),
+            format!("gh pr edit {PR} --add-label orqa:no-review"),
+            format!("gh pr edit {PR} --add-label orqa:security"),
+        ]
+    );
+    let ts = o.ticket("hx-1");
+    assert!(ts.human_merge && ts.no_review, "state = {ts:?}");
 }
 
 /// gh refuses a label the repo lacks: it is created, with its colour and

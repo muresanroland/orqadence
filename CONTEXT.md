@@ -50,7 +50,7 @@ A run, an Epic run or a Ticket run, that was stopped before it ended, kept so it
 _Avoid_: Stopped run, history entry, paused epic
 
 **Ticket label**:
-A bd label `orqa:<name>` that the Target repo has configured, changing how its Ticket runs: the skills and guidance the Stages that write its code get, the App, model or effort of any Stage, the template its pull request is written from, and possibly an Extra review. A Ticket carries at most one Area label and any number of Modifier labels; labels that clash are put to the user before the Ticket goes on.
+A bd label `orqa:<name>` that the Target repo has configured, changing how its Ticket runs: the skills and guidance the Stages that write its code get, the App, model or effort of any Stage, the template its pull request is written from, and possibly an Extra review. A Ticket carries at most one Area label and any number of Modifier labels; labels that clash are put to the user before the Ticket goes on. Its pull request carries the same labels on GitHub, where `orqa init` and `/config` keep them.
 _Avoid_: Tag, kind
 
 **Area label**:
@@ -65,8 +65,12 @@ _Avoid_: Flag, option
 A Ticket label configured `human_merge`, as security, db and infra ship, or the built-in `orqa:human-merge` on one Ticket: the Orchestrator never merges that Ticket's pull request, which carries the GitHub label `orqa:human-merge`, even under Agent merge.
 _Avoid_: Protected label, manual label
 
+**No-review label**:
+The built-in Modifier `orqa:no-review` on one Ticket: its Review, Extra review and Debate are skipped, Implement followed by a Fix that opens the pull request, which is a No-review pull request. It is independent of a Human-merge label: a Ticket carrying both gets a pull request nothing reviews and a human merges.
+_Avoid_: Skip-review label, docs label
+
 **Release label**:
-The label `orqa:release`, on an Epic or on any Ticket of a Ticket run, asking that the run end in a Release, when the Target repo has releases turned on. An Epic's run raises the minor version, a Ticket run the patch version. Unlike a Ticket label it is read on the Epic, not its Tickets, and changes how the run ends, not how a Ticket runs.
+The label `orqa:release`, on an Epic or on any Ticket of a Ticket run, asking that the run end in a Release, when the Target repo has releases turned on. An Epic's run raises the minor version, a Ticket run the patch version. Unlike a Ticket label it is read on the Epic, not its Tickets, and changes how the run ends, not how a Ticket runs; on GitHub only the Release's version pull request carries it.
 _Avoid_: Version bump label, release tag
 
 **Brainstorm**:
@@ -137,7 +141,7 @@ The Target repo's switch, off by default and only with automatic Address PR comm
 _Avoid_: Auto-merge (GitHub's), self-merge
 
 **No-review pull request**:
-The Release's version pull request, or one whose every changed file is Markdown or a skill. It carries the GitHub label `orqa:no-review`, which the review bots are configured to skip, and under Agent merge it merges once its checks are green.
+The Release's version pull request, a Ticket's whose Ticket carries the No-review label, or one whose every changed file is Markdown or a skill, Human-merge or not. It carries the GitHub label `orqa:no-review`, which the review bots are configured to skip, and under Agent merge it merges once its checks are green, unless a human must merge it.
 _Avoid_: Trivial PR, docs PR
 
 **Release**:

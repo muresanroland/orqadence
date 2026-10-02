@@ -31,6 +31,7 @@ use crate::orchestrator::app::{
     REVIEW_BOTS_KEY,
 };
 use crate::orchestrator::judgment::{PLAN_FLOOR, WAKE_FLOOR};
+use crate::orchestrator::pipeline;
 use crate::orchestrator::stage::plural;
 use crate::setup;
 use crate::skills::manifest::{self, job_row, parse_source, Added, Manifest, JOBS, NONE};
@@ -1294,8 +1295,8 @@ impl Settings {
     }
 
     /// A label name as typed, as bd takes a label: not empty, no whitespace,
-    /// no comma (bd's list separator), not the built-in orqa:human-merge's,
-    /// and not one config.json has.
+    /// no comma (bd's list separator), not a built-in's (orqa:human-merge,
+    /// orqa:no-review), and not one config.json has.
     fn valid_label(&self, typed: &str) -> Result<String, String> {
         let name = label_name(typed);
         if name.is_empty() {
@@ -1306,7 +1307,7 @@ impl Settings {
                 "Refused: '{name}' is not a bd label: no spaces or commas. Nothing changed."
             ));
         }
-        if name == app::HUMAN_MERGE {
+        if name == app::HUMAN_MERGE || name == app::NO_REVIEW {
             return Err(format!(
                 "Refused: orqa:{name} is built in. Nothing changed."
             ));
@@ -2867,9 +2868,31 @@ impl Screen {
             text,
         );
         if saved {
+            self.sync_gh_label(&name);
             let st = self.settings.as_mut().unwrap();
             st.label = Some(name);
             st.setting = 0;
+        }
+    }
+
+    /// Keeps orqa:<name> on GitHub as config.json now has it, after a
+    /// label change was saved: made, or coloured and described by its kind
+    /// again. Said beside the change; gh failing changes nothing else.
+    fn sync_gh_label(&mut self, name: &str) {
+        let st = self.settings.as_mut().unwrap();
+        let (label, color, description) = pipeline::ticket_gh_label(&st.doc, name);
+        // ponytail: gh runs on the UI thread, so a slow network holds the
+        // page for that call; move it off the thread if that is felt.
+        let said = match setup::put_gh_label(
+            &self.cfg.repo,
+            &*self.cfg.tools,
+            (&label, color, description),
+        ) {
+            Ok(()) => format!("; {label} kept on GitHub"),
+            Err(err) => format!("; {label} not kept on GitHub: {err}"),
+        };
+        if let Some((note, _)) = &mut st.note {
+            note.push_str(&said);
         }
     }
 
@@ -2891,7 +2914,7 @@ impl Screen {
         };
         let text = format!("renamed orqa:{old} to orqa:{name}");
         let new = name.clone();
-        self.save_label(
+        let saved = self.save_label(
             move |labels| {
                 if labels.contains_key(&new) {
                     return Err(format!("orqa:{new} is there already"));
@@ -2904,6 +2927,9 @@ impl Screen {
             },
             text,
         );
+        if saved {
+            self.sync_gh_label(&name);
+        }
         self.labels_cursor(&name);
     }
 
@@ -2939,13 +2965,16 @@ impl Screen {
             _ => ("area", "an area"),
         };
         let label = name.to_string();
-        self.save_label(
+        let saved = self.save_label(
             move |labels| {
                 label_entry(labels, &label)?["kind"] = json!(kind);
                 Ok(())
             },
             format!("orqa:{name} is {a} label"),
         );
+        if saved {
+            self.sync_gh_label(name);
+        }
     }
 
     /// Enter or Space on "A human merges these Tickets' PRs": on and off.

@@ -805,9 +805,11 @@ fn settle(w: &World, clock: &Mutex<DateTime<Local>>) {
     *clock.lock().unwrap() += TimeDelta::seconds(60);
 }
 
-/// The version PR's orqa:no-review, as gh is asked for it.
-fn labelled() -> String {
-    format!("gh pr edit {VERSION_PR} --add-label orqa:no-review")
+/// The version PR's orqa:no-review and orqa:release, as gh is asked for
+/// them.
+fn labelled() -> [String; 2] {
+    ["orqa:no-review", "orqa:release"]
+        .map(|name| format!("gh pr edit {VERSION_PR} --add-label {name}"))
 }
 
 #[test]
@@ -823,7 +825,7 @@ fn with_agent_merge_off_the_version_pr_is_labelled_but_never_merged_and_the_tag_
     w.await_line("version PR #version opened");
     settle(&w, &clock);
     polled(&w);
-    assert_eq!(w.called("gh pr edit"), [labelled()], "whatever its files");
+    assert_eq!(w.called("gh pr edit"), labelled(), "whatever its files");
     assert!(w.called("gh pr merge").is_empty(), "merged with it off");
 
     w.lock().prs.remove(VERSION_PR); // merged by hand
@@ -860,7 +862,7 @@ fn under_agent_merge_the_version_pr_is_labelled_merged_on_green_and_tagged_with_
     open_version_pr(&w, "SUCCESS");
     run.wait();
 
-    assert_eq!(w.called("gh pr edit"), [labelled()]);
+    assert_eq!(w.called("gh pr edit"), labelled());
     let merge = format!(
         "gh pr merge {VERSION_PR} --squash --delete-branch --match-head-commit a --repo o/r"
     );

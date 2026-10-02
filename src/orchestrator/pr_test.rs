@@ -882,6 +882,21 @@ fn a_no_review_pr_that_changes_a_source_file_since_loses_its_exemption() {
     assert!(merges(&w).is_empty(), "Greptile has not reviewed");
 }
 
+/// A PR No-review by its Ticket's orqa:no-review keeps it at merge though
+/// it changes source files: it merges on green with no bot waited for.
+#[test]
+fn a_no_review_tickets_pr_that_changes_source_merges_on_green() {
+    let (w, o, clock) = polled();
+    w.lock().tickets[0].labels = vec!["orqa:no-review".to_string()];
+    agent_merge(&w, &["greptile"]);
+    o.update("hx-1", |ts| ts.no_review = true);
+    changed(&w, "src/main.rs\0");
+    settle(&w, &o, &clock, &open(PR65, "a"));
+    assert_eq!(merges(&w).len(), 1);
+    assert!(o.ticket("hx-1").no_review);
+    assert_eq!(w.called("gh pr edit"), Vec::<String>::new());
+}
+
 /// A No-review PR whose orqa:no-review gh failed to remove stays No-review,
 /// so it is not merged and the next poll removes the label again.
 #[test]

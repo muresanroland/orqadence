@@ -732,15 +732,15 @@ codex: outdated (v7) (/h/.codex/herdr-agent-state.sh)
             .filter(|c| c.starts_with("herdr integration install"))
             .collect()
     };
-    // The docs/agents setup, TypeSafe no, the labels, both switches no, the
-    // Release's yes, On call no, then the integrations: yes.
+    // The docs/agents setup, TypeSafe no, the labels, both switches no, no
+    // review bots, the Release's yes, On call no, then the integrations: yes.
     let (repo, home) = (bare_repo(), TempDir::new());
     let tools = herdr(true);
     let (_, out) = init_with(
         repo.path(),
         home.path(),
         tools.clone(),
-        &["\n", "n\n", "\n", "\n", "\n", "\n", "\n", "\n"],
+        &["\n", "n\n", "\n", "\n", "\n", "\n", "\n", "\n", "\n"],
         "",
     );
     assert_eq!(
@@ -907,10 +907,20 @@ fn on_call(repo: &Path) -> Option<serde_json::Value> {
 /// readable only by you; enter alone, or nobody answering, keeps none.
 #[test]
 fn init_asks_on_call_and_keeps_the_moshi_token_readable_only_by_you() {
-    // The docs/agents setup, TypeSafe no, the labels, both switches no, the
-    // Release's yes, On call yes, the token.
+    // The docs/agents setup, TypeSafe no, the labels, both switches no, no
+    // review bots, the Release's yes, On call yes, the token.
     let (repo, home) = (bare_repo(), TempDir::new());
-    let keys = ["\n", "n\n", "\n", "\n", "\n", "\n", "y\n", "moshi-tok\n"];
+    let keys = [
+        "\n",
+        "n\n",
+        "\n",
+        "\n",
+        "\n",
+        "\n",
+        "\n",
+        "y\n",
+        "moshi-tok\n",
+    ];
     let (code, out) = init_keys(repo.path(), home.path(), &keys);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains(ON_CALL) && out.contains("› 2. No"), "{out}");
@@ -1045,8 +1055,8 @@ const RELEASE_QUESTION: &str = "Turn on releases (the orqa:release label)?";
 /// on where config.json has no value yet, and keeps the one it has.
 #[test]
 fn init_asks_the_release_switch_and_enter_is_yes() {
-    // (the answers after the docs/agents setup, TypeSafe no, the labels and
-    // both switches)
+    // (the answers after the docs/agents setup, TypeSafe no, the labels,
+    // both switches and no review bots)
     for (key, saved, want) in [
         ("\n", None, true),
         ("\n", Some(false), true),
@@ -1056,7 +1066,7 @@ fn init_asks_the_release_switch_and_enter_is_yes() {
         if let Some(saved) = saved {
             app::set_switch(repo.path(), &app::RELEASE_ON, saved).unwrap();
         }
-        let keys = ["\n", "n\n", "\n", "\n", "\n", key];
+        let keys = ["\n", "n\n", "\n", "\n", "\n", "\n", key];
         let (code, out) = init_keys(repo.path(), home.path(), &keys);
         assert_eq!(code, 0, "{key:?}:\n{out}");
         assert!(out.contains(RELEASE_QUESTION), "{out}");
@@ -1101,40 +1111,40 @@ const AGENT_MERGE_QUESTION: &str =
 const REVIEW_BOTS_QUESTION: &str = "Which review bots does this repo have?";
 
 /// With PR comments opened by themselves init asks Agent merge, enter alone
-/// no; yes asks the repo's review bots, none ticked, and writes no bot_wait:
-/// its default stands. The bot ticked gets its No-review exclusion.
+/// no; then the repo's review bots, none ticked, Agent merge yes or no, and
+/// no bot_wait is written: its default stands. The bot ticked gets its
+/// No-review exclusion.
 #[test]
-fn init_asks_agent_merge_after_address_pr_comments_and_yes_asks_the_review_bots() {
+fn init_asks_agent_merge_after_address_pr_comments_then_the_review_bots_either_way() {
     // (the answers after the docs/agents setup, TypeSafe no and the labels:
     // Rebase no, Address PR comments yes)
     let before = ["\n", "n\n", "\n", "\n", "y\n"];
-    let (repo, home) = (bare_repo(), TempDir::new());
-    let keys: Vec<&str> = before.iter().chain(&["\n"]).copied().collect();
-    let (code, out) = init_keys(repo.path(), home.path(), &keys);
-    assert_eq!(code, 0, "{out}");
-    assert!(out.contains(AGENT_MERGE_QUESTION), "{out}");
-    assert!(!out.contains(REVIEW_BOTS_QUESTION), "{out}");
-    assert!(!app::switch(repo.path(), &app::AGENT_MERGE), "{out}");
-
-    let (repo, home) = (bare_repo(), TempDir::new());
-    let keys: Vec<&str> = before.iter().chain(&["y\n", " ", "\n"]).copied().collect();
-    let (code, out) = init_keys(repo.path(), home.path(), &keys);
-    assert_eq!(code, 0, "{out}");
-    assert!(out.contains(REVIEW_BOTS_QUESTION), "{out}");
-    assert!(out.contains("[ ] 2. greptile"), "{out}");
-    let (_, doc) = app::read(repo.path()).unwrap();
-    assert!(app::switch_in(&doc, &app::AGENT_MERGE), "{out}");
-    assert_eq!(
-        doc["review_bots"],
-        serde_json::json!(["coderabbit"]),
-        "{out}"
-    );
-    assert!(doc.get("bot_wait").is_none(), "{out}");
-    // The bot ticked is told to skip a No-review pull request, the other not.
-    let yaml = fs::read_to_string(repo.path().join(".coderabbit.yaml")).unwrap();
-    assert!(yaml.contains("- \"!orqa:no-review\""), "{yaml}");
-    assert!(out.contains("init: wrote .coderabbit.yaml"), "{out}");
-    assert!(!repo.path().join("greptile.json").exists(), "{out}");
+    for (agent_merge, answer) in [(false, "\n"), (true, "y\n")] {
+        let (repo, home) = (bare_repo(), TempDir::new());
+        let keys: Vec<&str> = before.iter().chain(&[answer, " ", "\n"]).copied().collect();
+        let (code, out) = init_keys(repo.path(), home.path(), &keys);
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains(AGENT_MERGE_QUESTION), "{out}");
+        assert!(out.contains(REVIEW_BOTS_QUESTION), "{out}");
+        assert!(out.contains("[ ] 2. greptile"), "{out}");
+        let (_, doc) = app::read(repo.path()).unwrap();
+        assert_eq!(
+            app::switch_in(&doc, &app::AGENT_MERGE),
+            agent_merge,
+            "{out}"
+        );
+        assert_eq!(
+            doc["review_bots"],
+            serde_json::json!(["coderabbit"]),
+            "{out}"
+        );
+        assert!(doc.get("bot_wait").is_none(), "{out}");
+        // The bot ticked is told to skip a No-review pull request, the other not.
+        let yaml = fs::read_to_string(repo.path().join(".coderabbit.yaml")).unwrap();
+        assert!(yaml.contains("- \"!orqa:no-review\""), "{yaml}");
+        assert!(out.contains("init: wrote .coderabbit.yaml"), "{out}");
+        assert!(!repo.path().join("greptile.json").exists(), "{out}");
+    }
 }
 
 /// With PR comments not opened by themselves Agent merge is not asked: init
@@ -1152,6 +1162,7 @@ fn init_does_not_ask_agent_merge_without_address_pr_comments_and_says_why() {
         out.contains("Agent merge off: it needs PR comments and failing checks opened for approval by themselves"),
         "{out}"
     );
+    assert!(out.contains(REVIEW_BOTS_QUESTION), "{out}");
     let (_, doc) = app::read(repo.path()).unwrap();
     assert_eq!(doc["agent_merge"], false, "{out}");
 }

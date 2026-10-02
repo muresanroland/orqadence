@@ -1,6 +1,6 @@
 use super::{
-    ask_typesafe, coderabbit_skipping, install_skills, preflight, typesafe_key, warnings,
-    write_bot_exclusions, yes,
+    ask_typesafe, coderabbit_skipping, install_skills, preflight, sync_gh_labels, typesafe_key,
+    warnings, write_bot_exclusions, yes,
 };
 use crate::orchestrator::write_file;
 use crate::skills::manifest::{Manifest, JOBS, NONE};
@@ -1080,14 +1080,13 @@ fn greptiles_config_gains_the_exclusion_once() {
     assert!(!repo.path().join("greptile.json").exists(), "{out}");
 }
 
-/// Without Agent merge, or with no bot listed, no bot's file is written.
+/// With no bot listed no bot's file is written; a bot listed is told to
+/// skip a No-review pull request whether Agent merge is on or off.
 #[test]
-fn no_exclusion_is_written_without_agent_merge_or_a_listed_bot() {
+fn a_listed_bot_gets_its_exclusion_with_or_without_agent_merge() {
     for config in [
-        r#"{"address_pr_comments_auto": true, "review_bots": ["coderabbit", "greptile"]}"#,
-        // Agent merge counts only with PR comments opened by themselves.
-        r#"{"agent_merge": true, "review_bots": ["coderabbit", "greptile"]}"#,
         r#"{"address_pr_comments_auto": true, "agent_merge": true}"#,
+        "{}",
     ] {
         let repo = TempDir::new();
         let out = exclusions(repo.path(), config);
@@ -1095,6 +1094,86 @@ fn no_exclusion_is_written_without_agent_merge_or_a_listed_bot() {
         assert!(!repo.path().join(".coderabbit.yaml").exists(), "{config}");
         assert!(!repo.path().join("greptile.json").exists(), "{config}");
     }
+    let repo = TempDir::new();
+    let out = exclusions(
+        repo.path(),
+        r#"{"review_bots": ["coderabbit", "greptile"]}"#,
+    );
+    assert!(
+        out.contains("init: wrote .coderabbit.yaml") && out.contains("init: wrote greptile.json"),
+        "{out}"
+    );
+}
+
+/// init's GitHub labels step over a repo whose config.json is `config` and
+/// whose GitHub labels gh lists as `listed`: what it said, and the gh
+/// label create calls.
+fn synced(config: &str, listed: Result<&'static str, &'static str>) -> (String, Vec<String>) {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), config);
+    let tools = Fake::new(move |_, argv| match argv {
+        ["gh", "label", "list", ..] => listed.map(String::from).map_err(String::from),
+        _ => Ok(String::new()),
+    });
+    let mut out = Vec::new();
+    sync_gh_labels(repo.path(), &*tools, &mut out).unwrap();
+    let created = tools
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("gh label create"))
+        .collect();
+    (String::from_utf8(out).unwrap(), created)
+}
+
+/// The labels the Orchestrator puts on a PR are kept on GitHub: each one
+/// missing is made, one whose colour or description differs is set again
+/// (colour case aside), one that matches is left, and none is deleted. The
+/// set is the built-ins, every label config.json has, by its kind, and
+/// orqa:release only with releases on.
+#[test]
+fn init_makes_and_updates_the_github_labels_the_orchestrator_puts_on_prs() {
+    let config = r#"{"release_on": true, "labels": {"fe": {"kind": "area"}, "codex-review": {"kind": "modifier"}}}"#;
+    let listed = r#"[
+        {"name": "orqa:human-merge", "color": "d93f0b", "description": "A human merges this pull request, never Orqadence"},
+        {"name": "orqa:fe", "color": "000000", "description": "Orqadence Area label"},
+        {"name": "orqa:old", "color": "000000", "description": ""},
+        {"name": "bug", "color": "d73a4a", "description": ""}
+    ]"#;
+    let (out, created) = synced(config, Ok(listed));
+    assert_eq!(
+        created,
+        [
+            "gh label create orqa:no-review --color C5DEF5 --description The review bots skip this pull request --force",
+            "gh label create orqa:codex-review --color FBCA04 --description Orqadence Modifier label --force",
+            "gh label create orqa:fe --color 5319E7 --description Orqadence Area label --force",
+            "gh label create orqa:release --color 0E8A16 --description The Release's version pull request --force",
+        ]
+    );
+    assert!(
+        out.contains("init: made the GitHub label orqa:no-review")
+            && out.contains("init: updated the GitHub label orqa:fe")
+            && !out.contains("orqa:human-merge")
+            && !out.contains("orqa:old"),
+        "{out}"
+    );
+
+    // Releases off: no orqa:release.
+    let (_, created) = synced(r#"{"labels": {}}"#, Ok("[]"));
+    assert_eq!(created.len(), 2, "{created:?}");
+    assert!(!created.iter().any(|call| call.contains("orqa:release")));
+}
+
+/// gh failing to list the labels, as with no GitHub remote, is said and
+/// init goes on, making nothing.
+#[test]
+fn github_labels_gh_cannot_list_are_said_and_init_goes_on() {
+    let (out, created) = synced("{}", Err("no git remotes found"));
+    assert!(
+        out.starts_with("init: GitHub labels not checked: ")
+            && out.contains("no git remotes found"),
+        "{out}"
+    );
+    assert_eq!(created, Vec::<String>::new());
 }
 
 /// A file init cannot edit is left as it is, and init says what to add by

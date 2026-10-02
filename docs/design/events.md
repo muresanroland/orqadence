@@ -35,6 +35,7 @@ Run-level lines have no Ticket; the panel's Ticket column reads `orqadence`. Pan
 | Debate done | debate N settled: K to fix, J skipped |
 | Fix done | fix N done |
 | PR opened | PR #12 opened after N rounds *(log line adds the url)* |
+| PR not labelled | PR #12 not labelled orqa:security: `err` *(any label the PR opens with: orqa:human-merge, orqa:no-review, the Ticket's own orqa: labels; one missing on GitHub is made first)* |
 | dependents now wait on a merge | *on each open dependent:* waiting for PR #12 to merge (Ticket 5) |
 | PR conflicts | PR #12 conflicts with main, /rebase resolves it · *with rebase_auto on, its Rebase starts:* PR #12 conflicts with main, rebasing it |
 | PR session queued | rebase waits for a slot · address pr comments waits for a slot *(past max_pr_sessions, or behind the Ticket's own session; it starts as one ends)* |
@@ -82,6 +83,7 @@ Decided on the map tickets "Limited" (harness-0sx.8) and "Apps per Stage" (harne
 | a session that would not take the continue | Wake reason: never took the continue |
 | the Review's App at a short limit, once for the run *(Ticket 15)* | asking you: codex limited until 3:05pm: how do Reviews go until then? *(options: wait for the reset · review with claude opus, when review_if_limited is set · open the PR unreviewed; every other Ticket reaching Review holds, log only, until the answer, which stands until the reset)* |
 | the answer | you answered: wait for the reset *(the Review holds as any Stage)* · you answered: review with claude opus *(then: review 1 started: claude opus (pane 2-3))* · you answered: open the PR unreviewed |
+| a Ticket carrying orqa:no-review | review 1 and debate 1 skipped: the Ticket carries orqa:no-review *(no Review runs; the Fix opens the PR with the Input Unreviewed: the Ticket carries orqa:no-review, its Extra review skipped too as below; the PR is labelled orqa:no-review, and orqa:human-merge too when a Human-merge label says so)* |
 | a Review skipped, the PR to open unreviewed | review 1 and debate 1 skipped: codex was limited until 3:05pm *(the last Fix gets the Input Unreviewed: codex was limited until 3:05pm)* · *with an Extra review:* extra review 1 skipped: codex was limited until 3:05pm *(the Input ends ", the extra review skipped too", and the Question's option reads open the PR unreviewed, the extra review skipped too)* |
 | a Debate side's App at its limit | *no line:* the Moderator's Inputs carry Side B: limited until 3:05pm |
 

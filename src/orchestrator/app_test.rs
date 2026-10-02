@@ -917,28 +917,35 @@ fn a_ticket_is_human_merge_by_a_label_entry_or_the_built_in_label() {
     assert!(!human_merge(&doc, &[]));
 }
 
-/// orqa:human-merge is built in: with no entry in config.json's labels it
-/// is no unknown label, alone or beside an Area label, whose row it leaves
-/// as it is. A typo beside it is still unknown, and an entry under its name
-/// is not read.
+/// orqa:human-merge and orqa:no-review are built in: with no entry in
+/// config.json's labels each is no unknown label, alone or beside an Area
+/// label, whose row it leaves as it is. A typo beside it is still unknown,
+/// and an entry under its name is not read. orqa:no-review is not
+/// human-merge.
 #[test]
-fn orqa_human_merge_is_known_with_no_entry_and_combines_with_an_area() {
-    let doc = json!({"labels": {
-        "be": {"kind": "area", "rows": {"review": {"app": "claude", "model": "opus"}}},
-    }});
-    assert_eq!(clash(&doc, &names(&["human-merge"])), None);
-    assert_eq!(clash(&doc, &names(&["be", "human-merge"])), None);
-    assert_eq!(
-        clash(&doc, &names(&["human-merge", "typo"])),
-        Some(Clash::Unknown("orqa:typo".to_string()))
-    );
-    let repo = repo_with(&doc);
-    let said = row(repo.path(), "review", &names(&["be", "human-merge"])).map(|r| r.said());
-    assert_eq!(said, Ok("claude opus".to_string()));
+fn the_built_in_labels_are_known_with_no_entry_and_combine_with_an_area() {
+    for built_in in ["human-merge", "no-review"] {
+        let doc = json!({"labels": {
+            "be": {"kind": "area", "rows": {"review": {"app": "claude", "model": "opus"}}},
+        }});
+        assert_eq!(clash(&doc, &names(&[built_in])), None);
+        assert_eq!(clash(&doc, &names(&["be", built_in])), None);
+        assert_eq!(
+            clash(&doc, &names(&[built_in, "typo"])),
+            Some(Clash::Unknown("orqa:typo".to_string()))
+        );
+        assert_eq!(
+            human_merge(&doc, &names(&[built_in])),
+            built_in == "human-merge"
+        );
+        let repo = repo_with(&doc);
+        let said = row(repo.path(), "review", &names(&["be", built_in])).map(|r| r.said());
+        assert_eq!(said, Ok("claude opus".to_string()));
 
-    // the name is the built-in's: an entry under it changes nothing
-    let doc = json!({"labels": {"be": {"kind": "area"}, "human-merge": {"kind": "area"}}});
-    assert_eq!(clash(&doc, &names(&["be", "human-merge"])), None);
+        // the name is the built-in's: an entry under it changes nothing
+        let doc = json!({"labels": {"be": {"kind": "area"}, built_in: {"kind": "area"}}});
+        assert_eq!(clash(&doc, &names(&["be", built_in])), None);
+    }
 }
 
 /// A label's rows keep the Debate's rule: a label pinning side_b to side

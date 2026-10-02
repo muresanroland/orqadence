@@ -10,7 +10,7 @@ use std::fs;
 use std::time::Instant;
 
 use super::app::{self, AGENT_MERGE, RELEASE_ON};
-use super::pipeline::NO_REVIEW_LABEL;
+use super::pipeline::{NO_REVIEW_LABEL, RELEASE_GH_LABEL};
 use super::result::ResultRequirements;
 use super::scheduler::BdIssue;
 use super::stage::{pr_ref, result_name, Ask, Orchestrator, StageError, RELEASE};
@@ -147,12 +147,18 @@ impl Orchestrator {
         }
         if !result.pr.is_empty() {
             // a No-review pull request whatever its files and whatever
-            // agent_merge says (ADR 0007); before its record has the
-            // version, so a Release resumed in between labels it again
-            let (pr, name) = (pr_ref(&result.pr), NO_REVIEW_LABEL.0);
-            match self.add_pr_label(&result.pr, NO_REVIEW_LABEL) {
-                Ok(()) => self.log(&id, &format!("version {pr} labelled {name}")),
-                Err(err) => self.report("", &format!("version {pr} not labelled {name}: {err}")),
+            // agent_merge says (ADR 0007), and orqa:release's; before its
+            // record has the version, so a Release resumed in between
+            // labels it again
+            let pr = pr_ref(&result.pr);
+            for label in [NO_REVIEW_LABEL, RELEASE_GH_LABEL] {
+                let name = label.0;
+                match self.add_pr_label(&result.pr, label) {
+                    Ok(()) => self.log(&id, &format!("version {pr} labelled {name}")),
+                    Err(err) => {
+                        self.report("", &format!("version {pr} not labelled {name}: {err}"))
+                    }
+                }
             }
         }
         self.change_state(|state| {

@@ -2,9 +2,10 @@
 //! the shipped skills and every job's default in .orqadence/skills, offers
 //! bd init, the docs/agents setup and herdr's integrations, keeps TypeSafe
 //! on or off and its key, the shipped Ticket labels and their skills,
-//! Rebase and Address PR comments' switches and the Release's, tells the
-//! review bots to skip a No-review pull request, asks On call's Moshi token,
-//! and preflights the Target repo.
+//! Rebase and Address PR comments' switches and the Release's, which review
+//! bots the repo has, tells them to skip a No-review pull request, makes
+//! the GitHub labels the Orchestrator puts on PRs, asks On call's Moshi
+//! token, and preflights the Target repo.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -19,12 +20,12 @@ use serde_json::{json, Value};
 
 use crate::on_call;
 use crate::orchestrator::app::{self, APPS};
-use crate::orchestrator::pipeline::NO_REVIEW_LABEL;
+use crate::orchestrator::pipeline::{gh_labels, NO_REVIEW_LABEL};
 use crate::orchestrator::state::{self, local_dir};
 use crate::shell::brand::{self, BORDER, FRAME, GREEN, MUTED, PURPLE, TEXT, YELLOW};
 use crate::skills::manifest::{self, Installed, Manifest, FILES, JOBS, LINKS};
 use crate::skills::{stage_skill, CREATE_PR, EXTRA_FILES, SKILLS};
-use crate::tools::Tools;
+use crate::tools::{RunError, Tools};
 
 /// The record of every skill file init wrote, path to the text it wrote:
 /// under refresh, a file that still matches is unedited and is rewritten.
@@ -352,12 +353,13 @@ fn unhide_links(repo: &Path) -> io::Result<()> {
 
 /// The rest of init once the skills are in: bd, the docs/agents setup,
 /// TypeSafe, every job's default, the Ticket labels, Rebase and Address PR
-/// comments' switches, the Release's, the review bots' No-review exclusion,
-/// On call, and herdr's integrations. A `committed` checkout keeps the
-/// committed TypeSafe switch, picks, labels and switches, and is asked only
-/// for the key, when TypeSafe is on and no key is set or kept; On call is
-/// per person, asked on every checkout, and the exclusion, which asks
-/// nothing, is written on every checkout that lacks it.
+/// comments' switches and the review bots, the Release's, the review bots'
+/// No-review exclusion, the GitHub labels, On call, and herdr's
+/// integrations. A `committed` checkout keeps the committed TypeSafe
+/// switch, picks, labels, switches and bots, and is asked only for the key,
+/// when TypeSafe is on and no key is set or kept; On call is per person,
+/// asked on every checkout, and the exclusion and the GitHub labels, which
+/// ask nothing, are made on every checkout that lacks them.
 pub(crate) fn set_up(
     repo: &Path,
     tools: &dyn Tools,
@@ -380,6 +382,7 @@ pub(crate) fn set_up(
         ask_typesafe_key(repo, out, input, tty)?;
     }
     write_bot_exclusions(repo, out)?;
+    sync_gh_labels(repo, tools, out)?;
     ask_on_call(repo, &env(on_call::TOKEN_VAR), out, input, tty)?;
     install_integrations(repo, tools, out, input, tty)
 }
@@ -387,7 +390,8 @@ pub(crate) fn set_up(
 /// Rebase and Address PR comments by themselves, each a yes/no kept in
 /// config.json, its default the switch as it is: off on a first init, so
 /// enter alone is no, and a re-run keeps a switch already set. Nobody
-/// answering keeps it too. Then Agent merge (ask_agent_merge).
+/// answering keeps it too. Then Agent merge (ask_agent_merge) and the
+/// review bots (ask_review_bots).
 fn ask_switches(
     repo: &Path,
     out: &mut dyn Write,
@@ -400,14 +404,13 @@ fn ask_switches(
         let on = yes(out, input, tty, switch.question, on)?.unwrap_or(on);
         app::set_switch(repo, switch, on).map_err(io::Error::other)?;
     }
-    ask_agent_merge(repo, out, input, tty)
+    ask_agent_merge(repo, out, input, tty)?;
+    ask_review_bots(repo, out, input, tty)
 }
 
 /// Agent merge, asked only with automatic Address PR comments on, its
 /// default the switch as it is, as ask_switches' are; without it init says
-/// why it is off, set_switch having turned off one kept on. Yes asks which
-/// review bots the repo has, ticked as config.json lists them, kept when
-/// the ticks change; bot_wait keeps its default.
+/// why it is off, set_switch having turned off one kept on.
 fn ask_agent_merge(
     repo: &Path,
     out: &mut dyn Write,
@@ -424,10 +427,20 @@ fn ask_agent_merge(
         app::AGENT_MERGE.question
     );
     let on = yes(out, input, tty, &question, on)?.unwrap_or(on);
-    app::set_switch(repo, &app::AGENT_MERGE, on).map_err(io::Error::other)?;
-    if !on {
-        return Ok(());
-    }
+    app::set_switch(repo, &app::AGENT_MERGE, on).map_err(io::Error::other)
+}
+
+/// Which review bots the repo has, Agent merge on or off, ticked as
+/// config.json lists them and kept when the ticks change: each one listed
+/// is told to skip a No-review pull request (write_bot_exclusions), and
+/// Agent merge waits for them; bot_wait keeps its default.
+fn ask_review_bots(
+    repo: &Path,
+    out: &mut dyn Write,
+    input: &mut dyn Read,
+    tty: bool,
+) -> io::Result<()> {
+    let (_, doc) = app::read(repo).map_err(io::Error::other)?;
     let kept = app::review_bots_in(&doc).unwrap_or_default();
     let rows = app::REVIEW_BOTS.map(|bot| (bot, String::new()));
     let ticked = app::REVIEW_BOTS.map(|bot| kept.contains(&bot));
@@ -448,8 +461,8 @@ fn ask_agent_merge(
 /// The GitHub label of a No-review pull request, which the review bots skip.
 const NO_REVIEW: &str = NO_REVIEW_LABEL.0;
 
-/// Under Agent merge, tells each review bot that review_bots lists to skip
-/// a No-review pull request: CodeRabbit in .coderabbit.yaml, Greptile in
+/// Tells each review bot that review_bots lists to skip a No-review pull
+/// request: CodeRabbit in .coderabbit.yaml, Greptile in
 /// .greptile/config.json when the repo has a .greptile folder, which wins
 /// over greptile.json, else in
 /// greptile.json. A file is made when missing, written only when it lacks
@@ -457,9 +470,6 @@ const NO_REVIEW: &str = NO_REVIEW_LABEL.0;
 /// left as it is, with what to add by hand.
 fn write_bot_exclusions(repo: &Path, out: &mut dyn Write) -> io::Result<()> {
     let (_, doc) = app::read(repo).map_err(io::Error::other)?;
-    if !app::switch_in(&doc, &app::AGENT_MERGE) {
-        return Ok(());
-    }
     type Edit = fn(&str) -> Result<Option<String>, String>;
     // A list that cannot be read is /config's to flag.
     for bot in app::review_bots_in(&doc).unwrap_or_default() {
@@ -506,6 +516,72 @@ fn write_bot_exclusions(repo: &Path, out: &mut dyn Write) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Keeps on GitHub each label the Orchestrator puts on a PR in this repo
+/// (pipeline::gh_labels), so one can go on a PR by hand too, as
+/// orqa:no-review on a docs change: one missing is made, one whose colour
+/// or description differs is set again, and none is deleted. gh failing,
+/// as with no GitHub remote or no login, is said, and init goes on: the
+/// Orchestrator makes a missing label as it labels a PR.
+fn sync_gh_labels(repo: &Path, tools: &dyn Tools, out: &mut dyn Write) -> io::Result<()> {
+    let (_, doc) = app::read(repo).map_err(io::Error::other)?;
+    let list = [
+        "gh",
+        "label",
+        "list",
+        "--limit",
+        "1000",
+        "--json",
+        "name,color,description",
+    ];
+    let have = tools
+        .run(repo, &list)
+        .map_err(|err| err.to_string())
+        .and_then(|text| serde_json::from_str::<Vec<Value>>(&text).map_err(|err| err.to_string()));
+    let have = match have {
+        Ok(have) => have,
+        Err(err) => return write!(out, "init: GitHub labels not checked: {err}\r\n"),
+    };
+    for (name, color, description) in gh_labels(&doc) {
+        let found = have.iter().find(|label| label["name"] == name.as_str());
+        let same = found.is_some_and(|label| {
+            let color_same = label["color"]
+                .as_str()
+                .is_some_and(|have| have.eq_ignore_ascii_case(color));
+            color_same && label["description"] == description
+        });
+        if same {
+            continue;
+        }
+        let done = if found.is_some() { "updated" } else { "made" };
+        match put_gh_label(repo, tools, (&name, color, description)) {
+            Ok(()) => write!(out, "init: {done} the GitHub label {name}\r\n")?,
+            Err(err) => write!(out, "init: GitHub label {name} not {done}: {err}\r\n")?,
+        }
+    }
+    Ok(())
+}
+
+/// Makes the GitHub label, or sets its colour and description again where
+/// the repo has it.
+pub(crate) fn put_gh_label(
+    repo: &Path,
+    tools: &dyn Tools,
+    (name, color, description): (&str, &str, &str),
+) -> Result<(), RunError> {
+    let create = [
+        "gh",
+        "label",
+        "create",
+        name,
+        "--color",
+        color,
+        "--description",
+        description,
+        "--force",
+    ];
+    tools.run(repo, &create).map(drop)
 }
 
 /// .coderabbit.yaml's `text` with "!orqa:no-review" in
