@@ -665,37 +665,13 @@ impl Orchestrator {
             return;
         }
         let number = pr_ref(&ts.pr);
-        let refused = if pr.is_merge_queue_enabled {
-            "its base branch has a merge queue".to_string()
-        } else {
-            let (name, method) = match self.merge_method() {
-                Ok(found) => found,
-                Err(err) => return self.log(ticket, &format!("merge method not read: {err}")),
-            };
-            if self.stopping() {
-                return;
+        let refused = match self.gh_merge(ticket, &ts.pr, pr) {
+            Ok(true) => {
+                self.update(ticket, |ts| ts.merge_asked = true);
+                return self.report(ticket, &format!("{number} merged by Orqadence"));
             }
-            let argv = [
-                "gh",
-                "pr",
-                "merge",
-                &ts.pr,
-                method,
-                "--delete-branch",
-                "--match-head-commit",
-                &pr.head_ref_oid,
-                "--repo",
-                &name,
-            ];
-            match self.cfg.tools.run(repo, &argv) {
-                Ok(_) => {
-                    self.update(ticket, |ts| ts.merge_asked = true);
-                    return self.report(ticket, &format!("{number} merged by Orqadence"));
-                }
-                // branch protection, a required approval, a head pushed since
-                Err(err) if !err.stderr.is_empty() => err.stderr,
-                Err(err) => err.to_string(),
-            }
+            Ok(false) => return,
+            Err(refused) => refused,
         };
         let reason = format!("{number} not merged: {refused}");
         let mut parked = false;
@@ -710,6 +686,45 @@ impl Orchestrator {
         });
         if parked {
             self.report(ticket, &format!("parked: {reason}"));
+        }
+    }
+
+    /// Asks gh to merge the PR at `url`, a Ticket's or the Release's version
+    /// PR, with the repo's own method: true once gh took it. False when gh
+    /// was not asked, the method not read or a stop seen, so the next poll
+    /// tries again. Err is why it is not merged: gh's message, or a merge
+    /// queue on its base branch.
+    pub(super) fn gh_merge(&self, id: &str, url: &str, pr: &Pr) -> Result<bool, String> {
+        if pr.is_merge_queue_enabled {
+            return Err("its base branch has a merge queue".to_string());
+        }
+        let (name, method) = match self.merge_method() {
+            Ok(found) => found,
+            Err(err) => {
+                self.log(id, &format!("merge method not read: {err}"));
+                return Ok(false);
+            }
+        };
+        if self.stopping() {
+            return Ok(false);
+        }
+        let argv = [
+            "gh",
+            "pr",
+            "merge",
+            url,
+            method,
+            "--delete-branch",
+            "--match-head-commit",
+            &pr.head_ref_oid,
+            "--repo",
+            &name,
+        ];
+        match self.cfg.tools.run(&self.cfg.repo, &argv) {
+            Ok(_) => Ok(true),
+            // branch protection, a required approval, a head pushed since
+            Err(err) if !err.stderr.is_empty() => Err(err.stderr),
+            Err(err) => Err(err.to_string()),
         }
     }
 
@@ -732,18 +747,24 @@ impl Orchestrator {
         Ok((name.to_string(), method))
     }
 
-    /// An open PR's items not offered before, once its head is quiet and
-    /// nothing is to rebase; None before that.
-    fn quiet_items(&self, ticket: &str, ts: &TicketState, pr: &Pr) -> Option<Vec<Item>> {
+    /// Whether an open PR's head is quiet: the same for a minute, no check
+    /// or bot at work on it. A new head is recorded, with when it came.
+    pub(super) fn quiet_head(&self, ticket: &str, ts: &TicketState, pr: &Pr) -> bool {
         let now = (self.cfg.clock)();
         if pr.head_ref_oid != ts.head {
             self.update(ticket, |ts| {
                 ts.head = pr.head_ref_oid.clone();
                 ts.head_at = Some(now);
             });
-            return None;
+            return false;
         }
-        if pr.busy() || ts.head_at.is_none_or(|at| now - at < QUIET) {
+        !pr.busy() && ts.head_at.is_some_and(|at| now - at >= QUIET)
+    }
+
+    /// An open PR's items not offered before, once its head is quiet and
+    /// nothing is to rebase; None before that.
+    fn quiet_items(&self, ticket: &str, ts: &TicketState, pr: &Pr) -> Option<Vec<Item>> {
+        if !self.quiet_head(ticket, ts, pr) {
             return None;
         }
         // Rebase goes first: a PR that conflicts, or has a Rebase queued

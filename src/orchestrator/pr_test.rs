@@ -706,7 +706,7 @@ fn dependents_wait_on_the_merge_once_the_pr_is_settled() {
 }
 
 /// Agent merge on, with `bots` the repo's review bots.
-fn agent_merge(w: &World, bots: &[&str]) {
+pub(crate) fn agent_merge(w: &World, bots: &[&str]) {
     set_switch(&w.repo, &ADDRESS_PR_COMMENTS_AUTO, true).unwrap();
     set_switch(&w.repo, &AGENT_MERGE, true).unwrap();
     set_review_bots(&w.repo, bots).unwrap();

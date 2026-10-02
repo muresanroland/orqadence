@@ -9,7 +9,9 @@
 use std::fs;
 use std::time::Instant;
 
-use super::app::{self, RELEASE_ON};
+use super::app::{self, AGENT_MERGE, RELEASE_ON};
+use super::pipeline::NO_REVIEW_LABEL;
+use super::pr::Pr;
 use super::result::ResultRequirements;
 use super::scheduler::BdIssue;
 use super::stage::{pr_ref, result_name, Ask, Orchestrator, StageError, RELEASE};
@@ -144,6 +146,16 @@ impl Orchestrator {
         if !tab.is_empty() {
             let _ = self.herdr(&["tab", "close", &tab]);
         }
+        if !result.pr.is_empty() {
+            // a No-review pull request whatever its files and whatever
+            // agent_merge says (ADR 0007); before its record has the
+            // version, so a Release resumed in between labels it again
+            let (pr, name) = (pr_ref(&result.pr), NO_REVIEW_LABEL.0);
+            match self.add_pr_label(&result.pr, NO_REVIEW_LABEL) {
+                Ok(()) => self.log(&id, &format!("version {pr} labelled {name}")),
+                Err(err) => self.report("", &format!("version {pr} not labelled {name}: {err}")),
+            }
+        }
         self.change_state(|state| {
             if let Some(release) = &mut state.release {
                 release.version = result.version.clone();
@@ -163,7 +175,9 @@ impl Orchestrator {
 
     /// After the Release's result: its version PR polled until it merges,
     /// then the tag Question, unless a resumed Release is already tagged;
-    /// with no version PR, a repo that keeps its version only in tags, the
+    /// merged by the Orchestrator itself (Agent merge), it is tagged with
+    /// no Question, which only a tag that fails then asks. With no version
+    /// PR, a repo that keeps its version only in tags, the
     /// Question at once. The PR closed unmerged,
     /// a Question: true to run the Release again, its worktree, branch and
     /// record gone; false to end without one.
@@ -185,7 +199,8 @@ impl Orchestrator {
             return Ok(again);
         }
         if !release.tagged {
-            self.ask_tag(id)?;
+            // its merge the Orchestrator's own: tagged with no Question
+            self.ask_tag(id, !self.ticket(id).merge_asked)?;
         }
         Ok(false)
     }
@@ -193,9 +208,14 @@ impl Orchestrator {
     /// Polls the version PR on the PRs' interval, as poll_merges polls a
     /// Ticket's, until it merges or closes unmerged: whether it merged.
     /// Merged, its worktree and branch go, as a Ticket's do, and the merge
-    /// commit goes into its record.
+    /// commit goes into its record. Under Agent merge (ADR 0007) the
+    /// Orchestrator merges it once it is ready (version_pr_ready), as it
+    /// merges a Ticket's (gh_merge). GitHub refusing is said with gh's
+    /// message and not asked again in this run: it waits for a human's
+    /// merge, as with Agent merge off.
     fn poll_version_pr(&self, id: &str, url: &str) -> Result<bool, StageError> {
         let mut polled: Option<Instant> = None;
+        let mut asked = false;
         loop {
             if polled.is_none_or(|at| at.elapsed() >= self.cfg.poll_prs) {
                 polled = Some(Instant::now());
@@ -217,6 +237,21 @@ impl Orchestrator {
                         self.report("", &text);
                         return Ok(false);
                     }
+                    Ok(pr) if !asked && self.version_pr_ready(id, &pr) => {
+                        asked = true;
+                        match self.gh_merge(id, url, &pr) {
+                            Ok(true) => {
+                                self.update(id, |ts| ts.merge_asked = true);
+                                let text = format!("version {} merged by Orqadence", pr_ref(url));
+                                self.report("", &text);
+                            }
+                            Ok(false) => asked = false,
+                            Err(refused) => {
+                                let text = format!("version {} not merged: {refused}", pr_ref(url));
+                                self.report("", &text);
+                            }
+                        }
+                    }
                     Ok(_) => {}
                 }
             }
@@ -226,13 +261,27 @@ impl Orchestrator {
         }
     }
 
+    /// Whether Agent merge may merge the open version PR now: a No-review
+    /// pull request whatever its files, so as a Ticket's (merge) but with
+    /// no bot or PR comment to wait for: its head quiet, its checks green,
+    /// GitHub calling it mergeable and no review asking for changes.
+    fn version_pr_ready(&self, id: &str, pr: &Pr) -> bool {
+        app::switch(&self.cfg.repo, &AGENT_MERGE)
+            && self.quiet_head(id, &self.ticket(id), pr)
+            && pr.green()
+            && pr.mergeable == "MERGEABLE"
+            && pr.review_decision.as_deref() != Some("CHANGES_REQUESTED")
+            && !self.stopping()
+    }
+
     /// The tag Question: yes fetches origin's default branch, tags the
     /// merge commit (with no version PR, that branch's head as fetched) and
     /// pushes the tag alone, never a GitHub Release, which is the repo's own
     /// workflow's; a failure says so and asks again, a tag its push left
     /// deleted so the next git tag can make it. No leaves it to the user:
-    /// the same commands in a line and, from the Shell, a Notice.
-    fn ask_tag(&self, id: &str) -> Result<(), StageError> {
+    /// the same commands in a line and, from the Shell, a Notice. `asked`
+    /// false, the first try is made as on a yes, with no Question.
+    fn ask_tag(&self, id: &str, mut asked: bool) -> Result<(), StageError> {
         let release = self.release_record();
         let version = release.version.as_str();
         let target = if release.ts.pr.is_empty() {
@@ -259,7 +308,7 @@ impl Orchestrator {
                 options,
                 notice: notice.clone(),
             };
-            if self.ask_at_start(id, &text, options, ask)? == 1 {
+            if asked && self.ask_at_start(id, &text, options, ask)? == 1 {
                 let how = lines.join(" && ");
                 self.report("", &format!("{version} not tagged: {how}"));
                 return Ok(());
@@ -279,6 +328,7 @@ impl Orchestrator {
                 }
                 Err(err) => self.report("", &format!("tag {version} failed: {err}")),
             }
+            asked = true;
         }
     }
 
