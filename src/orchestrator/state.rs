@@ -98,6 +98,23 @@ pub(crate) struct TicketState {
     // waits for a human; reset it on a new head if that ever happens
     #[serde(skip)]
     pub(crate) merge_asked: bool,
+    /// What its merge Question was asked about, its PR's head with the
+    /// open items and silent bots it listed: asked once. Live only, never
+    /// saved: a resumed run asks again.
+    #[serde(skip)]
+    pub(crate) merge_question: String,
+    /// The head the user, or under Away the Judgment, said to merge with
+    /// its PR comments open or its bot silent. Live only, never saved.
+    #[serde(skip)]
+    pub(crate) merge_anyway: String,
+    /// Until when "keep waiting" holds the merge Question about a silent
+    /// review bot. Live only, never saved.
+    #[serde(skip)]
+    pub(crate) bot_wait_until: Option<chrono::DateTime<chrono::Local>>,
+    /// The approval modals the poll raised for its PR and nobody answered
+    /// yet: Address PR comments' flow is not over. Live only, never saved.
+    #[serde(skip)]
+    pub(crate) offering: usize,
     /// What its PR Stage does while it runs, as TICKETS shows it: "rebase",
     /// or "comments 2/3", its Address PR comments run of the cap. Live
     /// only, never saved.

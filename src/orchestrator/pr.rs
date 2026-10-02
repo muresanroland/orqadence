@@ -9,7 +9,7 @@ use serde::Deserialize;
 /// reads for its marker rule. It costs 1 point: GitHub counts connections,
 /// not their size.
 pub(crate) const QUERY: &str = "query($url:URI!){resource(url:$url){...on PullRequest{
-  state mergeable reviewDecision isMergeQueueEnabled headRefOid mergeCommit{oid}
+  state mergeable reviewDecision isMergeQueueEnabled headRefOid createdAt mergeCommit{oid}
   statusCheckRollup{commit{oid} state contexts(first:100){pageInfo{hasNextPage} nodes{
     ...on CheckRun{name status conclusion startedAt
       checkSuite{app{slug} workflowRun{event workflow{name}}}}
@@ -30,6 +30,8 @@ pub(crate) struct Pr {
     /// Its base branch has a merge queue: `gh pr merge` would queue it.
     pub(crate) is_merge_queue_enabled: bool,
     pub(crate) head_ref_oid: String,
+    /// When it opened: what bot_wait counts from.
+    pub(crate) created_at: Option<chrono::DateTime<chrono::Local>>,
     merge_commit: Option<Commit>,
     status_check_rollup: Option<Rollup>,
     review_threads: Nodes<Thread>,
@@ -116,8 +118,8 @@ struct Author {
     typename: String,
 }
 
-/// One open item of a PR.
-#[derive(Clone, Debug, PartialEq)]
+/// One open item of a PR. Serialized for the merge Judgment's state.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub(crate) struct Item {
     /// The same on every poll: what the Ticket's offered set keeps.
     pub(crate) id: String,
@@ -185,12 +187,15 @@ impl Pr {
 
     /// What every merge of the Orchestrator's waits for: its checks green,
     /// each passed, skipped or neutral (a cancelled one never passed), none
-    /// past the 100 the poll reads, GitHub calling it mergeable, and no
-    /// review asking for changes.
+    /// past the 100 the poll reads, and the rollup the head's own (a rollup
+    /// of another commit is not its checks), GitHub calling it mergeable,
+    /// and no review asking for changes.
     pub(crate) fn ready(&self) -> bool {
-        let more = (self.status_check_rollup.as_ref()).is_some_and(|r| r.contexts.more());
+        let unread = self.status_check_rollup.as_ref().is_some_and(|r| {
+            r.contexts.more() || r.commit.as_ref().is_none_or(|c| c.oid != self.head_ref_oid)
+        });
         let passed = |c: &&Context| matches!(c.state(), "SUCCESS" | "SKIPPED" | "NEUTRAL");
-        let green = !more && self.contexts().iter().all(passed);
+        let green = !unread && self.contexts().iter().all(passed);
         let blocked = self.review_decision.as_deref() == Some("CHANGES_REQUESTED");
         green && self.mergeable == "MERGEABLE" && !blocked
     }
@@ -205,6 +210,15 @@ impl Pr {
             other => other,
         };
         self.reviews.nodes.iter().any(|r| r.by(login))
+    }
+
+    /// The bots of `bots`, as review_bots names them, that have not
+    /// reviewed the PR.
+    pub(crate) fn silent<'a>(&self, bots: &[&'a str]) -> Vec<&'a str> {
+        bots.iter()
+            .copied()
+            .filter(|b| !self.reviewed_by(b))
+            .collect()
     }
 
     /// The poll read every thread, thread comment, review and PR comment:

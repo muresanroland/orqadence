@@ -430,6 +430,7 @@ pub(super) fn asked(f: &mut Frame, s: &Screen) {
             ("QUESTION", pane.as_str(), question, false)
         }
         About::Asked(Ask::Labels { .. }) => ("QUESTION", "", &q.text, false),
+        About::Asked(Ask::Merge { open, .. }) => ("QUESTION", "", open, false),
         _ => return,
     };
     // where the session is, as the Question's line names it: "(pane 2-1)"
@@ -494,6 +495,7 @@ pub(super) fn asked(f: &mut Frame, s: &Screen) {
     let title = match &q.about {
         _ if wake => format!(" pane {at}, its last lines "),
         About::Asked(Ask::Labels { .. }) => " the Ticket's labels ".to_string(),
+        About::Asked(Ask::Merge { .. }) => " still open ".to_string(),
         _ => " the session asks ".to_string(),
     };
     let frame = Block::bordered()
@@ -582,6 +584,9 @@ fn facts(s: &Screen, q: &Question, at: &str) -> String {
         About::Asked(Ask::Labels { .. }) => {
             facts.push("no session yet: the Ticket waits for your answer".to_string())
         }
+        About::Asked(Ask::Merge { .. }) => {
+            facts.push("no session: its PR waits for your answer".to_string())
+        }
         _ => facts.push(format!("the session in pane {at} waits for your answer")),
     }
     facts.retain(|fact| !fact.is_empty());
@@ -647,6 +652,21 @@ fn sends(s: &Screen, q: &Question, at: &str) -> (String, String) {
             },
             None => (String::new(), String::new()),
         },
+        About::Asked(Ask::Merge { options, .. }) => {
+            match options.get(q.cursor).map(String::as_str) {
+                Some("merge") => does(
+                    "merges the PR with these still open, once its checks are green and it is mergeable"
+                        .to_string(),
+                ),
+                Some("park") => does(format!(
+                    "parks the Ticket, its PR left open; /continue @{id} asks again"
+                )),
+                Some(_) => {
+                    does("waits another bot_wait for the review, then asks again".to_string())
+                }
+                None => (String::new(), String::new()),
+            }
+        }
         _ => (String::new(), String::new()),
     }
 }

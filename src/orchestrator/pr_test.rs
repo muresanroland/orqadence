@@ -7,12 +7,15 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::app::{set_review_bots, set_switch, ADDRESS_PR_COMMENTS_AUTO, AGENT_MERGE, REBASE_AUTO};
+use super::app::{
+    set_review_bots, set_switch, set_typesafe, ADDRESS_PR_COMMENTS_AUTO, AGENT_MERGE, REBASE_AUTO,
+};
+use super::judgment::fake::Fake;
 use super::pr::{Item, Pr};
 use super::scheduler_test::with_deps;
-use super::stage::{Orchestrator, ADDRESS_PR_COMMENTS, AWAY, REBASE};
+use super::stage::{Answer, Ask, Event, Orchestrator, ADDRESS_PR_COMMENTS, AWAY, REBASE};
 use super::state::{STATUS_MERGED, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
-use super::world::{new_world, set_clock, spawn_epic, BdTicket, World};
+use super::world::{new_world, set_clock, spawn_epic, wait_until, BdTicket, World};
 
 /// Greptile: resolved threads answered with the older marker, six
 /// outside-diff findings, a summary without a Findings list.
@@ -949,6 +952,44 @@ fn a_human_merge_ticket_is_not_merged_whatever_its_saved_state_says() {
     );
 }
 
+/// A rollup still naming an earlier commit is not the new head's checks,
+/// green or red: it is never green.
+#[test]
+fn a_rollup_of_an_earlier_commit_is_not_green() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    let mut pr = open(PR65, "b");
+    pr["statusCheckRollup"]["commit"]["oid"] = json!("a");
+    pr["statusCheckRollup"]["contexts"]["nodes"][0]["conclusion"] = json!("FAILURE");
+    settle(&w, &o, &clock, &pr);
+    assert!(merges(&w).is_empty());
+
+    pr["statusCheckRollup"] = Value::Null; // no check on b at all
+    serve(&w, &pr);
+    poll(&o);
+    assert_eq!(merges(&w).len(), 1);
+}
+
+/// PR comments approved while the merge reads its labels and method are
+/// fixed first: the PR does not merge under them.
+#[test]
+fn pr_comments_approved_during_the_merges_reads_hold_the_merge() {
+    let (w, o, clock) = polled();
+    let o = Arc::new(o);
+    agent_merge(&w, &["coderabbit"]);
+    let weak = Arc::downgrade(&o);
+    w.hook(move |_, argv| {
+        if argv == ["gh", "api", "repos/{owner}/{repo}"] {
+            let o = weak.upgrade().unwrap();
+            o.approve_comments("hx-1", Vec::new(), Vec::new(), true);
+        }
+        None
+    });
+    settle(&w, &o, &clock, &open(PR65, "a"));
+    assert!(merges(&w).is_empty());
+    assert_eq!(o.ticket("hx-1").status, STATUS_PR_OPEN);
+}
+
 /// hx-1's PR merged in a repo whose settings allow `squash` and `rebase`:
 /// the method gh was given.
 fn merged_with(squash: bool, rebase: bool) -> String {
@@ -1143,4 +1184,517 @@ fn a_merge_gh_took_is_not_asked_twice_while_the_pr_reads_open() {
     poll(&o);
     assert_eq!(o.ticket("hx-1").status, STATUS_PR_OPEN);
     assert_eq!(merges(&w).len(), 1);
+}
+
+/// The merge Questions put so far: each one's line, what it lists as still
+/// open, and its options.
+fn questions(w: &World) -> Vec<(String, String, Vec<String>)> {
+    let asked = |e: Event| match e.ask {
+        Some(Ask::Merge { open, options }) => Some((e.text, open, options)),
+        _ => None,
+    };
+    w.events().into_iter().filter_map(asked).collect()
+}
+
+/// PR65 open at `head`, its one Minor thread not resolved.
+fn open_thread(head: &str) -> Value {
+    let mut pr = open(PR65, head);
+    thread(&mut pr, 0)["isResolved"] = json!(false);
+    pr
+}
+
+/// hx-1's PR at head `a` with its thread open after Address PR comments'
+/// flow: offered once, nothing approved, the poll after it settled.
+fn left_open(bots: &[&str]) -> (Arc<World>, Orchestrator, Arc<Mutex<DateTime<Local>>>) {
+    let (w, o, clock) = polled();
+    agent_merge(&w, bots);
+    settle(&w, &o, &clock, &open_thread("a"));
+    assert!(questions(&w).is_empty(), "asked as the thread is offered");
+    poll(&o);
+    (w, o, clock)
+}
+
+/// A PR comment still open once Address PR comments' flow is over is a
+/// Question, merge or park, naming the PR and listing the item by rating and
+/// summary: asked once per head, and again on a new one.
+#[test]
+fn open_items_after_the_flow_ask_once_per_head() {
+    let (w, o, clock) = left_open(&["coderabbit"]);
+    let question = (
+        "PR #hx-1: 1 PR comment open, merge it?".to_string(),
+        "Minor · Fix the grammar in the `/remove-ticket` description.".to_string(),
+        vec!["merge".to_string(), "park".to_string()],
+    );
+    assert_eq!(questions(&w), std::slice::from_ref(&question));
+    poll(&o);
+    assert_eq!(questions(&w).len(), 1, "asked twice on one head");
+    assert!(merges(&w).is_empty());
+
+    settle(&w, &o, &clock, &open_thread("b"));
+    assert_eq!(questions(&w), [question.clone(), question], "a new push");
+}
+
+/// The user's answer to hx-1's merge Question, as the Shell sends it.
+fn answer(o: &Orchestrator, option: &str) {
+    o.answer("hx-1", "", Answer::Prompt(option.to_string()));
+}
+
+/// merge answered: the PR merges by Ticket 6's merge, on the head asked
+/// about, its PR comment still open.
+#[test]
+fn merge_answered_merges_with_the_items_open() {
+    let (w, o, _) = left_open(&["coderabbit"]);
+    answer(&o, "merge");
+    poll(&o);
+    let merge =
+        format!("gh pr merge {URL} --squash --delete-branch --match-head-commit a --repo o/r");
+    assert_eq!(merges(&w), [merge]);
+    assert_eq!(questions(&w).len(), 1);
+}
+
+/// The Question is asked only of a PR the open items alone keep from
+/// merging: never a human-merge one, nor one with a failed check, a
+/// conflict to rebase or a changes-requested review.
+#[test]
+fn a_pr_that_could_not_merge_anyway_is_not_asked_about() {
+    let human: fn(&Orchestrator, &mut Value) = |o, _| o.update("hx-1", |ts| ts.human_merge = true);
+    let red: fn(&Orchestrator, &mut Value) =
+        |_, pr| pr["statusCheckRollup"]["contexts"]["nodes"][0]["state"] = json!("FAILURE");
+    let unknown: fn(&Orchestrator, &mut Value) = |_, pr| pr["mergeable"] = json!("UNKNOWN");
+    let blocked: fn(&Orchestrator, &mut Value) =
+        |_, pr| pr["reviewDecision"] = json!("CHANGES_REQUESTED");
+    for (why, change) in [
+        ("human-merge", human),
+        ("a failed check", red),
+        ("not mergeable", unknown),
+        ("changes requested", blocked),
+    ] {
+        let (w, o, clock) = polled();
+        agent_merge(&w, &["coderabbit"]);
+        let mut pr = open_thread("a");
+        change(&o, &mut pr);
+        settle(&w, &o, &clock, &pr);
+        poll(&o);
+        poll(&o);
+        assert!(questions(&w).is_empty(), "{why}");
+        assert!(merges(&w).is_empty(), "{why}");
+    }
+}
+
+/// park answered: the Ticket parks with its PR open, still polled for a
+/// merge by hand, and nothing more is asked of it.
+#[test]
+fn park_answered_parks_the_ticket_with_its_pr_open() {
+    let (w, o, _) = left_open(&["coderabbit"]);
+    answer(&o, "park");
+    poll(&o);
+    let ts = o.ticket("hx-1");
+    let reason = "PR #hx-1 not merged: you parked it";
+    assert_eq!(
+        (ts.status.as_str(), ts.reason.as_str()),
+        (STATUS_PARKED, reason)
+    );
+    let said = w.lines();
+    assert!(said.contains(&format!("hx-1 parked: {reason}")), "{said:?}");
+    poll(&o);
+    assert!(merges(&w).is_empty());
+    assert_eq!(questions(&w).len(), 1, "asked again while parked");
+
+    let mut pr = open_thread("a");
+    pr["state"] = json!("MERGED");
+    serve(&w, &pr);
+    poll(&o);
+    assert_eq!(o.ticket("hx-1").status, STATUS_MERGED);
+}
+
+/// park answered after a changes-requested review closed a gate the
+/// Question was asked past still parks the Ticket.
+#[test]
+fn park_answered_after_changes_were_requested_still_parks() {
+    let (w, o, _) = left_open(&["coderabbit"]);
+    let mut pr = open_thread("a");
+    pr["reviewDecision"] = json!("CHANGES_REQUESTED");
+    serve(&w, &pr);
+    answer(&o, "park");
+    poll(&o);
+    let ts = o.ticket("hx-1");
+    let reason = "PR #hx-1 not merged: you parked it";
+    assert_eq!(
+        (ts.status.as_str(), ts.reason.as_str()),
+        (STATUS_PARKED, reason)
+    );
+}
+
+/// /continue gives a Ticket the merge Question parked back to the poll,
+/// which asks again.
+#[test]
+fn continue_asks_the_merge_question_again() {
+    let (w, o, _) = left_open(&["coderabbit"]);
+    answer(&o, "park");
+    poll(&o);
+    let o = Arc::new(o);
+    let mut run = spawn_epic(o.clone(), "hx");
+    o.command("continue-hx-1");
+    wait_until("the Question asked again", || questions(&w).len() == 2);
+    answer(&o, "merge");
+    w.await_line("hx-1 merged, Ticket closed");
+    run.wait();
+    o.wait_in_flight();
+    assert_eq!(merges(&w).len(), 1);
+}
+
+/// hx-1's PR at head `a`, its thread open and just offered by the poll, as
+/// the scheduler's pass offers it.
+fn offered() -> (Arc<World>, Orchestrator) {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    serve(&w, &open_thread("a"));
+    poll(&o);
+    later(&clock, 60);
+    (w, o)
+}
+
+/// While the approval modal the poll raised waits, Address PR comments'
+/// flow is not over: nothing is asked until the modal is answered.
+#[test]
+fn a_modal_the_poll_raised_holds_the_question_until_it_is_answered() {
+    let (w, o) = offered();
+    for (ticket, items) in o.poll_merges() {
+        o.offer(&ticket, items);
+    }
+    poll(&o);
+    poll(&o);
+    assert!(questions(&w).is_empty(), "its modal still waits");
+
+    o.decided("hx-1"); // cancelled
+    poll(&o);
+    assert_eq!(questions(&w).len(), 1);
+}
+
+/// Past the cap of Address PR comments runs no modal is raised: the
+/// Question comes at the next poll.
+#[test]
+fn past_the_run_cap_the_question_is_asked_at_the_next_poll() {
+    let (w, o) = offered();
+    o.update("hx-1", |ts| ts.address_runs = 3);
+    for (ticket, items) in o.poll_merges() {
+        o.offer(&ticket, items);
+    }
+    assert!(w.lines().iter().any(|l| l.contains("past the cap")));
+    poll(&o);
+    assert_eq!(questions(&w).len(), 1);
+}
+
+/// PR65, CodeRabbit's review in, opened at the clock's noon.
+fn opened_at_noon(head: &str) -> Value {
+    let mut pr = open(PR65, head);
+    let noon = Local.with_ymd_and_hms(2026, 9, 30, 12, 0, 0).unwrap();
+    pr["createdAt"] = json!(noon.to_rfc3339());
+    pr
+}
+
+/// A listed bot with no review bot_wait minutes after the PR opened is a
+/// Question naming the bot, with keep waiting, which holds it for another
+/// bot_wait and then asks again.
+#[test]
+fn a_listed_bot_silent_past_bot_wait_asks_with_keep_waiting_which_asks_again() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit", "greptile"]);
+    settle(&w, &o, &clock, &opened_at_noon("a")); // 12:01
+    later(&clock, 28 * 60);
+    poll(&o);
+    assert!(questions(&w).is_empty(), "29 minutes after it opened");
+
+    later(&clock, 60);
+    poll(&o);
+    let options = ["merge", "park", "keep waiting"].map(String::from).to_vec();
+    let question = (
+        "PR #hx-1: greptile not reviewed after 30 minutes, merge it?".to_string(),
+        "greptile has not reviewed".to_string(),
+        options.clone(),
+    );
+    assert_eq!(questions(&w), [question]);
+
+    answer(&o, "keep waiting");
+    poll(&o);
+    let said = w.lines();
+    let waiting = "hx-1 waiting another 30 minutes for greptile".to_string();
+    assert!(said.contains(&waiting), "{said:?}");
+    later(&clock, 29 * 60);
+    poll(&o);
+    assert_eq!(questions(&w).len(), 1, "29 minutes into the wait");
+    later(&clock, 60);
+    poll(&o);
+    let asked = questions(&w);
+    let again = "PR #hx-1: greptile not reviewed after 60 minutes, merge it?";
+    assert_eq!(asked.len(), 2);
+    assert_eq!((asked[1].0.as_str(), &asked[1].2), (again, &options));
+
+    answer(&o, "merge");
+    poll(&o);
+    assert_eq!(merges(&w).len(), 1);
+}
+
+/// A silent bot inside bot_wait is waited for, PR comments open or not: its
+/// review may bring more. Past it, one Question lists both.
+#[test]
+fn open_items_wait_for_a_silent_bot_and_one_question_lists_both() {
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit", "greptile"]);
+    let mut pr = opened_at_noon("a");
+    thread(&mut pr, 0)["isResolved"] = json!(false);
+    settle(&w, &o, &clock, &pr);
+    poll(&o);
+    assert!(questions(&w).is_empty(), "Greptile may still review");
+
+    later(&clock, 29 * 60);
+    poll(&o);
+    let question = (
+        "PR #hx-1: 1 PR comment open and greptile not reviewed after 30 minutes, merge it?"
+            .to_string(),
+        "Minor · Fix the grammar in the `/remove-ticket` description.\ngreptile has not reviewed"
+            .to_string(),
+        ["merge", "park", "keep waiting"].map(String::from).to_vec(),
+    );
+    assert_eq!(questions(&w), [question]);
+}
+
+/// hx-1's thread left open on head `a` with the user Away, TypeSafe as
+/// given, and the poll that settles it: a Judgment, never the Question.
+fn judged_away(typesafe: Arc<Fake>) -> (Arc<World>, Orchestrator) {
+    let (w, mut o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    o.cfg.typesafe = typesafe;
+    o.cfg.away.store(true, Ordering::SeqCst);
+    w.hook(|_, argv| {
+        let diff = argv.join(" ") == "git diff origin/main...a";
+        diff.then(|| Ok("+a line\n".to_string()))
+    });
+    settle(&w, &o, &clock, &open_thread("a"));
+    poll(&o);
+    assert!(questions(&w).is_empty(), "asked while away");
+    (w, o)
+}
+
+/// A TypeSafe that scores merging with the PR comments open `score`.
+fn scoring(score: f64) -> Arc<Fake> {
+    Fake::new(move |_| Ok(json!({"answers": {"merge": {"noul": score}}})))
+}
+
+/// Away, TypeSafe is asked "Should this pull request merge with these PR
+/// comments open?" over the diff and the open items: at or above the Wake
+/// floor the PR merges, and RECENT says the score.
+#[test]
+fn away_a_judgment_of_0_8_merges() {
+    let typesafe = scoring(0.8);
+    let (w, _o) = judged_away(typesafe.clone());
+    assert_eq!(merges(&w).len(), 1);
+    let said = w.lines();
+    let judged = said.iter().position(|l| l == "hx-1 judged: merge 0.80");
+    let merged = said
+        .iter()
+        .position(|l| l == "hx-1 PR #hx-1 merged by Orqadence");
+    assert!(judged.is_some() && judged < merged, "{said:?}");
+
+    let asked = typesafe.requests();
+    assert_eq!(asked.len(), 1);
+    let noul = json!({"type": "noul",
+        "instructions": "Should this pull request merge with these PR comments open?"});
+    assert_eq!(asked[0]["questions"], json!({ "merge": noul }));
+    let state = &asked[0]["state"];
+    assert_eq!(state["pr"], URL);
+    assert_eq!(state["diff"], "+a line\n");
+    assert_eq!(state["silent_bots"], json!([]));
+    let item = &state["open_items"][0];
+    assert_eq!(item["rating"], "Minor");
+    assert_eq!(
+        item["summary"],
+        "Fix the grammar in the `/remove-ticket` description."
+    );
+}
+
+/// Below the Wake floor the Ticket parks with its PR open, as it does with
+/// TypeSafe unreachable or off: RECENT says which.
+#[test]
+fn away_a_judgment_below_the_floor_or_none_parks() {
+    let none = "1 PR comment open and TypeSafe";
+    // TypeSafe, whether it is on, and why the Ticket parks
+    let cases = [
+        (
+            scoring(0.4),
+            true,
+            "merge 0.40 under the floor 0.70".to_string(),
+        ),
+        (
+            scoring(0.2),
+            true,
+            "merge 0.20 under the floor 0.70".to_string(),
+        ),
+        (Fake::down(), true, format!("{none} gave no answer")),
+        (scoring(0.9), false, format!("{none} is off")),
+    ];
+    for (typesafe, on, why) in cases {
+        let (w, mut o, clock) = polled();
+        agent_merge(&w, &["coderabbit"]);
+        set_typesafe(&w.repo, on).unwrap();
+        o.cfg.typesafe = typesafe.clone();
+        o.cfg.away.store(true, Ordering::SeqCst);
+        settle(&w, &o, &clock, &open_thread("a"));
+        poll(&o);
+        let ts = o.ticket("hx-1");
+        let reason = format!("PR #hx-1 not merged: {why}");
+        assert_eq!((ts.status.as_str(), &ts.reason), (STATUS_PARKED, &reason));
+        let said = w.lines();
+        assert!(said.contains(&format!("hx-1 parked: {reason}")), "{said:?}");
+        assert!(merges(&w).is_empty(), "{why}");
+        assert!(questions(&w).is_empty(), "{why}");
+        let asked = typesafe.requests().len();
+        assert_eq!(asked, usize::from(on), "{why}");
+    }
+}
+
+/// Turning Away on while the merge Question waits takes the Judgment at
+/// the next poll.
+#[test]
+fn away_turned_on_while_the_question_waits_takes_the_judgment() {
+    let (w, mut o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    o.cfg.typesafe = scoring(0.8);
+    settle(&w, &o, &clock, &open_thread("a"));
+    poll(&o);
+    assert_eq!(questions(&w).len(), 1);
+    o.cfg.away.store(true, Ordering::SeqCst);
+    poll(&o);
+    assert_eq!(merges(&w).len(), 1);
+}
+
+/// park answered and Away turned on before the next poll parks: the
+/// answer is taken before any Judgment.
+#[test]
+fn park_answered_then_away_turned_on_parks_unjudged() {
+    let (w, mut o, _) = left_open(&["coderabbit"]);
+    let typesafe = scoring(0.9);
+    o.cfg.typesafe = typesafe.clone();
+    answer(&o, "park");
+    o.cfg.away.store(true, Ordering::SeqCst);
+    poll(&o);
+    let ts = o.ticket("hx-1");
+    let reason = "PR #hx-1 not merged: you parked it";
+    assert_eq!(
+        (ts.status.as_str(), ts.reason.as_str()),
+        (STATUS_PARKED, reason)
+    );
+    assert!(merges(&w).is_empty());
+    assert!(typesafe.requests().is_empty());
+}
+
+/// A PR comment that comes on the head already asked about is a new
+/// Question listing both, and merge answered to the old one merges nothing:
+/// that Question never listed it.
+#[test]
+fn a_new_item_on_the_same_head_asks_again_and_the_old_answer_is_dropped() {
+    let (w, o, _) = left_open(&["coderabbit"]);
+    let mut pr = open_thread("a");
+    comments(&mut pr).push(human(9, "Please rename this"));
+    serve(&w, &pr);
+    answer(&o, "merge");
+    poll(&o); // offers the PR comment
+    poll(&o);
+    assert!(merges(&w).is_empty());
+    let asked = questions(&w);
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    assert_eq!(asked[1].0, "PR #hx-1: 2 PR comments open, merge it?");
+}
+
+/// merge answered and then not merged, its method not read, covers no PR
+/// comment that comes on the same head later: that one is asked about.
+#[test]
+fn merge_answered_does_not_cover_a_later_item_on_the_same_head() {
+    let (w, o, _) = left_open(&["coderabbit"]);
+    w.fail_once("gh api repos/", "offline");
+    answer(&o, "merge");
+    poll(&o);
+    assert_eq!(o.ticket("hx-1").merge_anyway, "a");
+    let mut pr = open_thread("a");
+    comments(&mut pr).push(human(9, "Please rename this"));
+    serve(&w, &pr);
+    poll(&o); // offers the PR comment, its modal cancelled
+    poll(&o);
+    assert!(merges(&w).is_empty());
+    assert_eq!(questions(&w).len(), 2);
+}
+
+/// park answered as the last open PR comment resolves still parks: the
+/// Question it answered is never read again.
+#[test]
+fn park_answered_as_the_last_item_resolves_still_parks() {
+    let (w, o, _) = left_open(&["coderabbit"]);
+    serve(&w, &open(PR65, "a"));
+    answer(&o, "park");
+    poll(&o);
+    let ts = o.ticket("hx-1");
+    let reason = "PR #hx-1 not merged: you parked it";
+    assert_eq!(
+        (ts.status.as_str(), ts.reason.as_str()),
+        (STATUS_PARKED, reason)
+    );
+    assert!(merges(&w).is_empty());
+}
+
+/// An answer the Question does not offer is dropped, and the Question,
+/// gone from the Shell with its answer, is asked again.
+#[test]
+fn an_answer_the_question_does_not_offer_has_it_asked_again() {
+    let (w, o, _) = left_open(&["coderabbit"]);
+    answer(&o, "keep waiting"); // no bot is silent
+    poll(&o);
+    assert_eq!(questions(&w).len(), 1, "asked in the poll that dropped it");
+    poll(&o);
+    assert_eq!(questions(&w).len(), 2);
+    assert_eq!(o.ticket("hx-1").status, STATUS_PR_OPEN);
+}
+
+/// A Question the Shell closed without an answer, as a line of its Ticket
+/// closes it, is asked again once the Shell says so.
+#[test]
+fn a_question_the_shell_closed_is_asked_again() {
+    let (w, o, _) = left_open(&["coderabbit"]);
+    poll(&o);
+    assert_eq!(questions(&w).len(), 1);
+    o.unasked("hx-1");
+    poll(&o);
+    assert_eq!(questions(&w).len(), 2);
+}
+
+/// With more PR comments than the poll reads and one known open, the
+/// Question is asked and says so; Away, the Ticket parks unjudged, since
+/// TypeSafe would score a list with holes.
+#[test]
+fn items_past_the_poll_page_are_said_and_never_judged() {
+    let more = |head| {
+        let mut pr = open_thread(head);
+        pr["comments"]["pageInfo"] = json!({"hasPreviousPage": true});
+        pr
+    };
+    let (w, o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    settle(&w, &o, &clock, &more("a"));
+    poll(&o);
+    let asked = questions(&w);
+    let open = "Minor · Fix the grammar in the `/remove-ticket` description.\n\
+                more PR comments than the poll read, some may be open";
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].1, open);
+
+    let typesafe = scoring(0.9);
+    let (w, mut o, clock) = polled();
+    agent_merge(&w, &["coderabbit"]);
+    o.cfg.typesafe = typesafe.clone();
+    o.cfg.away.store(true, Ordering::SeqCst);
+    settle(&w, &o, &clock, &more("a"));
+    poll(&o);
+    let reason = "PR #hx-1 not merged: 1 PR comment open and more than the poll read";
+    assert_eq!(o.ticket("hx-1").reason, reason);
+    assert!(typesafe.requests().is_empty());
+    assert!(merges(&w).is_empty());
 }

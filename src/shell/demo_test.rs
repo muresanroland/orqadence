@@ -53,6 +53,7 @@ fn the_demo_plays_a_run_asks_and_puts_the_shell_back() {
                 panic!("the demo asks nothing at a Ticket's start")
             }
             Ask::Tag { .. } | Ask::ReleaseAgain { .. } => panic!("the demo has no Release"),
+            Ask::Merge { .. } => panic!("the demo merges nothing"),
         };
         asked.push(kind);
         pick(&mut s, option);

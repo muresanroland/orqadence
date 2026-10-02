@@ -275,7 +275,7 @@ fn question(s: &Screen) -> &str {
 }
 
 /// Polls the Shell until its Ticket Questions number `n`.
-fn await_questions(s: &mut Screen, n: usize) {
+pub(super) fn await_questions(s: &mut Screen, n: usize) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while s.questions.iter().filter(|q| q.ticket.is_some()).count() != n {
         assert!(
@@ -4302,6 +4302,54 @@ fn a_label_question_docks_with_one_option_per_label_and_park() {
     assert_eq!(
         band(&render(&s, 160, 30)),
         "› does: runs bd label remove harness-kqe.12 orqa:typo"
+    );
+}
+
+/// The merge Question docks as the label Question does, with no session:
+/// what is still open in the box, merge, park and keep waiting, the band
+/// saying what each does; the one picked goes to the Ticket word for word.
+#[test]
+fn a_merge_question_docks_with_what_is_still_open_and_its_options() {
+    let repo = TempDir::new();
+    let mut s = screen_at(Fake::quiet(), repo.path());
+    let text = "PR #12: 1 PR comment open and greptile not reviewed after 30 minutes, merge it?";
+    s.push(asking(
+        "harness-kqe.11",
+        text,
+        Ask::Merge {
+            open: "Minor · Fix the grammar\ngreptile has not reviewed".to_string(),
+            options: ["merge", "park", "keep waiting"].map(String::from).to_vec(),
+        },
+    ));
+    assert_eq!(s.options(), ["merge", "park", "keep waiting"]);
+    assert!(s.modal(), "a merge Question did not dock");
+    let buf = render(&s, 160, 30);
+    let (x, _) = find(&buf, "┏").unwrap_or_else(|| panic!("{:#?}", rows(&buf)));
+    let facts = cols(&buf, 2, x as usize + 2, 158);
+    assert!(
+        facts
+            .trim_end()
+            .ends_with("no session: its PR waits for your answer"),
+        "{facts:?}"
+    );
+    assert_eq!(
+        boxed_body(&buf, "╭ still open ")[..2],
+        ["Minor · Fix the grammar", "greptile has not reviewed"]
+    );
+    for want in [
+        "› does: merges the PR with these still open, once its checks are green and it is mergeable",
+        "› does: parks the Ticket, its PR left open; /continue @harness-kqe.11 asks again",
+        "› does: waits another bot_wait for the review, then asks again",
+    ] {
+        assert_eq!(band(&render(&s, 160, 30)), want);
+        s.key(key(KeyCode::Down));
+    }
+
+    pick(&mut s, 1);
+    assert!(s.questions.is_empty(), "the answered Question stayed");
+    assert_eq!(
+        s.events.last().map(line).as_deref(),
+        Some("harness-kqe.11 you answered: merge")
     );
 }
 

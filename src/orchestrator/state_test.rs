@@ -155,9 +155,14 @@ fn every_field_survives_a_save_and_a_missing_file_is_an_empty_state() {
             ),
             offered: ["PRRT_kwDOUiwtFs6meF8y".to_string()].into(),
             address_runs: 1,
-            fetching: false,        // live only, never saved
-            settled: false,         // live only, never saved
-            merge_asked: false,     // live only, never saved
+            fetching: false,    // live only, never saved
+            settled: false,     // live only, never saved
+            merge_asked: false, // live only, never saved
+            // the merge Question's, live only, never saved
+            merge_question: String::new(),
+            merge_anyway: String::new(),
+            bot_wait_until: None,
+            offering: 0,
             pr_work: String::new(), // live only, never saved
         },
     );

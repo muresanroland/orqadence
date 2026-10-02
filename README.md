@@ -84,7 +84,7 @@ orqa init
 
 3. Watch progress in the Shell. Each Ticket's panes appear in its own herdr tab. Answer Questions as they come up: plan approvals, sessions waiting at a prompt, and Wakes the Judgment wasn't sure about.
 
-4. Review and merge the PRs on GitHub. With Agent merge on, Orqadence merges a PR itself once its checks are green and, unless it is a No-review pull request (labelled `orqa:no-review`), the review bots have reviewed it and every PR comment is answered; a merge GitHub refuses parks the Ticket, and security, db and infra PRs still wait for you. Orqadence closes each merged Ticket and starts the Tickets that were waiting on it. When every Ticket is closed, the Epic is done.
+4. Review and merge the PRs on GitHub. With Agent merge on, Orqadence merges a PR itself once its checks are green and, unless it is a No-review pull request (labelled `orqa:no-review`), the review bots have reviewed it and every PR comment is answered. A PR comment still open once Address PR comments is done with the PR, or a listed bot with no review `bot_wait` minutes after the PR opened, is a Question: merge, park, or for the bot keep waiting. While you are Away TypeSafe answers it over the diff and the open items, merging at or above the Wake floor and parking otherwise. A merge GitHub refuses parks the Ticket, and security, db and infra PRs still wait for you. Orqadence closes each merged Ticket and starts the Tickets that were waiting on it. When every Ticket is closed, the Epic is done.
 
 ### Shell commands
 

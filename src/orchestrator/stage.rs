@@ -182,6 +182,12 @@ pub(crate) enum Ask {
     /// The Release's version PR closed unmerged: run the Release again, or
     /// end without one, answered word for word for no pane ("").
     ReleaseAgain { options: Vec<String> },
+    /// Under Agent merge, a PR whose PR comments are still open once
+    /// Address PR comments' flow is over, or whose listed review bot has
+    /// not reviewed within bot_wait (scheduler.rs): `open` lists them, one
+    /// per line. merge, park or keep waiting, answered word for word for
+    /// no pane ("").
+    Merge { open: String, options: Vec<String> },
 }
 
 /// The user's answer to a Question, for the session (pane) it was about.
