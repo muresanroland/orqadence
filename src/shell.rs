@@ -532,8 +532,9 @@ impl Screen {
         screen.history_file = Some(history);
         screen.on_call = on_call::load(repo, env);
         screen.moshi_env = !env(on_call::TOKEN_VAR).trim().is_empty();
-        screen.reload_epics();
-        screen.brainstorms = brainstorm::load(repo, &screen.brainstorm_issues);
+        // every issue: a saved Brainstorm's closed issue may have lost its label
+        let issues = screen.reload_issues().unwrap_or_default();
+        screen.brainstorms = brainstorm::load(repo, &issues);
         match update::exe_path() {
             Ok(exe) => {
                 screen.cfg.exe = exe;
@@ -762,15 +763,21 @@ impl Screen {
     /// closes, when a run ends and before the Epic summary opens by
     /// itself. Whether bd answered.
     fn reload_epics(&mut self) -> bool {
-        match load_epics(&self.cfg.repo, &*self.cfg.tools, &self.state.queue) {
-            Ok((epics, brainstorm_issues)) => {
+        self.reload_issues().is_some()
+    }
+
+    /// reload_epics, handing back every issue bd listed; None when bd failed.
+    fn reload_issues(&mut self) -> Option<Vec<BdIssue>> {
+        match bd_list(&self.cfg.repo, &*self.cfg.tools) {
+            Ok(issues) => {
+                let (epics, brainstorm_issues) = load_epics(issues.clone(), &self.state.queue);
                 self.epics = epics;
                 self.brainstorm_issues = brainstorm_issues;
-                true
+                Some(issues)
             }
             Err(err) => {
                 self.notice(&format!("bd list failed: {err}"), NOTICE_WINDOW);
-                false
+                None
             }
         }
     }
@@ -2957,16 +2964,11 @@ fn bd_list(repo: &Path, tools: &dyn Tools) -> Result<Vec<BdIssue>, String> {
 }
 
 /// Every open Epic expanded into its Tickets, then the no-Epic group when it
-/// has one, from one bd list call. A closed Ticket with no open Epic is left
+/// has one, from one bd list's issues. A closed Ticket with no open Epic is left
 /// out, but for one still in the Ticket run's queue. A Brainstorm's Maps,
 /// Waypoints and Ideas never enter the Pipeline: kept off the tree, they
 /// come back beside it.
-fn load_epics(
-    repo: &Path,
-    tools: &dyn Tools,
-    queue: &[String],
-) -> Result<(Vec<Epic>, Vec<BdIssue>), String> {
-    let mut issues = bd_list(repo, tools)?;
+fn load_epics(mut issues: Vec<BdIssue>, queue: &[String]) -> (Vec<Epic>, Vec<BdIssue>) {
     let brainstorms: Vec<bool> = issues
         .iter()
         .map(|i| brainstorm::kind(&issues, i).is_some())
@@ -3010,7 +3012,7 @@ fn load_epics(
     if !no_epic.tickets.is_empty() {
         epics.push(no_epic);
     }
-    Ok((epics, kept_out))
+    (epics, kept_out)
 }
 
 /// Opens the Shell over the Target repo and returns when the user exits.

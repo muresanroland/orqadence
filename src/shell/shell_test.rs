@@ -1382,7 +1382,7 @@ const SECTIONS: &str = r#"[
 /// `running`, the run is live and 4 is blocked on a question.
 fn sections_screen(running: bool) -> Screen {
     let fake = Fake::new(|_, _| Ok(SECTIONS.to_string()));
-    let (epics, _) = super::load_epics(Path::new(""), &*fake, &[]).unwrap();
+    let (epics, _) = super::load_epics(super::bd_list(Path::new(""), &*fake).unwrap(), &[]);
     let mut state = State {
         epic: "harness-a".to_string(),
         ..Default::default()
@@ -1557,11 +1557,11 @@ fn a_ticket_or_an_epic_waiting_on_an_open_brainstorm_issue_is_refused() {
 }
 
 /// The Shell lists every saved Brainstorm at open, but one whose Map the
-/// user closed in bd.
+/// user closed in bd, with its brainstorm:map label or without.
 #[test]
 fn the_shell_lists_the_saved_brainstorms_at_open() {
     let repo = TempDir::new();
-    for (idea, map) in [("hx-i", "hx-m"), ("hx-j", "hx-n")] {
+    for (idea, map) in [("hx-i", "hx-m"), ("hx-j", "hx-n"), ("hx-k", "hx-o")] {
         crate::brainstorm::Brainstorm {
             phase: crate::brainstorm::Phase::Map,
             idea: idea.to_string(),
@@ -1575,7 +1575,8 @@ fn the_shell_lists_the_saved_brainstorms_at_open() {
         match argv.join(" ").as_str() {
         "bd list --json --brief --all --limit 0" => Ok(r#"[
             {"id":"hx-m","title":"Map one","status":"open","issue_type":"epic","labels":["brainstorm:map"]},
-            {"id":"hx-n","title":"Map two","status":"closed","issue_type":"epic","labels":["brainstorm:map"]}
+            {"id":"hx-n","title":"Map two","status":"closed","issue_type":"epic","labels":["brainstorm:map"]},
+            {"id":"hx-o","title":"Map three","status":"closed","issue_type":"epic"}
         ]"#
         .to_string()),
         _ => Ok(String::new()),
