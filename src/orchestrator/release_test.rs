@@ -924,6 +924,32 @@ fn a_stop_while_the_merged_version_pr_is_read_pushes_no_tag() {
     assert!(!release.tagged && release.commit == "m3rg3d", "{release:?}");
 }
 
+/// A /stop-work during the fetch before the unasked tag tags nothing:
+/// /continue asks the tag Question.
+#[test]
+fn a_stop_during_the_fetch_before_the_unasked_tag_tags_nothing() {
+    let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
+    let orq: Arc<Mutex<Weak<Orchestrator>>> = Arc::default();
+    let hooked = orq.clone();
+    w.hook(move |_, argv| {
+        if argv.starts_with(&["git", "fetch"]) {
+            if let Some(o) = hooked.lock().unwrap().upgrade() {
+                o.stop();
+            }
+        }
+        None
+    });
+    let (o, mut run, clock) = agent_merging(&w, o);
+    *orq.lock().unwrap() = Arc::downgrade(&o);
+
+    settle(&w, &clock);
+    run.wait();
+    assert_eq!(w.called("gh pr merge").len(), 1);
+    assert!(w.called("git tag").is_empty(), "tagged after the stop");
+    let release = o.state.lock().unwrap().release.clone().unwrap();
+    assert!(!release.tagged, "{release:?}");
+}
+
 #[test]
 fn a_refused_merge_of_the_version_pr_says_why_and_falls_back_to_the_tag_question() {
     let (w, o) = releasing(vec![BdTicket::new("hx-1")]);

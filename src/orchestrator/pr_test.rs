@@ -998,6 +998,26 @@ fn a_stop_during_the_merges_reads_merges_nothing() {
     assert_eq!(w.called("gh api graphql").len(), read);
 }
 
+/// PR comments approved while the poll reads the merge method merge
+/// nothing: the approved fixes run first.
+#[test]
+fn comments_approved_during_the_merges_reads_merge_nothing() {
+    let (w, o, clock) = polled();
+    let o = Arc::new(o);
+    agent_merge(&w, &["coderabbit"]);
+    let weak = Arc::downgrade(&o);
+    w.hook(move |_, argv| {
+        if argv == ["gh", "api", "repos/{owner}/{repo}"] {
+            let o = weak.upgrade().unwrap();
+            o.approve_comments("hx-1", Vec::new(), Vec::new(), false);
+        }
+        None
+    });
+    settle(&w, &o, &clock, &open(PR65, "a"));
+    assert!(merges(&w).is_empty());
+    assert!(!o.ticket("hx-1").settled);
+}
+
 const REFUSAL: &str =
     "Pull request o/r#1 is not mergeable: the base branch policy prohibits the merge.";
 

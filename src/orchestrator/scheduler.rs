@@ -657,8 +657,7 @@ impl Orchestrator {
                 return;
             }
         }
-        // the reads above block: a stop that came during them wins
-        if !self.may_merge(ticket, ts, &pr.head_ref_oid) || self.stopping() {
+        if !self.may_merge(ticket, ts, &pr.head_ref_oid) {
             return;
         }
         let number = pr_ref(&ts.pr);
@@ -686,7 +685,8 @@ impl Orchestrator {
     /// Asks gh to merge the PR at `url`, a Ticket's or the Release's version
     /// PR, with the repo's own method: true once gh took it, which its
     /// state keeps (merge_asked). False when gh was not asked, the method
-    /// not read or a stop seen, so the next poll tries again. Err is why it
+    /// not read, or a stop or a Ticket's comment approval seen after the
+    /// blocking reads before it, so the next poll tries again. Err is why it
     /// is not merged: gh's message, or a merge queue on its base branch.
     pub(super) fn gh_merge(&self, id: &str, url: &str, pr: &Pr) -> Result<bool, String> {
         if pr.is_merge_queue_enabled {
@@ -699,7 +699,11 @@ impl Orchestrator {
                 return Ok(false);
             }
         };
-        if self.stopping() {
+        // the reads before this block: a stop, or comments approved, that
+        // came during them wins; the version PR is never approved or settled
+        let approved = self.approved.lock().unwrap().contains_key(id);
+        let unsettled = !self.is_release(id) && !self.ticket(id).settled;
+        if self.stopping() || approved || unsettled {
             return Ok(false);
         }
         let argv = [
