@@ -8,9 +8,12 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::orchestrator::app::{self, ROWS};
+use crate::orchestrator::app::{self, DOCS_PASS, ROWS};
+use crate::orchestrator::herdr::{agent_name, herdr, locate};
+use crate::orchestrator::stage::SETTLE_TICKS;
 use crate::orchestrator::state::{local_dir, LOCAL};
 use crate::tools::{RunError, Tools};
 use crate::update::semver;
@@ -54,7 +57,6 @@ pub(crate) fn handled(repo: &Path) -> Option<(u64, u64)> {
 }
 
 /// Records tag's X.Y as handled; a tag semver cannot read refuses.
-#[allow(dead_code)] // the Docs pass Question (harness-u4f.5) writes it
 pub(crate) fn set_handled(repo: &Path, tag: &str) -> Result<(), String> {
     let (x, y, _) = semver(tag).ok_or_else(|| format!("unreadable tag {tag:?}"))?;
     local_dir(repo)
@@ -74,7 +76,7 @@ fn latest(tags: &str) -> Option<String> {
 
 /// Whether tag is new: its X or Y differs from the X.Y handled, or none is.
 /// A patch-only tag never counts, and no tag is never new.
-fn is_new(handled: Option<(u64, u64)>, tag: Option<&str>) -> bool {
+pub(crate) fn is_new(handled: Option<(u64, u64)>, tag: Option<&str>) -> bool {
     match tag.and_then(semver) {
         Some((x, y, _)) => handled != Some((x, y)),
         None => false,
@@ -137,6 +139,124 @@ fn platforms(repo: &Path) -> BTreeSet<&'static str> {
         .filter_map(|key| app::field(&doc, key, "app").ok())
         .filter_map(|name| ["claude", "codex"].into_iter().find(|p| *p == name))
         .collect()
+}
+
+/// The Docs pass on tag, a session the user can watch: the docs_pass row's
+/// App in the root pane of a graphify tab of `workspace`, the checkout as
+/// it is checked out its cwd, prompted with graphify's skill over `.
+/// --update`. Done once the session, idle after working, has left a
+/// graph.json newer than the pass: the X.Y is recorded and the tab closes.
+/// Anything else records nothing, so the next check asks again, and leaves
+/// the tab open to read why. `say` takes the started line and a start's
+/// error; the pass's last RECENT line comes back.
+pub(crate) fn docs_pass(
+    tools: &dyn Tools,
+    repo: &Path,
+    workspace: &str,
+    tag: &str,
+    tick: Duration,
+    say: &dyn Fn(String),
+) -> String {
+    let unfinished =
+        format!("graphify docs pass on {tag} did not finish: asked again at the next check");
+    let since = SystemTime::now();
+    let (tab, pane) = match start_docs_pass(tools, repo, workspace, tag, tick, say) {
+        Ok(started) => started,
+        Err(err) => {
+            say(format!("graphify docs pass on {tag} did not start: {err}"));
+            return unfinished;
+        }
+    };
+    // idle before the session has worked, or settled, is not believed
+    let mut worked = false;
+    for ticks in 1.. {
+        thread::sleep(tick);
+        let status = herdr(tools, repo, &["agent", "get", &pane]).map(|r| r.result.agent.status);
+        match status.as_deref() {
+            Err(_) | Ok("") => return unfinished,
+            Ok("idle" | "done") if worked || ticks > SETTLE_TICKS => break,
+            Ok("working") => worked = true,
+            Ok(_) => {}
+        }
+    }
+    let graph = repo.join("graphify-out").join("graph.json");
+    let built = fs::metadata(graph).and_then(|m| m.modified());
+    if !worked || !built.is_ok_and(|at| at > since) {
+        return unfinished;
+    }
+    if let Err(err) = set_handled(repo, tag) {
+        say(format!("graphify docs pass on {tag}: {err}"));
+        return unfinished;
+    }
+    let _ = herdr(tools, repo, &["tab", "close", &tab]);
+    format!("graphify docs pass done on {tag}")
+}
+
+/// The graphify tab and its root pane, the session started and prompted
+/// there: its tab and pane.
+fn start_docs_pass(
+    tools: &dyn Tools,
+    repo: &Path,
+    workspace: &str,
+    tag: &str,
+    tick: Duration,
+    say: &dyn Fn(String),
+) -> Result<(String, String), String> {
+    let row = app::row(repo, DOCS_PASS, &[])?;
+    let checkout = repo.display().to_string();
+    let create = [
+        "tab",
+        "create",
+        "--workspace",
+        workspace,
+        "--label",
+        "graphify",
+        "--cwd",
+        &checkout,
+        "--no-focus",
+    ];
+    let reply = herdr(tools, repo, &create).map_err(|err| err.to_string())?;
+    let (tab, pane) = (reply.result.tab.tab_id, reply.result.root_pane.pane_id);
+    // a failed pass's agent may live on in its tab: a name of its own
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let name = agent_name("graphify", &format!("docs-{}", secs.as_secs()));
+    let mut args = (row.app.worktree_args)(&checkout);
+    args.extend(row.flags());
+    let mut argv = vec![
+        "agent",
+        "start",
+        &name,
+        "--kind",
+        row.app.name,
+        "--pane",
+        &pane,
+        "--",
+    ];
+    argv.extend(args.iter().map(String::as_str));
+    // a pane just created refuses agent_pane_busy until it has a shell
+    let give_up = Instant::now() + 6 * tick;
+    while let Err(err) = herdr(tools, repo, &argv) {
+        if !err.to_string().contains("agent_pane_busy") || Instant::now() > give_up {
+            return Err(err.to_string());
+        }
+        thread::sleep(tick);
+    }
+    // the Docs pass runs on claude or codex alone (runs_on): claude's
+    // mention is in words, so its slash command
+    let mention = match row.app.mention {
+        "" => "/",
+        mention => mention,
+    };
+    let prompt = format!("{mention}graphify . --update");
+    herdr(tools, repo, &["agent", "prompt", &pane, &prompt]).map_err(|err| err.to_string())?;
+    let at = locate(tools, repo, workspace, &pane);
+    say(format!(
+        "graphify docs pass started on {tag}: {} {at}",
+        row.said()
+    ));
+    Ok((tab, pane))
 }
 
 #[cfg(test)]

@@ -167,6 +167,9 @@ pub(crate) enum Pending {
     /// reason, and whether the close comment went in, so a retry never adds
     /// it twice.
     Close { done: State, commented: bool },
+    /// Run graphify's Docs pass on this new X.Y tag; no records its X.Y as
+    /// handled, so the tag is skipped until the next X.Y.
+    DocsPass { tag: String },
 }
 
 /// What a Question is about, which decides its options and what an answer does.
@@ -179,7 +182,8 @@ pub(crate) enum About {
     /// the feedback that was not sent, park, open the pane; a plan
     /// failure offers open the pane, park, retry, resend the feedback.
     Asked(Ask),
-    /// A yes/no confirmation; it jumps the queue.
+    /// A yes/no confirmation; it jumps the queue, but for the Docs pass's,
+    /// queued with the others.
     Confirm(Pending),
     /// The /continue checklist: one row per saved Ticket, reset toggled by Space.
     Continue { rows: Vec<(String, bool)> },
@@ -351,8 +355,12 @@ pub(crate) struct Screen {
     /// The graphify thread's passes, applied in poll() as the checks are.
     graphify_sender: Sender<graphify::Pass>,
     graphify_receiver: Receiver<graphify::Pass>,
-    /// A new X.Y tag a graphify pass found, kept for the Docs pass.
+    /// The tag a Docs pass runs on: while it does, or its Question waits,
+    /// a check's new tag asks nothing.
     pub(crate) docs_tag: Option<String>,
+    /// The Docs pass's RECENT lines, a thread's, and whether the pass is over.
+    docs_sender: Sender<(String, bool)>,
+    docs_receiver: Receiver<(String, bool)>,
     /// A release downloaded while a run holds the lock: installed when it ends.
     pub(crate) update: Option<Ready>,
     /// When a pending update may try the lock again, from tick().
@@ -398,6 +406,7 @@ impl Screen {
         let (update_sender, update_receiver) = mpsc::channel();
         let (ring_sender, ring_receiver) = mpsc::channel();
         let (graphify_sender, graphify_receiver) = mpsc::channel();
+        let (docs_sender, docs_receiver) = mpsc::channel();
         Screen {
             folder,
             version: crate::version::version(),
@@ -443,6 +452,8 @@ impl Screen {
             graphify_sender,
             graphify_receiver,
             docs_tag: None,
+            docs_sender,
+            docs_receiver,
             update: None,
             retry: Instant::now(),
             reexec: false,
@@ -583,6 +594,50 @@ impl Screen {
         });
     }
 
+    /// A new X.Y tag's Question, queued with the others; none while a
+    /// Question or a pass for a tag is live. Never saved: a check after a
+    /// restart asks again, as nothing was recorded.
+    // ponytail: a tag found in the demo is dropped, a yes there would start a
+    // real session; the next check asks
+    fn ask_docs_pass(&mut self, tag: String) {
+        let asked = self.questions.iter().any(is_docs_pass);
+        // a no answered since the check read the tags has handled it
+        let handled = !graphify::is_new(graphify::handled(&self.cfg.repo), Some(&tag));
+        if asked || handled || self.docs_tag.is_some() || self.demo.is_some() {
+            return;
+        }
+        if self.questions.is_empty() {
+            self.hidden = false;
+        }
+        self.questions.push(Question {
+            ticket: None,
+            text: format!("{tag} tagged: run the graphify docs pass now?"),
+            about: About::Confirm(Pending::DocsPass { tag }),
+            cursor: 1,
+            scroll: Cell::new(0),
+            asked: chrono::Local::now(),
+            opened: OnceCell::new(),
+        });
+    }
+
+    /// The Docs pass on tag, on a thread of its own that hands its lines to
+    /// poll(); it never holds the run.
+    fn run_docs_pass(&mut self, tag: String) {
+        self.docs_tag = Some(tag.clone());
+        let (tools, repo, workspace, tick, tx) = (
+            self.cfg.tools.clone(),
+            self.cfg.repo.clone(),
+            self.cfg.workspace.clone(),
+            self.cfg.tick,
+            self.docs_sender.clone(),
+        );
+        thread::spawn(move || {
+            let say = |line| _ = tx.send((line, false));
+            let last = graphify::docs_pass(&*tools, &repo, &workspace, &tag, tick, &say);
+            let _ = tx.send((last, true));
+        });
+    }
+
     /// A check's outcome: a failure is one line; a release installs at once
     /// on an idle Shell, or waits for the run to release the lock.
     fn updated(&mut self, checked: Checked) {
@@ -692,8 +747,15 @@ impl Screen {
             for line in failed {
                 self.say(&line);
             }
-            // a pass that read no new tag keeps one found before for the Docs pass
-            self.docs_tag = tag.or(self.docs_tag.take());
+            if let Some(tag) = tag {
+                self.ask_docs_pass(tag);
+            }
+        }
+        while let Ok((line, over)) = self.docs_receiver.try_recv() {
+            self.say(&line);
+            if over {
+                self.docs_tag = None;
+            }
         }
         while let Ok(rung) = self.ring_receiver.try_recv() {
             self.pushes -= 1;
@@ -1832,6 +1894,12 @@ impl Screen {
                 };
                 self.confirmed(&q.text, pending);
             }
+            (About::Confirm(Pending::DocsPass { tag }), _) => {
+                if let Err(err) = graphify::set_handled(&self.cfg.repo, tag) {
+                    self.say(&format!("graphify docs pass: {err}"));
+                }
+                self.questions.remove(0);
+            }
             (About::Confirm(_), _) => {
                 self.questions.remove(0);
                 self.notice("cancelled", NOTICE_WINDOW);
@@ -1969,6 +2037,7 @@ impl Screen {
             Pending::Start { ids, epic } => self.start(&ids, epic, true),
             Pending::Exit => self.quit(),
             Pending::Close { done, commented } => self.close_epic(text, done, commented),
+            Pending::DocsPass { tag } => self.run_docs_pass(tag),
         }
     }
 
@@ -2000,9 +2069,11 @@ impl Screen {
     }
 
     /// A confirmation or the /continue checklist: shown at once, ahead of
-    /// every Ticket's Question, in place of one still waiting.
+    /// every Ticket's Question and the Docs pass's, in place of one still
+    /// waiting.
     fn ask_first(&mut self, question: Question) {
-        self.questions.retain(|q| q.ticket.is_some());
+        self.questions
+            .retain(|q| q.ticket.is_some() || is_docs_pass(q));
         self.questions.insert(0, question);
         self.hidden = false;
     }
@@ -2747,6 +2818,11 @@ impl Screen {
             .find(|t| t.id == id)
             .map(|t| t.title.as_str())
     }
+}
+
+/// Whether a Question is the Docs pass's.
+fn is_docs_pass(q: &Question) -> bool {
+    matches!(q.about, About::Confirm(Pending::DocsPass { .. }))
 }
 
 /// A /continue reset: the Ticket's panes close, its run directory moves

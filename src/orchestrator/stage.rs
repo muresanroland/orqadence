@@ -93,7 +93,7 @@ pub(crate) const AWAY: &str = "asked you while away";
 
 /// How long a just-prompted session may still look idle before an idle pane
 /// with no result counts as a Stage that did not write one.
-pub(super) const SETTLE_TICKS: u32 = 3;
+pub(crate) const SETTLE_TICKS: u32 = 3;
 
 /// How long a wait holds before the Ticket Wakes again.
 const WAIT: Duration = Duration::from_secs(10 * 60);
