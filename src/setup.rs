@@ -1862,8 +1862,9 @@ pub(crate) fn remove_lines(path: &Path, lines: &[String]) -> io::Result<bool> {
     Ok(true)
 }
 
-/// Adds to the end of the file at path each of lines not there yet,
-/// trimmed, and says whether any was added. A missing file is made.
+/// Adds to the end of the file at path each of lines not there yet, with
+/// trailing spaces trimmed as git does (leading ones are part of a rule),
+/// and says whether any was added. A missing file is made.
 pub(crate) fn add_lines(path: &Path, lines: &[String]) -> io::Result<bool> {
     let mut text = match fs::read_to_string(path) {
         Ok(text) => text,
@@ -1872,7 +1873,7 @@ pub(crate) fn add_lines(path: &Path, lines: &[String]) -> io::Result<bool> {
     };
     let new: Vec<&String> = lines
         .iter()
-        .filter(|add| !text.lines().any(|line| line.trim() == add.as_str()))
+        .filter(|add| !text.lines().any(|line| line.trim_end() == add.as_str()))
         .collect();
     if new.is_empty() {
         return Ok(false);

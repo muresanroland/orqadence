@@ -1455,7 +1455,8 @@ fn graphify_failing_step_is_said_and_the_rest_runs() {
 }
 
 /// add_lines adds a line not there yet once, after the text kept as it
-/// was, even without a last newline; a missing file is made.
+/// was, even without a last newline; a missing file is made. Trailing
+/// spaces and \r\n still match, an indented line is another rule.
 #[test]
 fn add_lines_adds_each_missing_line_once() {
     let repo = TempDir::new();
@@ -1463,8 +1464,11 @@ fn add_lines_adds_each_missing_line_once() {
     let lines = ["graphify-out/".to_string()];
     assert!(add_lines(&path, &lines).unwrap());
     assert_eq!(read(repo.path(), ".gitignore"), "graphify-out/\n");
-    write_file(&path, "/target\n  graphify-out/  ");
+    write_file(&path, "/target\r\ngraphify-out/  \r\n");
     assert!(!add_lines(&path, &lines).unwrap());
+    write_file(&path, "  graphify-out/");
+    assert!(add_lines(&path, &lines).unwrap());
+    assert_eq!(read(repo.path(), ".gitignore"), "  graphify-out/\ngraphify-out/\n");
     write_file(&path, "/target");
     assert!(add_lines(&path, &lines).unwrap());
     assert_eq!(read(repo.path(), ".gitignore"), "/target\ngraphify-out/\n");
