@@ -821,6 +821,44 @@ fn a_committed_checkout_asks_only_this_machines_questions() {
     assert_eq!(read(repo.path(), ".orqadence/config.json"), config);
 }
 
+/// graphify committed on: init installs it and builds the code graph
+/// without asking; committed off runs none of it, unasked, and a fresh
+/// init nobody answers runs none of it either.
+#[test]
+fn init_sets_up_graphify_as_committed_or_answered() {
+    for (config, committed, runs) in [
+        (r#"{"typesafe": false, "graphify": true}"#, true, true),
+        (r#"{"typesafe": false, "graphify": false}"#, true, false),
+        (r#"{"typesafe": false}"#, false, false),
+    ] {
+        let (repo, home) = (prepared_repo(), TempDir::new());
+        write_file(&repo.path().join(".orqadence/config.json"), config);
+        let tools = if committed {
+            committed_tools()
+        } else {
+            ok_tools()
+        };
+        let (_, out) = init_with(repo.path(), home.path(), tools.clone(), &[], "");
+        assert_eq!(
+            out.contains("Set up graphify"),
+            !committed,
+            "{config}: {out}"
+        );
+        let calls = tools.calls();
+        assert_eq!(
+            calls.iter().any(|call| call == "graphify update ."),
+            runs,
+            "{config}: {calls:?}"
+        );
+        assert!(
+            !calls.iter().any(
+                |call| call.starts_with("graphify claude") || call.starts_with("graphify hook")
+            ),
+            "{calls:?}"
+        );
+    }
+}
+
 /// TypeSafe committed on: the key is asked, and kept, unless
 /// TYPESAFE_API_KEY is set or a key is kept already.
 #[test]

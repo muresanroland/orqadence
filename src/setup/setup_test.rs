@@ -1,7 +1,8 @@
 use super::{
-    ask_typesafe, coderabbit_skipping, install_skills, preflight, sync_gh_labels, typesafe_key,
-    warnings, write_bot_exclusions, yes,
+    add_lines, ask_typesafe, coderabbit_skipping, install_skills, preflight, set_up_graphify,
+    sync_gh_labels, typesafe_key, warnings, write_bot_exclusions, yes,
 };
+use crate::orchestrator::app;
 use crate::orchestrator::write_file;
 use crate::skills::manifest::{Manifest, JOBS, NONE};
 use crate::skills::{EXTRA_FILES, SKILLS};
@@ -1246,4 +1247,205 @@ fn a_bot_file_that_cannot_be_edited_is_left_and_named() {
     fs::remove_file(repo.path().join("greptile.json")).unwrap();
     let out = exclusions(repo.path(), both);
     assert!(out.contains("init: wrote greptile.json"), "{out}");
+}
+
+/// Rows all on claude: the Review and side B moved off codex.
+const ALL_CLAUDE: &str = r#"{"review": {"app": "claude"}, "side_b": {"app": "claude"}}"#;
+
+/// init's graphify step on repo, `answer` on its input, over tools: its
+/// output. Never graphify claude install or graphify hook install.
+fn graphify_step(repo: &Path, tools: &Fake, committed: bool, answer: &str) -> String {
+    let mut out = Vec::new();
+    set_up_graphify(
+        repo,
+        tools,
+        committed,
+        &mut out,
+        &mut answer.as_bytes(),
+        false,
+    )
+    .unwrap();
+    for call in tools.calls() {
+        assert!(
+            !call.starts_with("graphify claude") && !call.starts_with("graphify hook"),
+            "{call}"
+        );
+    }
+    String::from_utf8(out).unwrap()
+}
+
+/// The graphify commands among tools' calls, in order.
+fn graphify_calls(tools: &Fake) -> Vec<String> {
+    let commands = ["uv ", "pipx ", "graphify "];
+    tools
+        .calls()
+        .into_iter()
+        .filter(|call| commands.iter().any(|c| call.starts_with(c)))
+        .collect()
+}
+
+/// Yes installs graphify with uv, its skill for claude, builds the code
+/// graph, ignores graphify-out/, writes the always-on section and turns
+/// the switch on.
+#[test]
+fn graphify_yes_installs_it_and_builds_the_code_graph() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), ALL_CLAUDE);
+    let tools = Fake::quiet();
+    let out = graphify_step(repo.path(), &tools, false, "y\n");
+    assert!(out.contains("Set up graphify"), "{out}");
+    assert_eq!(
+        graphify_calls(&tools),
+        [
+            "uv tool install graphifyy",
+            "graphify install --platform claude",
+            "graphify update ."
+        ]
+    );
+    assert_eq!(read(repo.path(), ".gitignore"), "graphify-out/\n");
+    assert!(read(repo.path(), "AGENTS.md").starts_with("## graphify\n"));
+    assert!(app::graphify(repo.path()));
+}
+
+/// A row on codex (the Review's default) installs the skill for codex too.
+#[test]
+fn graphify_installs_its_skill_for_codex_when_a_row_runs_there() {
+    let repo = TempDir::new();
+    let tools = Fake::quiet();
+    graphify_step(repo.path(), &tools, false, "y\n");
+    assert_eq!(
+        graphify_calls(&tools),
+        [
+            "uv tool install graphifyy",
+            "graphify install --platform claude",
+            "graphify install --platform codex",
+            "graphify update ."
+        ]
+    );
+}
+
+/// With CLAUDE.md there, the section goes into it, not AGENTS.md.
+#[test]
+fn graphify_writes_its_section_into_claude_md_when_there() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join("CLAUDE.md"), "# Repo\n");
+    graphify_step(repo.path(), &Fake::quiet(), false, "y\n");
+    assert!(read(repo.path(), "CLAUDE.md").starts_with("# Repo\n\n## graphify\n"));
+    assert!(!repo.path().join("AGENTS.md").exists());
+}
+
+/// No uv: pipx installs it. Neither: the uv line, nothing run, switch off.
+#[test]
+fn graphify_installs_with_pipx_without_uv_and_with_neither_runs_nothing() {
+    let repo = TempDir::new();
+    let no_uv = Fake::new(|_, argv| match argv.join(" ").as_str() {
+        "which uv" => Err("uv not found".to_string()),
+        _ => Ok(String::new()),
+    });
+    graphify_step(repo.path(), &no_uv, false, "y\n");
+    assert_eq!(graphify_calls(&no_uv)[0], "pipx install graphifyy");
+    assert!(!graphify_calls(&no_uv)
+        .iter()
+        .any(|call| call.starts_with("uv ")));
+
+    let repo = TempDir::new();
+    let neither = Fake::new(|_, argv| match argv[0] {
+        "which" => Err("not found".to_string()),
+        _ => Ok(String::new()),
+    });
+    let out = graphify_step(repo.path(), &neither, false, "y\n");
+    assert!(out.contains("https://docs.astral.sh/uv/"), "{out}");
+    assert!(graphify_calls(&neither).is_empty(), "{:?}", neither.calls());
+    assert!(!app::graphify(repo.path()));
+    assert!(!repo.path().join(".gitignore").exists());
+    assert!(!repo.path().join("AGENTS.md").exists());
+}
+
+/// No saves the switch off and runs nothing; nobody answering saves
+/// nothing and runs nothing.
+#[test]
+fn graphify_no_saves_off_and_no_answer_saves_nothing() {
+    for (answer, saved) in [("n\n", Some(false)), ("", None)] {
+        let repo = TempDir::new();
+        let tools = Fake::quiet();
+        graphify_step(repo.path(), &tools, false, answer);
+        assert!(tools.calls().is_empty(), "{answer:?}: {:?}", tools.calls());
+        let (_, doc) = app::read(repo.path()).unwrap();
+        assert_eq!(doc["graphify"].as_bool(), saved, "{answer:?}");
+        assert!(!repo.path().join(".gitignore").exists(), "{answer:?}");
+    }
+}
+
+/// A switch already in config.json, or a committed checkout's, is not
+/// asked again: on installs, off (or unset, committed) runs nothing.
+#[test]
+fn graphify_kept_switch_asks_nothing() {
+    for (config, committed, runs) in [
+        (r#"{"graphify": true}"#, false, true),
+        (r#"{"graphify": false}"#, false, false),
+        (r#"{"graphify": true}"#, true, true),
+        ("{}", true, false),
+    ] {
+        let repo = TempDir::new();
+        write_file(&repo.path().join(".orqadence/config.json"), config);
+        let tools = Fake::quiet();
+        let out = graphify_step(repo.path(), &tools, committed, "n\n");
+        assert!(!out.contains("Set up graphify"), "{config}: {out}");
+        assert_eq!(
+            graphify_calls(&tools).contains(&"graphify update .".to_string()),
+            runs,
+            "{config}"
+        );
+        assert_eq!(read(repo.path(), ".orqadence/config.json"), config);
+    }
+}
+
+/// Run twice, init leaves one graphify-out/ line and one section.
+#[test]
+fn graphify_twice_adds_its_line_and_section_once() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join(".gitignore"), "/target");
+    graphify_step(repo.path(), &Fake::quiet(), false, "y\n");
+    graphify_step(repo.path(), &Fake::quiet(), false, "y\n");
+    assert_eq!(read(repo.path(), ".gitignore"), "/target\ngraphify-out/\n");
+    assert_eq!(
+        read(repo.path(), "AGENTS.md")
+            .matches("## graphify")
+            .count(),
+        1
+    );
+}
+
+/// A failing command is one init line naming it, and init goes on.
+#[test]
+fn graphify_failing_step_is_said_and_the_rest_runs() {
+    let repo = TempDir::new();
+    let failing = Fake::new(|_, argv| match argv.join(" ").as_str() {
+        "graphify update ." => Err("boom".to_string()),
+        _ => Ok(String::new()),
+    });
+    let out = graphify_step(repo.path(), &failing, false, "y\n");
+    assert!(
+        out.contains("init: graphify update .: exit status 1: boom"),
+        "{out}"
+    );
+    assert_eq!(read(repo.path(), ".gitignore"), "graphify-out/\n");
+    assert!(repo.path().join("AGENTS.md").exists());
+    assert!(app::graphify(repo.path()));
+}
+
+/// add_lines adds a line not there yet once, after the text kept as it
+/// was, even without a last newline; a missing file is made.
+#[test]
+fn add_lines_adds_each_missing_line_once() {
+    let repo = TempDir::new();
+    let path = repo.path().join(".gitignore");
+    let lines = ["graphify-out/".to_string()];
+    assert!(add_lines(&path, &lines).unwrap());
+    assert_eq!(read(repo.path(), ".gitignore"), "graphify-out/\n");
+    write_file(&path, "/target\n  graphify-out/  ");
+    assert!(!add_lines(&path, &lines).unwrap());
+    write_file(&path, "/target");
+    assert!(add_lines(&path, &lines).unwrap());
+    assert_eq!(read(repo.path(), ".gitignore"), "/target\ngraphify-out/\n");
 }
