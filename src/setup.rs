@@ -5,7 +5,7 @@
 //! Rebase and Address PR comments' switches and the Release's, which review
 //! bots the repo has, tells them to skip a No-review pull request, makes
 //! the GitHub labels the Orchestrator puts on PRs, asks On call's Moshi
-//! token, and preflights the Target repo.
+//! token, sets up graphify, and preflights the Target repo.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -354,12 +354,13 @@ fn unhide_links(repo: &Path) -> io::Result<()> {
 /// The rest of init once the skills are in: bd, the docs/agents setup,
 /// TypeSafe, every job's default, the Ticket labels, Rebase and Address PR
 /// comments' switches and the review bots, the Release's, the review bots'
-/// No-review exclusion, the GitHub labels, On call, and herdr's
-/// integrations. A `committed` checkout keeps the committed TypeSafe
-/// switch, picks, labels, switches and bots, and is asked only for the key,
-/// when TypeSafe is on and no key is set or kept; On call is per person,
-/// asked on every checkout, and the exclusion and the GitHub labels, which
-/// ask nothing, are made on every checkout that lacks them.
+/// No-review exclusion, the GitHub labels, On call, herdr's integrations
+/// and graphify. A `committed` checkout keeps the committed TypeSafe
+/// switch, picks, labels, switches, bots and graphify's switch, and is
+/// asked only for the key, when TypeSafe is on and no key is set or kept;
+/// On call is per person, asked on every checkout, and the exclusion and
+/// the GitHub labels, which ask nothing, are made on every checkout that
+/// lacks them.
 pub(crate) fn set_up(
     repo: &Path,
     tools: &dyn Tools,
@@ -384,7 +385,8 @@ pub(crate) fn set_up(
     write_bot_exclusions(repo, out)?;
     sync_gh_labels(repo, tools, out)?;
     ask_on_call(repo, &env(on_call::TOKEN_VAR), out, input, tty)?;
-    install_integrations(repo, tools, out, input, tty)
+    install_integrations(repo, tools, out, input, tty)?;
+    set_up_graphify(repo, tools, committed, out, input, tty)
 }
 
 /// Rebase and Address PR comments by themselves, each a yes/no kept in
@@ -843,23 +845,144 @@ fn write_agent_docs(
         write!(out, "init: wrote {path}\r\n")?;
     }
     if !has_block {
-        let file = if repo.join("CLAUDE.md").exists() {
-            "CLAUDE.md"
-        } else {
-            "AGENTS.md"
-        };
-        let mut text = match fs::read_to_string(repo.join(file)) {
-            Ok(text) => text,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
-            Err(err) => return Err(err),
-        };
-        if !text.is_empty() {
-            text += if text.ends_with('\n') { "\n" } else { "\n\n" };
-        }
+        let (file, text) = agent_doc(repo)?;
         fs::write(repo.join(file), text + AGENT_SKILLS)?;
         write!(out, "init: wrote the Agent skills block into {file}\r\n")?;
     }
     Ok(())
+}
+
+/// The file init writes its sections into, CLAUDE.md, else AGENTS.md, and
+/// its text so far, a blank line ending it when it has any.
+fn agent_doc(repo: &Path) -> io::Result<(&'static str, String)> {
+    let file = if repo.join("CLAUDE.md").exists() {
+        "CLAUDE.md"
+    } else {
+        "AGENTS.md"
+    };
+    Ok((file, doc_text(repo, file)?))
+}
+
+/// file's text in repo, a blank line ending it when it has any.
+fn doc_text(repo: &Path, file: &str) -> io::Result<String> {
+    let mut text = match fs::read_to_string(repo.join(file)) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(err),
+    };
+    if !text.is_empty() {
+        text += if text.ends_with('\n') { "\n" } else { "\n\n" };
+    }
+    Ok(text)
+}
+
+/// graphify's always-on section, copied from graphify 0.9.68's
+/// graphify/always_on/agents-md.md (https://github.com/Graphify-Labs/graphify,
+/// Apache-2.0).
+const GRAPHIFY_SECTION: &str = r#"## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+"#;
+
+/// Asks to set up graphify, default yes: yes installs it (install_graphify)
+/// and turns the switch on, no turns it off, and nobody answering leaves
+/// it unset and runs nothing. A committed checkout, or a config.json that
+/// has the switch already, is not asked: on installs, off runs nothing.
+fn set_up_graphify(
+    repo: &Path,
+    tools: &dyn Tools,
+    committed: bool,
+    out: &mut dyn Write,
+    input: &mut dyn Read,
+    tty: bool,
+) -> io::Result<()> {
+    let (_, doc) = app::read(repo).map_err(io::Error::other)?;
+    if committed || doc[app::GRAPHIFY.key].is_boolean() {
+        if app::graphify(repo) {
+            step(out, named("GRAPHIFY"))?;
+            install_graphify(repo, tools, out)?;
+        }
+        return Ok(());
+    }
+    step(out, named("GRAPHIFY"))?;
+    let question = "Set up graphify?";
+    match yes(out, input, tty, question, true)? {
+        Some(true) => {
+            if install_graphify(repo, tools, out)? {
+                app::set_switch(repo, &app::GRAPHIFY, true).map_err(io::Error::other)?;
+            }
+            Ok(())
+        }
+        Some(false) => app::set_switch(repo, &app::GRAPHIFY, false).map_err(io::Error::other),
+        None => Ok(()),
+    }
+}
+
+/// Installs graphify with uv, else pipx, its skill for claude and codex
+/// when a row runs on them, builds the code graph, ignores graphify-out/
+/// and writes the always-on section into CLAUDE.md, else AGENTS.md, and
+/// into AGENTS.md too when a row runs on codex, unless the file has one. A failing command is said and the next step runs. With
+/// neither uv nor pipx, says how to get uv and runs nothing: false.
+fn install_graphify(repo: &Path, tools: &dyn Tools, out: &mut dyn Write) -> io::Result<bool> {
+    let installer = ["uv", "pipx"]
+        .into_iter()
+        .find(|bin| tools.run(repo, &["which", bin]).is_ok());
+    let install: &[&str] = match installer {
+        Some("uv") => &["uv", "tool", "install", "graphifyy"],
+        Some(_) => &["pipx", "install", "graphifyy"],
+        None => {
+            write!(
+                out,
+                "init: graphify not set up: it needs uv (https://docs.astral.sh/uv/) or pipx; install uv, then run orqa init again\r\n"
+            )?;
+            return Ok(false);
+        }
+    };
+    // Each row's App, the fallback unset and a row that cannot be read none.
+    let apps: Vec<&str> = app::ROWS
+        .iter()
+        .filter_map(|&key| match key {
+            app::IF_LIMITED => app::fallback_row(repo, &[]).ok().flatten(),
+            _ => app::row(repo, key, &[]).ok(),
+        })
+        .map(|row| row.app.name)
+        .collect();
+    let platforms = ["claude", "codex"]
+        .into_iter()
+        .filter(|name| apps.contains(name))
+        .map(|name| vec!["graphify", "install", "--platform", name]);
+    for argv in iter::once(install.to_vec())
+        .chain(platforms)
+        .chain([vec!["graphify", "update", "."]])
+    {
+        match tools.run(repo, &argv) {
+            Ok(_) => write!(out, "init: ran {}\r\n", argv.join(" "))?,
+            Err(err) => write!(out, "init: {err}\r\n")?,
+        }
+    }
+    if add_lines(&repo.join(".gitignore"), &["graphify-out/".to_string()])? {
+        write!(out, "init: added graphify-out/ to .gitignore\r\n")?;
+    }
+    // Codex reads AGENTS.md only: a row on it gets the section there too.
+    let (file, _) = agent_doc(repo)?;
+    let codex = apps.contains(&"codex") && file != "AGENTS.md";
+    for file in iter::once(file).chain(codex.then_some("AGENTS.md")) {
+        let text = doc_text(repo, file)?;
+        if !text.lines().any(|line| line.trim() == "## graphify") {
+            fs::write(repo.join(file), text + GRAPHIFY_SECTION)?;
+            write!(out, "init: wrote the graphify section into {file}\r\n")?;
+        }
+    }
+    Ok(true)
 }
 
 /// The typesafe-ai skill init installs when TypeSafe is on: (name, source).
@@ -1736,6 +1859,33 @@ pub(crate) fn remove_lines(path: &Path, lines: &[String]) -> io::Result<bool> {
         return Ok(false);
     }
     fs::write(path, kept)?;
+    Ok(true)
+}
+
+/// Adds to the end of the file at path each of lines not there yet, with
+/// trailing spaces trimmed as git does (leading ones are part of a rule),
+/// and says whether any was added. A missing file is made.
+pub(crate) fn add_lines(path: &Path, lines: &[String]) -> io::Result<bool> {
+    let mut text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(err),
+    };
+    let new: Vec<&String> = lines
+        .iter()
+        .filter(|add| !text.lines().any(|line| line.trim_end() == add.as_str()))
+        .collect();
+    if new.is_empty() {
+        return Ok(false);
+    }
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    for line in new {
+        text += line;
+        text.push('\n');
+    }
+    fs::write(path, text)?;
     Ok(true)
 }
 

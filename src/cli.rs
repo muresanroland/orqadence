@@ -15,7 +15,7 @@ use crate::tools::Tools;
 const USAGE: &str = "usage: orqa [command]
 
   (no command)                open the Shell, which runs the Epics
-  init [--force]              set up the Target repo (bd, docs/agents, the skills, TypeSafe, herdr's integrations) and preflight it
+  init [--force]              set up the Target repo (bd, docs/agents, the skills, TypeSafe, herdr's integrations, graphify) and preflight it
   --version                   print the version
 ";
 
