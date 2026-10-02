@@ -16,6 +16,7 @@ use super::stage::{
     REVIEW,
 };
 use super::state::{local_dir, TicketState, LOCAL, STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING};
+use crate::graphify;
 use crate::setup::{put_gh_label, DEFAULT_TEMPLATE, TEMPLATE_DIR};
 use crate::skills::manifest::{placeholder, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS};
 use crate::skills::{stage_skill, CREATE_PR};
@@ -932,6 +933,10 @@ impl Orchestrator {
                 return Err(StageError::Parked(format!(
                     "new branch not brought up to origin's default branch: {err}"
                 )));
+            }
+            // optional: a Ticket never parks for its graph
+            if let Err(err) = graphify::prepare_worktree(&**tools, repo, &worktree) {
+                self.log(ticket, &format!("code graph not built: {err}"));
             }
             // the Release has no bd issue to mark
             let update = ["bd", "update", ticket, "--status", "in_progress"];
