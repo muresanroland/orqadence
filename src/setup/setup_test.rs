@@ -1324,14 +1324,34 @@ fn graphify_installs_its_skill_for_codex_when_a_row_runs_there() {
     );
 }
 
-/// With CLAUDE.md there, the section goes into it, not AGENTS.md.
+/// With CLAUDE.md there and every row on claude, the section goes into
+/// it, not AGENTS.md.
 #[test]
 fn graphify_writes_its_section_into_claude_md_when_there() {
     let repo = TempDir::new();
+    write_file(&repo.path().join(".orqadence/config.json"), ALL_CLAUDE);
     write_file(&repo.path().join("CLAUDE.md"), "# Repo\n");
     graphify_step(repo.path(), &Fake::quiet(), false, "y\n");
     assert!(read(repo.path(), "CLAUDE.md").starts_with("# Repo\n\n## graphify\n"));
     assert!(!repo.path().join("AGENTS.md").exists());
+}
+
+/// With CLAUDE.md there and a row on codex (the Review's default), the
+/// section goes into AGENTS.md too, once each, also when run again.
+#[test]
+fn graphify_writes_its_section_into_agents_md_too_for_codex() {
+    let repo = TempDir::new();
+    write_file(&repo.path().join("CLAUDE.md"), "# Repo\n");
+    for _ in 0..2 {
+        graphify_step(repo.path(), &Fake::quiet(), false, "y\n");
+    }
+    for file in ["CLAUDE.md", "AGENTS.md"] {
+        assert_eq!(
+            read(repo.path(), file).matches("## graphify").count(),
+            1,
+            "{file}"
+        );
+    }
 }
 
 /// No uv: pipx installs it. Neither: the uv line, nothing run, switch off.

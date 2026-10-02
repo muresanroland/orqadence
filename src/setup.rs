@@ -860,6 +860,11 @@ fn agent_doc(repo: &Path) -> io::Result<(&'static str, String)> {
     } else {
         "AGENTS.md"
     };
+    Ok((file, doc_text(repo, file)?))
+}
+
+/// file's text in repo, a blank line ending it when it has any.
+fn doc_text(repo: &Path, file: &str) -> io::Result<String> {
     let mut text = match fs::read_to_string(repo.join(file)) {
         Ok(text) => text,
         Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
@@ -868,7 +873,7 @@ fn agent_doc(repo: &Path) -> io::Result<(&'static str, String)> {
     if !text.is_empty() {
         text += if text.ends_with('\n') { "\n" } else { "\n\n" };
     }
-    Ok((file, text))
+    Ok(text)
 }
 
 /// graphify's always-on section, copied from graphify 0.9.68's
@@ -924,8 +929,8 @@ fn set_up_graphify(
 
 /// Installs graphify with uv, else pipx, its skill for claude and codex
 /// when a row runs on them, builds the code graph, ignores graphify-out/
-/// and writes the always-on section into CLAUDE.md, else AGENTS.md, unless
-/// it has one. A failing command is said and the next step runs. With
+/// and writes the always-on section into CLAUDE.md, else AGENTS.md, and
+/// into AGENTS.md too when a row runs on codex, unless the file has one. A failing command is said and the next step runs. With
 /// neither uv nor pipx, says how to get uv and runs nothing: false.
 fn install_graphify(repo: &Path, tools: &dyn Tools, out: &mut dyn Write) -> io::Result<bool> {
     let installer = ["uv", "pipx"]
@@ -967,10 +972,15 @@ fn install_graphify(repo: &Path, tools: &dyn Tools, out: &mut dyn Write) -> io::
     if add_lines(&repo.join(".gitignore"), &["graphify-out/".to_string()])? {
         write!(out, "init: added graphify-out/ to .gitignore\r\n")?;
     }
-    let (file, text) = agent_doc(repo)?;
-    if !text.lines().any(|line| line.trim() == "## graphify") {
-        fs::write(repo.join(file), text + GRAPHIFY_SECTION)?;
-        write!(out, "init: wrote the graphify section into {file}\r\n")?;
+    // Codex reads AGENTS.md only: a row on it gets the section there too.
+    let (file, _) = agent_doc(repo)?;
+    let codex = apps.contains(&"codex") && file != "AGENTS.md";
+    for file in iter::once(file).chain(codex.then_some("AGENTS.md")) {
+        let text = doc_text(repo, file)?;
+        if !text.lines().any(|line| line.trim() == "## graphify") {
+            fs::write(repo.join(file), text + GRAPHIFY_SECTION)?;
+            write!(out, "init: wrote the graphify section into {file}\r\n")?;
+        }
     }
     Ok(true)
 }
