@@ -294,6 +294,25 @@ fn a_later_brainstorm_pane_replaces_the_previous_one() {
 }
 
 #[test]
+fn a_failed_close_of_the_previous_brainstorm_pane_takes_the_new_one_back() {
+    let (w, o) = shell_world();
+    let first = o
+        .place_beside_shell("w1:shell", "", &["--no-focus"])
+        .unwrap();
+    w.fail_once(
+        &format!("herdr pane close {first}"),
+        r#"{"error":{"code":"internal_error"}}"#,
+    );
+
+    assert!(o
+        .place_beside_shell("w1:shell", &first, &["--no-focus"])
+        .is_err());
+
+    let panes: Vec<String> = w.lock().panes.iter().map(|p| p.pane_id.clone()).collect();
+    assert_eq!(panes, ["w1:shell", "w1:mine", first.as_str()]);
+}
+
+#[test]
 fn a_failed_lookup_of_the_previous_brainstorm_pane_does_not_split_the_shell_again() {
     let (w, o) = shell_world();
     let first = o

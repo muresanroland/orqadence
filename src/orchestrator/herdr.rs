@@ -199,8 +199,15 @@ impl Orchestrator {
             let mut argv = vec!["pane", "split", previous, "--direction", "right"];
             argv.extend_from_slice(placement);
             let pane = self.herdr(&argv)?.result.pane.pane_id;
-            let _ = self.herdr(&["pane", "close", previous]);
-            return Ok(pane);
+            // A previous pane left open would be untracked: take the new
+            // one back so the caller still holds a valid `previous`.
+            match self.herdr(&["pane", "close", previous]) {
+                Err(err) if !err.to_string().contains("pane_not_found") => {
+                    let _ = self.herdr(&["pane", "close", &pane]);
+                    return Err(err);
+                }
+                _ => return Ok(pane),
+            }
         }
         let direction = self
             .herdr(&["pane", "layout", "--pane", shell])
