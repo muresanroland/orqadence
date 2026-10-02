@@ -981,6 +981,29 @@ fn the_merge_takes_the_repos_method_squash_else_rebase_else_a_merge_commit() {
     assert_eq!(merged_with(false, false), "--merge");
 }
 
+/// A /stop-work or /exit that comes while the poll reads the merge method
+/// merges nothing and parks nothing, and the polls after it read no PR.
+#[test]
+fn a_stop_during_the_merges_reads_merges_nothing() {
+    let (w, o, clock) = polled();
+    let o = Arc::new(o);
+    agent_merge(&w, &["coderabbit"]);
+    let weak = Arc::downgrade(&o);
+    w.hook(move |_, argv| {
+        if argv == ["gh", "api", "repos/{owner}/{repo}"] {
+            weak.upgrade().unwrap().stop();
+        }
+        None
+    });
+    settle(&w, &o, &clock, &open(PR65, "a"));
+    assert!(o.stopping());
+    assert!(merges(&w).is_empty());
+    assert_eq!(o.ticket("hx-1").status, STATUS_PR_OPEN);
+    let read = w.called("gh api graphql").len();
+    poll(&o);
+    assert_eq!(w.called("gh api graphql").len(), read);
+}
+
 const REFUSAL: &str =
     "Pull request o/r#1 is not mergeable: the base branch policy prohibits the merge.";
 

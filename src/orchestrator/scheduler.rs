@@ -527,6 +527,10 @@ impl Orchestrator {
 
         let mut quiet = Vec::new();
         for (ticket, ts) in open {
+            // /stop-work or /exit: no Ticket is handled past it, so none merges
+            if self.stopping() {
+                break;
+            }
             let reply = self.pr(&ts.pr);
             // read again: it may have parked at its PR Stage during the call
             let ts = self.ticket(&ticket);
@@ -637,7 +641,8 @@ impl Orchestrator {
     /// head these gates were read on. --repo keeps gh off the local
     /// branch, which the Ticket's worktree holds: the next poll's merged
     /// handling removes both. GitHub refusing, or a merge
-    /// queue, which gh would join for it, parks the Ticket at MERGE.
+    /// queue, which gh would join for it, parks the Ticket at MERGE. A
+    /// stop seen before gh is asked merges nothing.
     fn merge(&self, ticket: &str, ts: &TicketState, pr: &Pr) {
         let repo = &self.cfg.repo;
         if ts.human_merge || ts.merge_asked || !app::switch(repo, &app::AGENT_MERGE) {
@@ -655,7 +660,8 @@ impl Orchestrator {
                 return;
             }
         }
-        if !self.may_merge(ticket, ts, &pr.head_ref_oid) {
+        // the reads above block: a stop that came during them wins
+        if !self.may_merge(ticket, ts, &pr.head_ref_oid) || self.stopping() {
             return;
         }
         let number = pr_ref(&ts.pr);
@@ -666,6 +672,9 @@ impl Orchestrator {
                 Ok(found) => found,
                 Err(err) => return self.log(ticket, &format!("merge method not read: {err}")),
             };
+            if self.stopping() {
+                return;
+            }
             let argv = [
                 "gh",
                 "pr",

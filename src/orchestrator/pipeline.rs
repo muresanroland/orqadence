@@ -54,7 +54,7 @@ const HUMAN_MERGE_LABEL: GhLabel = (
     "D93F0B",
     "A human merges this pull request, never Orqadence",
 );
-const NO_REVIEW_LABEL: GhLabel = (
+pub(crate) const NO_REVIEW_LABEL: GhLabel = (
     "orqa:no-review",
     "C5DEF5",
     "Only Markdown and skills changed: the review bots skip it",

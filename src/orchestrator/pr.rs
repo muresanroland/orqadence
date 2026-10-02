@@ -55,15 +55,8 @@ impl<T> Nodes<T> {
 #[serde(default)]
 struct Rollup {
     commit: Option<Commit>,
-    contexts: Contexts,
-}
-
-/// The rollup's first 100 contexts, and whether it has more.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct Contexts {
-    nodes: Vec<Context>,
-    page_info: PageInfo,
+    /// The rollup's first 100 contexts, and whether it has more.
+    contexts: Nodes<Context>,
 }
 
 #[derive(Debug, Default, Deserialize)]

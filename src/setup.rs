@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 
 use crate::on_call;
 use crate::orchestrator::app::{self, APPS};
+use crate::orchestrator::pipeline::NO_REVIEW_LABEL;
 use crate::orchestrator::state::{self, local_dir};
 use crate::shell::brand::{self, BORDER, FRAME, GREEN, MUTED, PURPLE, TEXT, YELLOW};
 use crate::skills::manifest::{self, Installed, Manifest, FILES, JOBS, LINKS};
@@ -445,7 +446,7 @@ fn ask_agent_merge(
 }
 
 /// The GitHub label of a No-review pull request, which the review bots skip.
-const NO_REVIEW: &str = "orqa:no-review";
+const NO_REVIEW: &str = NO_REVIEW_LABEL.0;
 
 /// Under Agent merge, tells each review bot that review_bots lists to skip
 /// a No-review pull request: CodeRabbit in .coderabbit.yaml, Greptile in
