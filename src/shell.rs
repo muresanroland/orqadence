@@ -2135,12 +2135,22 @@ impl Screen {
 
     /// The /continue checklist answered, once the lock is held: a reset
     /// Ticket starts Implement over, a Parked one set to resume is unparked
-    /// at its Stage, and the rest resume as saved.
+    /// at its Stage, and the rest resume as saved. A Brainstorm's issue a
+    /// run saved before they were kept out is dropped: it never enters the
+    /// Pipeline.
     fn resume(&mut self, rows: &[(String, bool)]) {
         let Some(prepared) = self.prepare() else {
             return;
         };
         let o = prepared.1.clone();
+        let kept_out = |id: &String| self.brainstorm_issues.iter().any(|i| &i.id == id);
+        let rows: Vec<&(String, bool)> = rows.iter().filter(|(id, _)| !kept_out(id)).collect();
+        {
+            let mut state = o.state.lock().unwrap();
+            state.queue.retain(|id| !kept_out(id));
+            state.tickets.retain(|id, _| !kept_out(id));
+            state.removed.retain(|id, _| !kept_out(id));
+        }
         for (id, reset) in rows {
             if *reset {
                 if let Err(err) = reset_ticket(&o, id) {

@@ -3291,6 +3291,45 @@ fn a_ticket_with_no_epic_lists_starts_and_shows_alone_live() {
     assert_eq!(notice(&s), "no open Ticket matches \"nothing-like-it\"");
 }
 
+/// An Idea a run saved before Brainstorm issues were kept out never
+/// resumes into the Pipeline: /continue drops it, its Ticket resumes.
+#[test]
+fn continue_drops_a_saved_brainstorm_issue_and_resumes_the_ticket() {
+    let idea = BdTicket {
+        no_epic: true,
+        labels: vec!["brainstorm:idea".to_string()],
+        ..BdTicket::new("hx-i")
+    };
+    let (w, _) = new_world(vec![BdTicket::new("hx-1"), idea]);
+    w.session(|_| (String::new(), "working".to_string()));
+    let mut saved = State::default();
+    for id in ["hx-1", "hx-i"] {
+        saved.queue.push(id.to_string());
+        saved.tickets.insert(
+            id.to_string(),
+            TicketState {
+                status: STATUS_RUNNING.to_string(),
+                ..Default::default()
+            },
+        );
+    }
+    saved.save(&w.repo).unwrap();
+    let mut s = shell(&w);
+    s.reload_epics();
+    s.command("/continue");
+    s.key(key(KeyCode::Enter));
+    assert!(s.run.is_some(), "{:?}", s.notice);
+    await_line(&mut s, "hx-1 implement started: claude");
+    assert_eq!(s.state.queue, ["hx-1"]);
+    assert!(
+        !s.state.tickets.contains_key("hx-i"),
+        "{:?}",
+        s.state.tickets
+    );
+    s.command("/stop-work");
+    await_end(&mut s);
+}
+
 #[test]
 fn continue_resumes_a_saved_ticket_run_and_its_merge_ends_it() {
     let (w, _) = new_world(vec![BdTicket::new("hx-1"), BdTicket::new("hx-2")]);
