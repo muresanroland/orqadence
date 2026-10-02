@@ -851,7 +851,7 @@ fn agent_merging(
 fn under_agent_merge_the_version_pr_is_labelled_merged_on_green_and_tagged_with_no_question() {
     let (w, o) = releasing(vec![BdTicket::new("hx-1")]);
     let (o, mut run, clock) = agent_merging(&w, o);
-    open_version_pr(&w, "PENDING");
+    open_version_pr(&w, "FAILURE");
     settle(&w, &clock);
     polled(&w);
     assert!(w.called("gh pr merge").is_empty(), "merged before green");
@@ -875,14 +875,14 @@ fn under_agent_merge_the_version_pr_is_labelled_merged_on_green_and_tagged_with_
         ]
     );
     let lines = w.lines();
-    let at = |text: &str| {
+    let line = |text: &str| {
         lines
             .iter()
             .position(|l| l == text)
             .unwrap_or_else(|| panic!("no line {text:?}:\n{}", lines.join("\n")))
     };
-    assert!(at("version PR #version merged by Orqadence") < at("version PR #version merged"));
-    assert!(at("version PR #version merged") < at("tagged v1.5.0 and pushed"));
+    assert!(line("version PR #version merged by Orqadence") < line("version PR #version merged"));
+    assert!(line("version PR #version merged") < line("tagged v1.5.0 and pushed"));
     let asked: Vec<_> = w.events().into_iter().filter_map(|e| e.ask).collect();
     assert!(
         !asked.iter().any(|ask| matches!(ask, Ask::Tag { .. })),

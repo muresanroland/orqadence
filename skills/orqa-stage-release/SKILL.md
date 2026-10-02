@@ -29,7 +29,7 @@ A repo that keeps its version only in tags (no file holds it): change no file, c
 
 Run the orqa-create-pr skill. Its title names the new version. Its body says the new version, the base and why that base (the manifest and the tag disagreeing, when they did), and where you changed the version; names the **Epic** when it is not `none`; and lists the run's **Tickets**, each with its PR.
 
-This Stage never merges, never creates or pushes a tag and never creates a GitHub Release: the merge and the tag are the Orchestrator's.
+This Stage never merges, never creates or pushes a tag and never creates a GitHub Release: the tag is the Orchestrator's, and under Agent merge the merge too.
 
 ## Result file
 

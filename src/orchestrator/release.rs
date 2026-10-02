@@ -200,7 +200,7 @@ impl Orchestrator {
         }
         if !release.tagged {
             // its merge the Orchestrator's own: tagged with no Question
-            self.ask_tag(id, !self.ticket(id).merge_asked)?;
+            self.ask_tag(id, self.ticket(id).merge_asked)?;
         }
         Ok(false)
     }
@@ -238,17 +238,19 @@ impl Orchestrator {
                         return Ok(false);
                     }
                     Ok(pr) if !asked && self.version_pr_ready(id, &pr) => {
-                        asked = true;
+                        let number = pr_ref(url);
                         match self.gh_merge(id, url, &pr) {
                             Ok(true) => {
-                                self.update(id, |ts| ts.merge_asked = true);
-                                let text = format!("version {} merged by Orqadence", pr_ref(url));
-                                self.report("", &text);
+                                asked = true;
+                                // read it merged at once: a stop before
+                                // that asks the tag Question on /continue
+                                polled = None;
+                                self.report("", &format!("version {number} merged by Orqadence"));
                             }
-                            Ok(false) => asked = false,
+                            Ok(false) => {}
                             Err(refused) => {
-                                let text = format!("version {} not merged: {refused}", pr_ref(url));
-                                self.report("", &text);
+                                asked = true;
+                                self.report("", &format!("version {number} not merged: {refused}"));
                             }
                         }
                     }
@@ -268,10 +270,7 @@ impl Orchestrator {
     fn version_pr_ready(&self, id: &str, pr: &Pr) -> bool {
         app::switch(&self.cfg.repo, &AGENT_MERGE)
             && self.quiet_head(id, &self.ticket(id), pr)
-            && pr.green()
-            && pr.mergeable == "MERGEABLE"
-            && pr.review_decision.as_deref() != Some("CHANGES_REQUESTED")
-            && !self.stopping()
+            && pr.ready()
     }
 
     /// The tag Question: yes fetches origin's default branch, tags the
@@ -279,9 +278,9 @@ impl Orchestrator {
     /// pushes the tag alone, never a GitHub Release, which is the repo's own
     /// workflow's; a failure says so and asks again, a tag its push left
     /// deleted so the next git tag can make it. No leaves it to the user:
-    /// the same commands in a line and, from the Shell, a Notice. `asked`
-    /// false, the first try is made as on a yes, with no Question.
-    fn ask_tag(&self, id: &str, mut asked: bool) -> Result<(), StageError> {
+    /// the same commands in a line and, from the Shell, a Notice. With
+    /// `unasked`, the first try is made as on a yes, with no Question.
+    fn ask_tag(&self, id: &str, mut unasked: bool) -> Result<(), StageError> {
         let release = self.release_record();
         let version = release.version.as_str();
         let target = if release.ts.pr.is_empty() {
@@ -308,7 +307,7 @@ impl Orchestrator {
                 options,
                 notice: notice.clone(),
             };
-            if asked && self.ask_at_start(id, &text, options, ask)? == 1 {
+            if !unasked && self.ask_at_start(id, &text, options, ask)? == 1 {
                 let how = lines.join(" && ");
                 self.report("", &format!("{version} not tagged: {how}"));
                 return Ok(());
@@ -328,7 +327,7 @@ impl Orchestrator {
                 }
                 Err(err) => self.report("", &format!("tag {version} failed: {err}")),
             }
-            asked = true;
+            unasked = false;
         }
     }
 

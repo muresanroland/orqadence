@@ -192,6 +192,13 @@ impl Pr {
         !more && !self.contexts().iter().any(red)
     }
 
+    /// What every merge of the Orchestrator's waits for: its checks green,
+    /// GitHub calling it mergeable, and no review asking for changes.
+    pub(crate) fn ready(&self) -> bool {
+        let blocked = self.review_decision.as_deref() == Some("CHANGES_REQUESTED");
+        self.green() && self.mergeable == "MERGEABLE" && !blocked
+    }
+
     /// Whether the review bot, as review_bots names it, has reviewed the
     /// PR, on any commit: a review of its own, not a PR comment, which may
     /// only say it was skipped or rate limited.

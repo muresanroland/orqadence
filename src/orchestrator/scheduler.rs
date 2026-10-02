@@ -648,8 +648,7 @@ impl Orchestrator {
         if ts.human_merge || ts.merge_asked || !app::switch(repo, &app::AGENT_MERGE) {
             return;
         }
-        let blocked = pr.review_decision.as_deref() == Some("CHANGES_REQUESTED");
-        if !pr.green() || pr.mergeable != "MERGEABLE" || blocked {
+        if !pr.ready() {
             return;
         }
         if !ts.no_review {
@@ -666,10 +665,7 @@ impl Orchestrator {
         }
         let number = pr_ref(&ts.pr);
         let refused = match self.gh_merge(ticket, &ts.pr, pr) {
-            Ok(true) => {
-                self.update(ticket, |ts| ts.merge_asked = true);
-                return self.report(ticket, &format!("{number} merged by Orqadence"));
-            }
+            Ok(true) => return self.report(ticket, &format!("{number} merged by Orqadence")),
             Ok(false) => return,
             Err(refused) => refused,
         };
@@ -690,10 +686,10 @@ impl Orchestrator {
     }
 
     /// Asks gh to merge the PR at `url`, a Ticket's or the Release's version
-    /// PR, with the repo's own method: true once gh took it. False when gh
-    /// was not asked, the method not read or a stop seen, so the next poll
-    /// tries again. Err is why it is not merged: gh's message, or a merge
-    /// queue on its base branch.
+    /// PR, with the repo's own method: true once gh took it, which its
+    /// state keeps (merge_asked). False when gh was not asked, the method
+    /// not read or a stop seen, so the next poll tries again. Err is why it
+    /// is not merged: gh's message, or a merge queue on its base branch.
     pub(super) fn gh_merge(&self, id: &str, url: &str, pr: &Pr) -> Result<bool, String> {
         if pr.is_merge_queue_enabled {
             return Err("its base branch has a merge queue".to_string());
@@ -721,7 +717,10 @@ impl Orchestrator {
             &name,
         ];
         match self.cfg.tools.run(&self.cfg.repo, &argv) {
-            Ok(_) => Ok(true),
+            Ok(_) => {
+                self.update(id, |ts| ts.merge_asked = true);
+                Ok(true)
+            }
             // branch protection, a required approval, a head pushed since
             Err(err) if !err.stderr.is_empty() => Err(err.stderr),
             Err(err) => Err(err.to_string()),
