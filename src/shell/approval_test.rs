@@ -12,10 +12,11 @@ use std::time::{Duration, Instant};
 
 use super::brand::{GREEN, PURPLE, RED};
 use super::shell_test::{
-    await_end, await_line, find, key, line, render, row, rows, screen_at, shell,
+    await_end, await_line, await_questions, find, key, line, pick, render, row, rows, screen_at,
+    shell,
 };
 use super::{Approval, NoticeKind, Screen};
-use crate::orchestrator::app::{set_switch, ADDRESS_PR_COMMENTS_AUTO};
+use crate::orchestrator::app::{set_switch, ADDRESS_PR_COMMENTS_AUTO, AGENT_MERGE};
 use crate::orchestrator::pr::Item;
 use crate::orchestrator::stage::Orchestrator;
 use crate::orchestrator::state::STATUS_PR_OPEN;
@@ -190,6 +191,60 @@ fn esc_starts_nothing_and_only_address_pr_comments_reopens_it() {
     assert_eq!(s.approvals.len(), 1, "{:?}", s.notice);
     assert_eq!(checked(&s.approvals[0]), [("test", true)]);
     assert_eq!(s.approvals[0].approves, None, "a countdown by hand");
+}
+
+/// Under Agent merge the merge Question waits for the modal: while it is up
+/// Address PR comments' flow is not over. Cancelled, the Question comes, and
+/// merge answered there merges the PR with its PR comment open.
+#[test]
+fn a_cancelled_modal_is_followed_by_the_merge_question_and_merge_merges() {
+    let mut pr = commented("a");
+    pr["statusCheckRollup"]["contexts"]["nodes"] = json!([]); // green
+    let (w, mut s, clock) = polled(&["hx-1"], &pr, true);
+    set_switch(&w.repo, &AGENT_MERGE, true).unwrap();
+    later(&clock, 60);
+    await_approvals(&mut s, 1);
+    await_polls(&w);
+    s.poll();
+    assert!(s.questions.is_empty(), "asked while its modal waits");
+
+    s.key(key(KeyCode::Esc));
+    await_questions(&mut s, 1);
+    assert_eq!(
+        s.questions[0].text,
+        "PR #hx-1: 1 PR comment open, merge it?"
+    );
+    assert_eq!(s.options(), ["merge", "park"]);
+    s.key(key(KeyCode::Esc)); // the Epic summary, open since every Ticket has its PR
+    pick(&mut s, 1);
+    await_line(&mut s, "hx-1 PR #hx-1 merged by Orqadence");
+    assert_eq!(w.called("gh pr merge").len(), 1);
+}
+
+/// A line of its Ticket closes the merge Question, as it closes any; the
+/// Orchestrator, told so, asks it again.
+#[test]
+fn a_merge_question_a_ticket_line_closed_is_asked_again() {
+    let mut pr = commented("a");
+    pr["statusCheckRollup"]["contexts"]["nodes"] = json!([]); // green
+    let (w, mut s, clock) = polled(&["hx-1"], &pr, true);
+    set_switch(&w.repo, &AGENT_MERGE, true).unwrap();
+    later(&clock, 60);
+    await_approvals(&mut s, 1);
+    s.key(key(KeyCode::Esc));
+    await_questions(&mut s, 1);
+
+    run(&s).report("hx-1", "a line of its own");
+    await_line(&mut s, "hx-1 a line of its own");
+    let asking = "hx-1 asking you: PR #hx-1: 1 PR comment open, merge it?";
+    let asked = |s: &Screen| s.events.iter().filter(|e| line(e) == asking).count();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while asked(&s) < 2 {
+        assert!(Instant::now() < deadline, "never asked again");
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(s.questions.len(), 1);
 }
 
 /// The countdown, address_pr_comments_countdown's 5 minutes from when the

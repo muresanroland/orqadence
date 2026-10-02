@@ -862,6 +862,7 @@ impl Screen {
             Ask::Labels { .. } => "Label question",
             Ask::Tag { .. } => "Tag question",
             Ask::ReleaseAgain { .. } => "Release question",
+            Ask::Merge { .. } => "Merge question",
         };
         let mut message = format!("{id} · {kind}");
         if let Some(title) = self.title(id) {
@@ -934,7 +935,8 @@ impl Screen {
 
     /// An Event from the Orchestrator; only panel lines show. Any line of
     /// a Ticket closes the Question it had: the Ticket has moved on, and an
-    /// answer sent to it meanwhile is dropped. A line that asks, or an ask
+    /// answer sent to it meanwhile is dropped. A merge Question closed so
+    /// is told to the Orchestrator, whose poll asks it again while it holds. A line that asks, or an ask
     /// with no line of its own, raises the Ticket's Question anew.
     pub(crate) fn push(&mut self, event: Event) {
         if !event.offer.is_empty() {
@@ -959,13 +961,17 @@ impl Screen {
             .iter()
             .position(|q| q.ticket.as_deref() == Some(&id))
         {
-            self.questions.remove(i);
+            let closed = self.questions.remove(i);
             if i == 0 && self.composing {
                 self.composing = false; // the prompt was for that Question
                 self.input.clear();
             }
             if let Some(run) = &self.run {
                 run.o.take_answer(&id, None);
+                // a merge Question a line closed is the poll's to ask again
+                if ask.is_none() && matches!(closed.about, About::Asked(Ask::Merge { .. })) {
+                    run.o.unasked(&id);
+                }
             }
         }
         let Some(ask) = ask else {
@@ -986,7 +992,8 @@ impl Screen {
             | Ask::TicketStart { .. }
             | Ask::Labels { .. }
             | Ask::Tag { .. }
-            | Ask::ReleaseAgain { .. } => text.as_str(),
+            | Ask::ReleaseAgain { .. }
+            | Ask::Merge { .. } => text.as_str(),
         };
         let asking = format!("asking you: {short}");
         // /continue @ticket's goes after a confirmation, and the Question
@@ -1105,7 +1112,7 @@ impl Screen {
     }
 
     /// Whether the front Question docks in the modal: a plan, a Wake, a
-    /// Stage's own question or the Ticket's labels.
+    /// Stage's own question, the Ticket's labels or its PR's merge.
     pub(crate) fn modal(&self) -> bool {
         self.showing()
             && matches!(
@@ -1115,6 +1122,7 @@ impl Screen {
                         | Ask::Wake { .. }
                         | Ask::StageQuestion { .. }
                         | Ask::Labels { .. }
+                        | Ask::Merge { .. }
                 )
             )
     }
@@ -1179,7 +1187,8 @@ impl Screen {
                 Ask::TicketStart { options }
                 | Ask::Labels { options }
                 | Ask::Tag { options, .. }
-                | Ask::ReleaseAgain { options },
+                | Ask::ReleaseAgain { options }
+                | Ask::Merge { options, .. },
             ) => options.clone(),
             About::Confirm(_) => ["yes", "no"].map(str::to_string).to_vec(),
             About::Continue { rows } => rows
@@ -1668,7 +1677,8 @@ impl Screen {
                 About::Asked(
                     Ask::TicketStart { options }
                     | Ask::Labels { options }
-                    | Ask::ReleaseAgain { options },
+                    | Ask::ReleaseAgain { options }
+                    | Ask::Merge { options, .. },
                 ),
                 n,
             ) => {
@@ -1805,7 +1815,8 @@ impl Screen {
                 Ask::TicketStart { .. }
                 | Ask::Labels { .. }
                 | Ask::Tag { .. }
-                | Ask::ReleaseAgain { .. },
+                | Ask::ReleaseAgain { .. }
+                | Ask::Merge { .. },
             ) => "",
             _ => return,
         };
@@ -2467,10 +2478,13 @@ impl Screen {
     /// The front approval modal answered, by `who`: fix queues Address PR
     /// comments with the checked rows approved and the rest won't fix;
     /// cancel starts nothing. Its items stay offered either way, so the
-    /// poll does not reopen them. The next one shows.
+    /// poll does not reopen them. One the poll raised is then told to the
+    /// Orchestrator as answered, which the merge Question waits for. The
+    /// next one shows.
     fn decide(&mut self, fix: bool, who: &str) {
         let a = self.approvals.remove(0);
         let n = plural(a.rows.len(), "PR comment");
+        let raised = (!a.by_hand).then(|| a.ticket.clone());
         if fix {
             let (on, off): (Vec<_>, Vec<_>) = a.rows.into_iter().partition(|(_, on)| *on);
             let text = format!("{who} approved {} of {n}", on.len());
@@ -2483,6 +2497,10 @@ impl Screen {
         } else {
             let text = format!("{who} cancelled {n}, /address-pr-comments opens them");
             self.tell(Some(&a.ticket), &text);
+        }
+        // after the approval, so the flow never reads as over in between
+        if let (Some(run), Some(ticket)) = (&self.run, raised) {
+            run.o.decided(&ticket);
         }
         self.show_approval();
     }

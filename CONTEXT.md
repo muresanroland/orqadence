@@ -133,7 +133,7 @@ The Stage that acts on a Ticket's open pull request once its checks and bots are
 _Avoid_: Address (alone), Fix (that is the Pipeline's), review response
 
 **Agent merge**:
-The Target repo's switch, off by default and only with automatic Address PR comments on, that lets the Orchestrator merge a Ticket's pull request once Address PR comments' flow has finished on a quiet head: checks green, the repo's review bots done, and every PR comment fixed or answered. Anything still open is a Question, merge or park. Never for a Human-merge label; never by a Stage session.
+The Target repo's switch, off by default and only with automatic Address PR comments on, that lets the Orchestrator merge a Ticket's pull request once Address PR comments' flow has finished on a quiet head: checks green, the repo's review bots done, and every PR comment fixed or answered. Anything still open, or a listed bot that has not reviewed within `bot_wait`, is a Question: merge or park, and for the bot keep waiting. Never for a Human-merge label; never by a Stage session.
 _Avoid_: Auto-merge (GitHub's), self-merge
 
 **No-review pull request**:
@@ -169,18 +169,18 @@ One canned prompt sent into a woken Stage's live session, at most once per sessi
 _Avoid_: Continue (that is /continue, resuming a saved run), poke, reminder
 
 **Judgment**:
-The Orchestrator's answer to a Wake or a Plan, taken from a typed model over the evidence: for a Wake one of a fixed set of actions with a score each, for a Plan a yes or no score on each criterion (it covers the Ticket, it stays in scope, it asks the user a question). It is acted on at or above a confidence floor, a Wake's and a Plan's each kept in config.json, and shown on the Shell.
+The Orchestrator's answer to a Wake or a Plan, taken from a typed model over the evidence: for a Wake one of a fixed set of actions with a score each, for a Plan a yes or no score on each criterion (it covers the Ticket, it stays in scope, it asks the user a question), and under Agent merge, while the user is Away, a yes or no score on merging a pull request with its PR comments still open. It is acted on at or above a confidence floor, a Wake's and a Plan's each kept in config.json, the merge's the Wake's, and shown on the Shell.
 _Avoid_: LLM call, Main session
 
 **Plan**:
 What an Implement session writes before it may edit: the changes and tests it intends for its Ticket, the decisions it made with the answer taken, and an open question only when it has one. A Judgment approves it when it covers every acceptance criterion, stays in scope and asks nothing; otherwise the user reads it and answers, and the session revises it. An open question always goes to the user; while they are Away it parks its Ticket until they continue it.
 
 **Question**:
-What the Shell puts to the user when the Orchestrator cannot act alone: a Wake the Judgment was unsure about, a blocked session, a plan to approve, a Stage's own question, a pick not yet merged on a Ticket's base or a personal skill shadowing a committed one when the Ticket starts, an Extra review skill's fetch.sh that failed, Manual work its session waits on, the Review's App at its usage limit, the Release's tag or its version pull request closed unmerged, or a confirmation. It holds only its Ticket (the Review's limit, every Ticket reaching the Review on that App until it is answered), is answered from a fixed set of options or a line of the user's own text, and is never saved: on resume it is derived again from the live session or the Stage result.
+What the Shell puts to the user when the Orchestrator cannot act alone: a Wake the Judgment was unsure about, a blocked session, a plan to approve, a Stage's own question, a pick not yet merged on a Ticket's base or a personal skill shadowing a committed one when the Ticket starts, an Extra review skill's fetch.sh that failed, Manual work its session waits on, the Review's App at its usage limit, the Release's tag or its version pull request closed unmerged, under Agent merge a pull request left with PR comments open or a listed review bot silent, or a confirmation. It holds only its Ticket (the Review's limit, every Ticket reaching the Review on that App until it is answered), is answered from a fixed set of options or a line of the user's own text, and is never saved: on resume it is derived again from the live session or the Stage result.
 _Avoid_: Prompt, dialog, alert, form, popup
 
 **Parked**:
-A Ticket taken out of the Pipeline to wait for the user, after a Wake that a Judgment or the user settled as park, or after its Stage, its start or a failed fetch.sh asked a question while the user was Away. Other Tickets keep running. Parked from Rebase or Address PR comments, it keeps its pull request, still polled for its merge, and /continue takes it back to that Stage, never to the Pipeline. Parked because GitHub refused the Orchestrator's merge, it keeps its pull request the same way, and /continue has the merge tried again. A Research Waypoint whose session needs the user while they are Away is parked the same way, and the other research goes on.
+A Ticket taken out of the Pipeline to wait for the user, after a Wake that a Judgment or the user settled as park, or after its Stage, its start or a failed fetch.sh asked a question while the user was Away. Other Tickets keep running. Parked from Rebase or Address PR comments, it keeps its pull request, still polled for its merge, and /continue takes it back to that Stage, never to the Pipeline. Parked because GitHub refused the Orchestrator's merge, it keeps its pull request the same way, and /continue has the merge tried again. Parked by the merge Question, or by its Judgment while the user was Away, it keeps its pull request too, and /continue asks again. A Research Waypoint whose session needs the user while they are Away is parked the same way, and the other research goes on.
 _Avoid_: Stuck, paused, failed
 
 **Manual work**:
@@ -188,7 +188,7 @@ Something a code-editing Stage or a Brainstorm session needs done that it cannot
 _Avoid_: Manual step, human task, hand-off
 
 **Away**:
-What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question, a Plan's open question, one at a Ticket's start or one on a failed fetch.sh, then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket; the Release's, with no Ticket to park, wait. Nothing is pushed to the phone, and the Shell never goes On call. Nothing else changes: Judgments still answer what they can.
+What the user declares in the Shell when nobody will answer for a while, such as overnight. A Stage's question, a Plan's open question, one at a Ticket's start or one on a failed fetch.sh, then parks its Ticket instead of waiting, and is put to the user when they continue that Ticket; the Release's, with no Ticket to park, wait. Nothing is pushed to the phone, and the Shell never goes On call. Under Agent merge a Judgment answers the merge Question in the user's place. Nothing else changes: Judgments still answer what they can.
 _Avoid_: AFK, offline, unattended mode
 
 **On call**:

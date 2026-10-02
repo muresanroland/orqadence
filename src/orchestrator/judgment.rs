@@ -3,8 +3,9 @@
 //! from docs/design/judgment-prototype, keys in its order, without the two
 //! diagnostic Nouls it dropped; for a Plan one TypeSafe Noul per criterion
 //! over the plan and the Ticket, judge_plan.py's from
-//! docs/design/plan-judgment-prototype (harness-cq7). Each floor is
-//! config.json's, read at each use.
+//! docs/design/plan-judgment-prototype (harness-cq7); for a merge with PR
+//! comments open, while the user is Away, one Noul over the diff and the
+//! open items (ADR 0007). Each floor is config.json's, read at each use.
 
 use std::fs;
 use std::path::Path;
@@ -16,6 +17,7 @@ use serde_json::Value;
 
 use super::app::{self, typesafe, Floor};
 use super::cost::typesafe_line;
+use super::pr::Item;
 use super::stage::Orchestrator;
 use super::state::TicketState;
 
@@ -304,6 +306,29 @@ pub(crate) fn plan_request(state: &PlanState) -> String {
     serde_json::to_string(&body).expect("a request of strings serializes")
 }
 
+/// The merge Judgment's state: the PR, its diff from its base, the PR
+/// comments still open and the listed review bots that have not reviewed.
+#[derive(Debug, Serialize)]
+pub(crate) struct MergeState<'a> {
+    pub(crate) pr: &'a str,
+    pub(crate) diff: String,
+    pub(crate) open_items: &'a [Item],
+    pub(crate) silent_bots: &'a [&'a str],
+}
+
+/// The merge Noul over a PR left with PR comments open.
+pub(crate) fn merge_request(state: &MergeState) -> String {
+    serde_json::json!({
+        "model": "jev-latest",
+        "state": state,
+        "questions": {"merge": {
+            "type": "noul",
+            "instructions": "Should this pull request merge with these PR comments open?",
+        }},
+    })
+    .to_string()
+}
+
 /// A Judgment of a plan: each Noul's score for yes, and the floor it was
 /// put against, None for one config.json holds that is not a number from 0
 /// to 1.
@@ -465,6 +490,30 @@ impl Orchestrator {
             asks,
             floor: self.floor(ticket, &PLAN_FLOOR),
         })
+    }
+
+    /// Puts a merge with PR comments open to TypeSafe: its score for yes.
+    /// Err says why there is none, for the park's reason: TypeSafe off or
+    /// without a key, or no answer, which the log explains.
+    pub(crate) fn judge_merge(
+        &self,
+        ticket: &str,
+        state: &MergeState,
+    ) -> Result<f64, &'static str> {
+        let key = self.typesafe_key();
+        if key.is_empty() {
+            return Err(match self.cfg.api_key.is_empty() {
+                true => "TypeSafe has no key",
+                false => "TypeSafe is off",
+            });
+        }
+        let score = self.ask_typesafe(ticket, key, &merge_request(state), |reply| {
+            let score = reply["answers"]["merge"]["noul"].as_f64();
+            score
+                .filter(|score| (0.0..=1.0).contains(score))
+                .ok_or("no merge in the reply")
+        });
+        score.ok_or("TypeSafe gave no answer")
     }
 
     /// The plan Judgment's state: the plan, the Ticket as bd shows it, and
