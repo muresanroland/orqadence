@@ -1817,10 +1817,12 @@ pub(crate) fn preflight(
         }
     }
     // A row that cannot be read is the Orchestrator's to refuse; the
-    // Review's fallback, unset, runs nothing.
+    // Review's fallback, unset, runs nothing, and the Docs pass nothing
+    // while graphify is off.
     for key in app::ROWS {
         let row = match key {
             app::IF_LIMITED => app::fallback_row(repo, &[]).ok().flatten(),
+            app::DOCS_PASS if !app::graphify(repo) => None,
             _ => app::row(repo, key, &[]).ok(),
         };
         let Some(row) = row else {
@@ -1886,9 +1888,10 @@ fn major_minor(version: &str) -> Option<(u32, u32)> {
 
 /// What the preflight warns of without failing: the superpowers plugin, an
 /// installed Stage skill that lost a job's placeholder, which the shipped
-/// one holds, and, with orqa:fe configured, a gh too old to attach its
-/// screenshots. A personal skill shadowing a committed one is a Question when
-/// a Ticket starts (ask_shadowed).
+/// one holds, with orqa:fe configured, a gh too old to attach its
+/// screenshots, and graphify on but not on PATH. A personal skill
+/// shadowing a committed one is a Question when a Ticket starts
+/// (ask_shadowed).
 pub(crate) fn warnings(repo: &Path, tools: &dyn Tools) -> Vec<String> {
     let mut warn = Vec::new();
     for (name, shipped) in SKILLS {
@@ -1924,6 +1927,12 @@ pub(crate) fn warnings(repo: &Path, tools: &dyn Tools) -> Vec<String> {
                 ));
             }
         }
+    }
+    if app::graphify(repo) && tools.run(repo, &["which", "graphify"]).is_err() {
+        warn.push(
+            "graphify is on but graphify is not on PATH: run orqa init, or install it with uv tool install graphifyy"
+                .to_string(),
+        );
     }
     warn
 }

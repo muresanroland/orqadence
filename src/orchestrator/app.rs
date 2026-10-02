@@ -20,6 +20,11 @@ pub(crate) const IF_LIMITED: &str = "review_if_limited";
 /// The Release's row: it ends a run, not a Ticket's Pipeline, so no Ticket
 /// label overrides it.
 pub(crate) const RELEASE: &str = "release";
+/// The Docs pass's row: graphify's LLM pass over the docs, run on a new
+/// major or minor tag, not in a Ticket's Pipeline, so no label overrides it.
+pub(crate) const DOCS_PASS: &str = "docs_pass";
+/// The rows no Ticket label overrides: they run outside a Ticket.
+pub(crate) const UNLABELLED: [&str; 2] = [RELEASE, DOCS_PASS];
 
 /// A model id and its effort levels, as an App lists them.
 pub(crate) type Model = (String, Vec<String>);
@@ -603,6 +608,12 @@ pub(crate) fn set_typesafe(repo: &Path, on: bool) -> Result<(), String> {
     write(&path, &doc)
 }
 
+/// Whether graphify is on: config.json's "graphify", read at each use as
+/// "typesafe" is; unset is off. Set it with set_switch.
+pub(crate) fn graphify(repo: &Path) -> bool {
+    switch(repo, &GRAPHIFY)
+}
+
 /// A Judgment's confidence floor in config.json: its key, and the value
 /// that stands for it missing or empty.
 pub(crate) struct Floor {
@@ -760,6 +771,12 @@ pub(crate) const AGENT_MERGE: Switch = Switch {
     key: "agent_merge",
     question: "Merge Ticket PRs by themselves?",
 };
+/// graphify: the code graph kept current in the checkout and every
+/// worktree, and the Docs pass asked on each new major or minor tag.
+pub(crate) const GRAPHIFY: Switch = Switch {
+    key: "graphify",
+    question: "Turn on graphify (the code graph and the Docs pass)?",
+};
 
 /// The review bots a repo can list in review_bots, and that key.
 pub(crate) const REVIEW_BOTS: [&str; 2] = ["coderabbit", "greptile"];
@@ -823,7 +840,7 @@ pub(crate) fn set_switch(repo: &Path, switch: &Switch, on: bool) -> Result<(), S
 
 /// The key of every row of config.json; static, so a label's Check can
 /// borrow one.
-pub(crate) static ROWS: [&str; 10] = [
+pub(crate) static ROWS: [&str; 11] = [
     "implement",
     "review",
     IF_LIMITED,
@@ -834,6 +851,7 @@ pub(crate) static ROWS: [&str; 10] = [
     "rebase",
     "address_pr_comments",
     RELEASE,
+    DOCS_PASS,
 ];
 
 /// A Ticket label's entry in config.json's labels, keyed by its name, the
@@ -947,8 +965,8 @@ pub(crate) fn labels(doc: &Value) -> BTreeMap<String, Result<Label, String>> {
 }
 
 /// The label entry under name: a kind that is neither area nor modifier,
-/// a row config.json has not, the Release's, or a field of the wrong type
-/// refuses.
+/// a row config.json has not, one of UNLABELLED, or a field of the wrong
+/// type refuses.
 pub(crate) fn entry(name: &str, value: &Value) -> Result<Label, String> {
     let label: Label =
         serde_json::from_value(value.clone()).map_err(|err| format!("labels {name}: {err}"))?;
@@ -958,7 +976,7 @@ pub(crate) fn entry(name: &str, value: &Value) -> Result<Label, String> {
     match label
         .rows
         .keys()
-        .find(|key| *key == RELEASE || !ROWS.contains(&key.as_str()))
+        .find(|key| UNLABELLED.contains(&key.as_str()) || !ROWS.contains(&key.as_str()))
     {
         Some(key) => Err(format!("labels {name} rows has no row {key}")),
         None => Ok(label),
@@ -1268,15 +1286,17 @@ pub(crate) fn field(doc: &Value, key: &str, name: &str) -> Result<String, String
 /// fallback and the Debate's sides run, until it has the network the
 /// Moderator's side commands and TypeSafe calls need, and a Git write path
 /// for Fix, Rebase, Address PR comments and the Release: its sandbox keeps
-/// Git metadata read-only. Every other App runs every Stage.
+/// Git metadata read-only. Every other App runs every Stage. The Docs pass
+/// runs on claude or codex alone: graphify installs its skill for those two.
 pub(crate) fn runs_on(key: &str, app: &App) -> Result<(), String> {
-    match app.name != "codex"
-        || matches!(
-            key,
-            "implement" | "review" | IF_LIMITED | "side_a" | "side_b"
-        ) {
+    let runs = match key {
+        DOCS_PASS => matches!(app.name, "claude" | "codex"),
+        "implement" | "review" | IF_LIMITED | "side_a" | "side_b" => true,
+        _ => app.name != "codex",
+    };
+    match runs {
         true => Ok(()),
-        false => Err(format!("{key} does not run on codex")),
+        false => Err(format!("{key} does not run on {}", app.name)),
     }
 }
 

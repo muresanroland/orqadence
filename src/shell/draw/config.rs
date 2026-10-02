@@ -11,14 +11,16 @@ use ratatui::Frame;
 use super::modal::{divider, dock, joined, wrap_spans};
 use super::{bold, cut, fg, SPINNER};
 use crate::on_call;
-use crate::orchestrator::app::{self, Check, Count, AGENT_MERGE, APPS, MAX_TICKETS, REVIEW_BOTS};
+use crate::orchestrator::app::{
+    self, Check, Count, AGENT_MERGE, APPS, GRAPHIFY, MAX_TICKETS, REVIEW_BOTS,
+};
 use crate::setup;
 use crate::shell::brand::{BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT};
 use crate::shell::config::{
     distinct, family_label, floor_name, job_name, job_said, label_line, number_note, position_name,
     run_numbers, short, short_commit, Field, LabelItem, Listing, Pick, Scope, Settings, Typing,
-    APPS_PAGE, FLOORS, LABELS_PAGE, ON_CALL_PAGE, REVIEW_ROW, ROWS, RUN_PAGE, SECTIONS,
-    SKILLS_PAGE, SKILL_ROWS, TYPESAFE_PAGE,
+    APPS_PAGE, FLOORS, GRAPHIFY_PAGE, GRAPHIFY_SECTION, LABELS_PAGE, ON_CALL_PAGE, REVIEW_ROW,
+    ROWS, RUN_PAGE, SECTIONS, SKILLS_PAGE, SKILL_ROWS, TYPESAFE_PAGE,
 };
 use crate::shell::Screen;
 use crate::skills::manifest::NONE;
@@ -694,7 +696,7 @@ fn pipeline(s: &Screen, st: &Settings, height: u16, width: usize) -> Vec<Line<'s
     };
     let mut lines = vec![Line::from(Span::styled("PIPELINE", bold(MUTED)))];
     for (i, (_, short, _)) in SECTIONS.iter().enumerate() {
-        if i > 0 && height as usize >= SECTIONS.len() * 2 + 7 {
+        if i > 0 && height as usize >= SECTIONS.len() * 2 + 8 {
             lines.push(Line::from(Span::styled("  │", fg(BORDER))));
         }
         lines.push(row(
@@ -741,6 +743,12 @@ fn pipeline(s: &Screen, st: &Settings, height: u16, width: usize) -> Vec<Line<'s
         on_off(s.on_call.token.is_some()).to_string(),
         false,
         st.section == ON_CALL_PAGE,
+    ));
+    lines.push(row(
+        "graphify",
+        on_off(app::switch_in(&st.doc, &GRAPHIFY)).to_string(),
+        false,
+        st.section == GRAPHIFY_PAGE,
     ));
     lines
 }
@@ -821,10 +829,13 @@ fn value(st: &Settings, row: usize, field: Field) -> Vec<Span<'static>> {
     }
 }
 
-/// The section's page: its title and Apps, its description, its rows'
-/// settings a blank line apart; and the cursor's line.
+/// The section's page, or the graphify page: its title and Apps, its
+/// description, its rows' settings a blank line apart; and the cursor's line.
 fn page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
-    let (title, _, about) = SECTIONS[st.section];
+    let (title, about) = match st.section {
+        GRAPHIFY_PAGE => GRAPHIFY_SECTION,
+        section => (SECTIONS[section].0, SECTIONS[section].2),
+    };
     let items = st.items();
     let apps = distinct(items.iter().map(|&(row, _)| st.value(row, Field::App)));
     let mut lines = head(title, apps.join(", "), about, width);
