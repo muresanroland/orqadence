@@ -31,6 +31,7 @@ use crate::orchestrator::app::{self, ADDRESS_PR_COMMENTS_COUNTDOWN, RELEASE_ON};
 use crate::orchestrator::herdr::{self, herdr};
 use crate::orchestrator::judgment::{self, Action};
 use crate::orchestrator::manual;
+use crate::orchestrator::pipeline;
 use crate::orchestrator::pr::Item;
 use crate::orchestrator::release;
 use crate::orchestrator::scheduler::BdIssue;
@@ -229,7 +230,7 @@ impl Question {
     /// a Waypoint session's Manual work.
     pub(crate) fn brainstorms(&self) -> bool {
         match &self.about {
-            About::Asked(Ask::NextWaypoint { .. }) => true,
+            About::Asked(Ask::NextWaypoint { .. } | Ask::BrainstormRebase { .. }) => true,
             About::Asked(Ask::Manual { stage, .. }) => stage == brainstorm::driver::WAYPOINT,
             _ => false,
         }
@@ -326,6 +327,9 @@ pub(crate) struct Screen {
     /// A research close of the live Map's, and its Waypoint: Next Waypoint?
     /// once no session with you runs.
     research_closed: Option<(String, String)>,
+    /// The Brainstorm whose /continue runs without the rebase: set while
+    /// "carry on from the old base" runs its line again.
+    skip_rebase: Option<String>,
     /// The suggested command, ghost text in the empty input: Tab fills it
     /// in, running any command clears it.
     pub(crate) suggestion: Option<String>,
@@ -508,6 +512,7 @@ impl Screen {
             research_sender,
             research_receiver,
             research_closed: None,
+            skip_rebase: None,
             suggestion: None,
             state,
             events: Vec::new(),
@@ -1186,6 +1191,7 @@ impl Screen {
             Ask::ReleaseAgain { .. } => "Release question",
             Ask::Merge { .. } => "Merge question",
             Ask::NextWaypoint { .. } => "Waypoint question",
+            Ask::BrainstormRebase { .. } => "Brainstorm rebase question",
         };
         let mut message = format!("{id} · {kind}");
         if let Some(title) = self.title(id) {
@@ -1324,7 +1330,8 @@ impl Screen {
             | Ask::Tag { .. }
             | Ask::ReleaseAgain { .. }
             | Ask::Merge { .. }
-            | Ask::NextWaypoint { .. } => text.as_str(),
+            | Ask::NextWaypoint { .. }
+            | Ask::BrainstormRebase { .. } => text.as_str(),
         };
         let asking = format!("asking you: {short}");
         // /continue @ticket's goes after a confirmation, and the Question
@@ -1516,7 +1523,8 @@ impl Screen {
                 | Ask::Tag { options, .. }
                 | Ask::ReleaseAgain { options }
                 | Ask::Merge { options, .. }
-                | Ask::NextWaypoint { options, .. },
+                | Ask::NextWaypoint { options, .. }
+                | Ask::BrainstormRebase { options, .. },
             ) => options.clone(),
             About::Confirm(_) => ["yes", "no"].map(str::to_string).to_vec(),
             About::Continue { rows } => rows
@@ -2165,6 +2173,28 @@ impl Screen {
                 self.reply("no", Answer::Act(Action::Park))
             }
             (About::Asked(Ask::NextWaypoint { .. }), _) => self.composing = true,
+            // resolve it yourself, the Brainstorm stopped; or carry on,
+            // the same /continue again without the rebase
+            (
+                About::Asked(Ask::BrainstormRebase {
+                    options,
+                    idea,
+                    line,
+                }),
+                n,
+            ) => {
+                let (word, idea, line) = (options[n].clone(), idea.clone(), line.clone());
+                let q = self.questions.remove(0);
+                self.tell(q.ticket.as_deref(), &format!("you answered: {word}"));
+                match n {
+                    0 => self.suggestion = Some(line),
+                    _ => {
+                        self.skip_rebase = Some(idea);
+                        self.command(&line);
+                        self.skip_rebase = None;
+                    }
+                }
+            }
             // yes or no, sent word for word; no's Notice says how to tag it
             (About::Asked(Ask::Tag { options, notice }), n) => {
                 let notice = (n == 1).then(|| notice.clone());
@@ -2775,7 +2805,8 @@ impl Screen {
     /// charting.
     fn continue_brainstorm(&mut self, b: Brainstorm) {
         let key = b.key().to_string();
-        if self.switch_asked(&key, &format!("/continue @{key}")) {
+        let line = format!("/continue @{key}");
+        if self.switch_asked(&key, &line) {
             return;
         }
         match b.phase {
@@ -2783,12 +2814,126 @@ impl Screen {
             Phase::Map if self.driving(&b.idea) => {
                 self.refuse(&format!("refused: a Waypoint session of {key} is running"))
             }
-            Phase::Map => self.open_start_map(&b, true),
+            Phase::Map => {
+                let Some(rebase) = self.rebase(&b, &line) else {
+                    return;
+                };
+                self.open_start_map(&b, true);
+                if let Some(m) = &mut self.start_map {
+                    m.rebase = rebase;
+                }
+            }
             _ if self.driving(&b.idea) => {
                 self.refuse(&format!("refused: {key} is already charting"))
             }
-            _ => self.chart(b),
+            _ => {
+                if self.rebase(&b, &line).is_some() {
+                    self.chart(b);
+                }
+            }
         }
+    }
+
+    /// Before a session of `b` starts on /continue `line`: its branch
+    /// rebased in its worktree on origin's default branch, after a fetch,
+    /// when it lacks commits of it. Skipped while a research session of its
+    /// Map runs, and on "carry on from the old base"'s run of `line`. A
+    /// conflict is aborted and asked about: None, and no session starts.
+    /// Else the Continue form's rebase line, empty when nothing was tried.
+    fn rebase(&mut self, b: &Brainstorm, line: &str) -> Option<String> {
+        let key = b.key().to_string();
+        if self.skip_rebase.as_deref() == Some(b.idea.as_str()) {
+            return Some(format!("{} stays on its old base", b.branch));
+        }
+        // the research threads' last changes, so a session just started counts
+        self.research_updates();
+        let saved = self.brainstorms.iter().find(|s| s.idea == b.idea);
+        let research = saved.map_or(&b.research, |s| &s.research);
+        if let Some(r) = research.iter().find(|r| !r.parked) {
+            let text = format!(
+                "rebase skipped: research {} still running",
+                suffix(&r.waypoint)
+            );
+            self.tell(
+                Some(&key),
+                &format!("{text}, the next /continue tries again"),
+            );
+            return Some(text);
+        }
+        if b.worktree.is_empty() {
+            return Some(String::new()); // never git in the user's checkout
+        }
+        let (tools, dir) = (self.cfg.tools.clone(), PathBuf::from(&b.worktree));
+        let skipped = |s: &mut Self, why: String| {
+            let text = format!("rebase skipped: {why}");
+            s.tell(Some(&key), &text);
+            Some(text)
+        };
+        // ponytail: git runs on the Shell's thread, which stalls the screen
+        // through the fetch; a thread if that shows
+        if let Err(err) = tools.run(&dir, &["git", "fetch", "origin"]) {
+            return skipped(self, format!("git fetch failed: {err}"));
+        }
+        let base = pipeline::origin_head(&*tools, &dir);
+        let main = base.strip_prefix("origin/").unwrap_or(&base);
+        let range = format!("HEAD..{base}");
+        let behind = tools.run(&dir, &["git", "rev-list", "--count", &range]);
+        let behind: usize = behind.ok().and_then(|n| n.trim().parse().ok()).unwrap_or(0);
+        if behind == 0 {
+            return Some(String::new());
+        }
+        let branch = &b.branch;
+        let err = match tools.run(&dir, &["git", "rebase", &base]) {
+            Ok(_) => {
+                let text = format!("{branch} rebased on {main} ({})", plural(behind, "commit"));
+                self.tell(Some(&key), &text);
+                return Some(text);
+            }
+            Err(err) => err,
+        };
+        let conflicted = ["git", "diff", "--name-only", "--diff-filter=U"];
+        let files = tools.run(&dir, &conflicted).unwrap_or_default();
+        let files: Vec<&str> = files.lines().filter(|f| !f.is_empty()).collect();
+        // whatever stopped it: no session starts mid-rebase
+        let aborted = tools.run(&dir, &["git", "rebase", "--abort"]);
+        if files.is_empty() && aborted.is_ok() {
+            return skipped(self, format!("git rebase failed: {err}"));
+        }
+        let what = match files.is_empty() {
+            true => format!("rebasing {branch} on {main} failed"),
+            false => format!(
+                "rebasing {branch} on {main} conflicts in {}",
+                files.join(", ")
+            ),
+        };
+        if let Err(abort) = aborted {
+            // the worktree is mid-rebase: nothing to carry on from
+            self.tell(Some(&key), &format!("{what}: not aborted: {abort}"));
+            self.suggestion = Some(line.to_string());
+            return None;
+        }
+        self.tell(Some(&key), &format!("{what}: aborted, asking you"));
+        let shown = Path::new(&b.worktree);
+        let shown = shown.strip_prefix(&self.cfg.repo).unwrap_or(shown);
+        let options = vec![
+            format!("resolve it yourself in {}, then {line}", shown.display()),
+            "carry on from the old base".to_string(),
+        ];
+        let files = files.join(", ");
+        self.push(Event {
+            time: chrono::Local::now(),
+            ticket: Some(key.clone()),
+            text: format!("{key}: rebasing {branch} on {main} conflicts ({files})"),
+            panel: false,
+            ask: Some(Ask::BrainstormRebase {
+                options,
+                idea: b.idea.clone(),
+                line: line.to_string(),
+            }),
+            offer: Vec::new(),
+            notice: None,
+        });
+        None
     }
 
     /// /continue @<waypoint> of saved Map `b`: another Brainstorm live asks
@@ -2812,6 +2957,9 @@ impl Screen {
         };
         if let Some(text) = brainstorm::waypoint_refusal(&issues, &b, id) {
             return self.refuse(&text);
+        }
+        if self.rebase(&b, &format!("/continue @{id}")).is_none() {
+            return;
         }
         b.started = true;
         if let Err(err) = b.save(&self.cfg.repo) {
@@ -3701,6 +3849,8 @@ mod epic_test;
 mod graphify_test;
 #[cfg(test)]
 mod idea_test;
+#[cfg(test)]
+mod rebase_test;
 #[cfg(test)]
 mod research_test;
 #[cfg(test)]

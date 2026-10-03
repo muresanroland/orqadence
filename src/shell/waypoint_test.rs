@@ -238,7 +238,7 @@ fn an_idle_pane_with_no_result_asks_nothing() {
 }
 
 /// hx-m.1 closed and no answered: the Map saved, nothing live.
-fn stopped() -> (Arc<World>, Screen) {
+pub(super) fn stopped() -> (Arc<World>, Screen) {
     let (w, mut s, _) = closed();
     s.key(key(KeyCode::Down));
     s.key(key(KeyCode::Enter));
