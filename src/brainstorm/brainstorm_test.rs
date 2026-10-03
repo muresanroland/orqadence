@@ -1,4 +1,4 @@
-use super::{load, Brainstorm, Phase, Research};
+use super::{load, most_recent, Brainstorm, Phase, Research};
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::state::Session;
 use crate::tempdir::TempDir;
@@ -127,4 +127,47 @@ fn a_charting_one_whose_idea_is_closed_in_bd_is_not_listed() {
     };
 
     assert_eq!(load(repo.path(), &[idea]), []);
+}
+
+/// Sets the Brainstorm's state.json mtime to `secs` after the epoch.
+fn touch(repo: &std::path::Path, idea: &str, secs: u64) {
+    let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+    let file = repo
+        .join(".orqadence-local/brainstorms")
+        .join(idea)
+        .join("state.json");
+    let file = std::fs::File::options().write(true).open(file).unwrap();
+    file.set_modified(at).unwrap();
+}
+
+/// The most recent is the one whose state.json changed last; a done one is
+/// never it, and with none saved there is none.
+#[test]
+fn the_most_recent_is_the_last_saved_but_never_a_done_one() {
+    let repo = TempDir::new();
+    let charting = Brainstorm {
+        idea: "hx-7".to_string(),
+        ..Default::default()
+    };
+    charting.save(repo.path()).unwrap();
+    mapped("hx-1", "hx-2").save(repo.path()).unwrap();
+    Brainstorm {
+        phase: Phase::Done,
+        ..mapped("hx-5", "hx-6")
+    }
+    .save(repo.path())
+    .unwrap();
+    touch(repo.path(), "hx-7", 2_000);
+    touch(repo.path(), "hx-1", 1_000);
+    touch(repo.path(), "hx-5", 3_000);
+    let saved = load(repo.path(), &[]);
+
+    let recent = most_recent(repo.path(), &saved).map(Brainstorm::key);
+    assert_eq!(recent, Some("hx-7"));
+
+    touch(repo.path(), "hx-1", 2_500);
+    let recent = most_recent(repo.path(), &saved).map(Brainstorm::key);
+    assert_eq!(recent, Some("hx-2"), "a Map's key is the Map");
+
+    assert_eq!(most_recent(repo.path(), &[]), None);
 }

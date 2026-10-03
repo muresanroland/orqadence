@@ -914,8 +914,17 @@ fn input_line(f: &mut Frame, area: Rect, s: &Screen) {
         "▌".fg(TEXT),
         after.fg(TEXT),
     ];
-    if s.input.is_empty() {
-        spans.push(if s.composing { COMPOSING } else { PLACEHOLDER }.fg(DARK_ORANGE));
+    match &s.suggestion {
+        Some(ghost) if s.input.is_empty() && !s.composing && !s.showing() => {
+            spans.push(Span::styled(
+                ghost,
+                fg(MUTED).add_modifier(Modifier::ITALIC),
+            ));
+        }
+        _ if s.input.is_empty() => {
+            spans.push(if s.composing { COMPOSING } else { PLACEHOLDER }.fg(DARK_ORANGE));
+        }
+        _ => {}
     }
     f.render_widget(Line::from(spans), area);
 }

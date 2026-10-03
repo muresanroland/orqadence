@@ -102,6 +102,27 @@ impl Brainstorm {
         fs::write(&tmp, raw)?;
         fs::rename(tmp, dir.join("state.json"))
     }
+
+    /// What /continue @ takes: the Map once there is one, else the Idea.
+    pub(crate) fn key(&self) -> &str {
+        if self.map.is_empty() {
+            &self.idea
+        } else {
+            &self.map
+        }
+    }
+}
+
+/// The saved Brainstorm whose state.json changed last, a done one never.
+pub(crate) fn most_recent<'a>(repo: &Path, saved: &'a [Brainstorm]) -> Option<&'a Brainstorm> {
+    let changed = |b: &Brainstorm| {
+        let file = brainstorms(repo).join(&b.idea).join("state.json");
+        fs::metadata(file).and_then(|m| m.modified()).ok()
+    };
+    saved
+        .iter()
+        .filter(|b| b.phase != Phase::Done)
+        .max_by_key(|b| changed(b))
 }
 
 /// Every saved Brainstorm, by idea, but one bd shows thrown away: its Idea

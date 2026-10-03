@@ -282,8 +282,10 @@ pub(crate) struct Screen {
     /// The Brainstorms' Maps, Waypoints and Ideas, kept off the tree.
     brainstorm_issues: Vec<BdIssue>,
     /// The saved Brainstorms, loaded at open.
-    #[allow(dead_code)] // nothing shows the BRAINSTORM box yet
     pub(crate) brainstorms: Vec<Brainstorm>,
+    /// The suggested command, ghost text in the empty input: Tab fills it
+    /// in, running any command clears it.
+    pub(crate) suggestion: Option<String>,
     /// The run's State: a snapshot of the live Orchestrator's, or the saved
     /// one; the Overall bar, the TICKETS rows and the resumable mark come
     /// from it.
@@ -441,6 +443,7 @@ impl Screen {
             epics,
             brainstorm_issues: Vec::new(),
             brainstorms: Vec::new(),
+            suggestion: None,
             state,
             events: Vec::new(),
             input: String::new(),
@@ -556,6 +559,9 @@ impl Screen {
         // every issue: a saved Brainstorm's closed issue may have lost its label
         let issues = screen.reload_issues().unwrap_or_default();
         screen.brainstorms = brainstorm::load(repo, &issues);
+        // nothing is live at open
+        screen.suggestion = brainstorm::most_recent(repo, &screen.brainstorms)
+            .map(|b| format!("/continue @{}", b.key()));
         match update::exe_path() {
             Ok(exe) => {
                 screen.cfg.exe = exe;
@@ -1736,6 +1742,12 @@ impl Screen {
             }
             KeyCode::Up if open > 0 => self.pick = self.pick.saturating_sub(1),
             KeyCode::Down if open > 0 => self.pick = (self.pick + 1).min(open - 1),
+            KeyCode::Tab
+                if self.input.is_empty() && !self.composing && self.suggestion.is_some() =>
+            {
+                self.input = self.suggestion.clone().unwrap_or_default();
+                self.back = 0;
+            }
             KeyCode::Tab if picked.is_some() => self.fill(&picked.unwrap()),
             KeyCode::Enter if picked.is_some() && !whole => self.fill(&picked.unwrap()),
             KeyCode::PageDown | KeyCode::PageUp if self.composing => {
@@ -2193,6 +2205,7 @@ impl Screen {
         if line.is_empty() {
             return;
         }
+        self.suggestion = None;
         if matches!(self.questions.first(), Some(q) if matches!(q.about, About::Confirm(_))) {
             match line {
                 "y" | "yes" => return self.answer(0),
