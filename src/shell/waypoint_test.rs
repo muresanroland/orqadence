@@ -5,7 +5,7 @@
 use crossterm::event::KeyCode;
 use std::sync::Arc;
 
-use super::chart_test::{await_prompt, charted, map, pane_alive, saved, started, waypoint, world};
+use super::chart_test::{await_prompt, map, mapped, pane_alive, saved, waypoint, world};
 use super::shell_test::{await_line, await_until, key, line, notice, type_in};
 use super::Screen;
 use crate::brainstorm::{Phase, Research, EPIC, GRILLING, MAP, RESEARCH};
@@ -36,9 +36,7 @@ fn live(issues: Vec<BdTicket>) -> (Arc<World>, Screen) {
 
 /// Idea hx-7 charted into Map hx-m in `w`, and Start Map pressed.
 pub(super) fn live_in(w: Arc<World>) -> (Arc<World>, Screen) {
-    let mut s = started(&w);
-    await_line(&mut s, "hx-7 charting done: Map hx-m");
-    charted(&mut s);
+    let mut s = mapped(&w);
     s.key(key(KeyCode::Enter));
     (w, s)
 }

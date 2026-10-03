@@ -8,10 +8,11 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::chart_test::{charted, pane_alive, saved, started, waypoint, world};
+use super::chart_test::{map_issue, mapped, pane_alive, saved, wait_a_while, waypoint, world};
+use super::continue_test::reopened;
 use super::shell_test::{await_line, key};
 use super::{About, Screen};
-use crate::brainstorm::{EPIC, GRILLING, MAP, RESEARCH};
+use crate::brainstorm::{EPIC, GRILLING, RESEARCH};
 use crate::orchestrator::stage::Ask;
 use crate::orchestrator::state::LOCAL;
 use crate::orchestrator::world::{working, BdTicket, Prompt, World};
@@ -27,11 +28,7 @@ fn session(p: &Prompt) -> (String, String) {
 
 /// Map hx-m with `n` Research Waypoints and its build-Epic one.
 fn research(n: usize) -> Vec<BdTicket> {
-    let mut issues = vec![BdTicket {
-        labels: vec![MAP.to_string()],
-        no_epic: true,
-        ..BdTicket::new("hx-m")
-    }];
+    let mut issues = vec![map_issue()];
     for i in 1..=n {
         issues.push(waypoint(&format!("hx-m.{i}"), RESEARCH));
     }
@@ -46,9 +43,7 @@ fn live(
     session: impl Fn(&Prompt) -> (String, String) + Send + Sync + 'static,
 ) -> (Arc<World>, Screen) {
     let w = world(issues, session);
-    let mut s = started(&w);
-    await_line(&mut s, "hx-7 charting done: Map hx-m");
-    charted(&mut s);
+    let mut s = mapped(&w);
     s.key(key(KeyCode::Enter));
     (w, s)
 }
@@ -203,12 +198,17 @@ fn an_idle_research_pane_with_no_result_wakes() {
 
 /// Research hx-m.1 parked under Away, its slot of one taken by hx-m.2.
 fn parked() -> (Arc<World>, Screen, String) {
-    let w = world(research(2), idles);
+    parked_with(idles)
+}
+
+/// As parked, every session but charting's `session`.
+fn parked_with(
+    session: impl Fn(&Prompt) -> (String, String) + Send + Sync + 'static,
+) -> (Arc<World>, Screen, String) {
+    let w = world(research(2), session);
     w.lock().integration = true;
     max_research(&w, 1);
-    let mut s = started(&w);
-    await_line(&mut s, "hx-7 charting done: Map hx-m");
-    charted(&mut s);
+    let mut s = mapped(&w);
     s.cfg.away.store(true, Ordering::SeqCst);
     s.key(key(KeyCode::Enter));
     await_line(&mut s, "hx-m.1 research started");
@@ -267,22 +267,10 @@ fn continue_at_a_parked_research_waypoint_resumes_it_by_id_and_puts_its_question
     s.close();
 }
 
-/// Polls the Shell for a while, as its run loop does.
-fn wait_a_while(s: &mut Screen) {
-    for _ in 0..50 {
-        s.poll();
-        thread::sleep(Duration::from_millis(2));
-    }
-}
-
 #[test]
 fn after_no_to_next_waypoint_running_research_finishes_and_none_starts() {
     let issues = vec![
-        BdTicket {
-            labels: vec![MAP.to_string()],
-            no_epic: true,
-            ..BdTicket::new("hx-m")
-        },
+        map_issue(),
         waypoint("hx-m.1", GRILLING),
         waypoint("hx-m.2", RESEARCH),
         waypoint("hx-m.3", RESEARCH),
@@ -291,9 +279,7 @@ fn after_no_to_next_waypoint_running_research_finishes_and_none_starts() {
     ];
     let w = world(issues, session);
     max_research(&w, 1);
-    let mut s = started(&w);
-    await_line(&mut s, "hx-7 charting done: Map hx-m");
-    charted(&mut s);
+    let mut s = mapped(&w);
     s.key(key(KeyCode::Enter));
     await_line(&mut s, "hx-m.1 Waypoint started");
     await_line(&mut s, "hx-m.2 research started");
@@ -320,9 +306,7 @@ fn after_no_to_next_waypoint_running_research_finishes_and_none_starts() {
 #[test]
 fn with_research_with_you_none_starts() {
     let w = world(research(2), session);
-    let mut s = started(&w);
-    await_line(&mut s, "hx-7 charting done: Map hx-m");
-    charted(&mut s);
+    let mut s = mapped(&w);
     s.key(key(KeyCode::Char(' ')));
     s.key(key(KeyCode::Enter));
 
@@ -338,11 +322,7 @@ fn with_research_with_you_none_starts() {
 #[test]
 fn a_research_close_that_frees_a_waypoint_for_you_asks_next_waypoint() {
     let issues = vec![
-        BdTicket {
-            labels: vec![MAP.to_string()],
-            no_epic: true,
-            ..BdTicket::new("hx-m")
-        },
+        map_issue(),
         waypoint("hx-m.1", RESEARCH),
         BdTicket {
             deps: vec!["hx-m.1".to_string()],
@@ -368,21 +348,10 @@ fn a_research_close_that_frees_a_waypoint_for_you_asks_next_waypoint() {
 #[test]
 fn a_resumed_research_waypoint_waits_for_a_slot() {
     // hx-m.1 idles with no result, hx-m.2 works on
-    let w = world(research(2), |p: &Prompt| match p.ticket.as_str() {
+    let (w, mut s, _) = parked_with(|p: &Prompt| match p.ticket.as_str() {
         "hx-m.1" => idles(p),
         _ => session(p),
     });
-    w.lock().integration = true;
-    max_research(&w, 1);
-    let mut s = started(&w);
-    await_line(&mut s, "hx-7 charting done: Map hx-m");
-    charted(&mut s);
-    s.cfg.away.store(true, Ordering::SeqCst);
-    s.key(key(KeyCode::Enter));
-    await_line(
-        &mut s,
-        "hx-m.1 parked: its session asked while you were Away",
-    );
     await_line(&mut s, "hx-m.2 research started");
 
     s.command("/continue @hx-m.1");
@@ -391,5 +360,95 @@ fn a_resumed_research_waypoint_waits_for_a_slot() {
     assert!(w.called("herdr agent start h-hx-m-1-research").len() == 1);
     finish(&w, "hx-m.2", true);
     await_line(&mut s, "hx-m.1 research resumed: claude");
+    s.close();
+}
+
+#[test]
+fn research_starts_in_map_order() {
+    // bd lists hx-m.2 first
+    let issues = vec![
+        map_issue(),
+        waypoint("hx-m.2", RESEARCH),
+        waypoint("hx-m.1", RESEARCH),
+        waypoint("hx-m.e1", EPIC),
+    ];
+    let w = world(issues, session);
+    max_research(&w, 1);
+    let mut s = mapped(&w);
+    s.key(key(KeyCode::Enter));
+
+    await_line(&mut s, "hx-m.1 research started");
+    await_line(&mut s, "hx-m.2 waits for a research slot, 1 of 1 running");
+    s.close();
+}
+
+#[test]
+fn away_turned_on_while_its_wake_waits_parks_it() {
+    let w = world(research(1), idles);
+    w.lock().integration = true;
+    let mut s = mapped(&w);
+    s.key(key(KeyCode::Enter));
+    await_question(&mut s, "hx-m.1");
+
+    s.cfg.away.store(true, Ordering::SeqCst);
+
+    await_line(
+        &mut s,
+        "hx-m.1 parked: its session asked while you were Away",
+    );
+    let comments = w.called("bd comments add hx-m.1");
+    assert_eq!(comments.len(), 1, "{comments:?}");
+    assert!(comments[0].contains("stuck in research"), "{comments:?}");
+    s.close();
+}
+
+#[test]
+fn a_repeated_continue_resumes_it_once() {
+    let (w, mut s, _) = parked_with(|p: &Prompt| match p.ticket.as_str() {
+        "hx-m.1" => idles(p),
+        _ => session(p),
+    });
+    await_line(&mut s, "hx-m.2 research started");
+
+    s.command("/continue @hx-m.1");
+    s.command("/continue @hx-m.1");
+    await_line(&mut s, "hx-m.1 waits for a research slot");
+    max_research(&w, 3);
+
+    await_line(&mut s, "hx-m.1 research resumed: claude");
+    wait_a_while(&mut s);
+    let starts = w.called("herdr agent start h-hx-m-1-research");
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    s.close();
+}
+
+#[test]
+fn close_saves_what_research_sent_after_the_last_poll() {
+    let (w, mut s) = live(research(1), session);
+    await_line(&mut s, "hx-m.1 research started");
+
+    s.close();
+
+    let r = &saved(&w).research[0];
+    assert_eq!(r.pane, pane(&w, "hx-m.1"));
+}
+
+#[test]
+fn a_resume_waiting_for_a_slot_still_waits_in_a_reopened_shell() {
+    let (w, mut s, _) = parked_with(|p: &Prompt| match p.ticket.as_str() {
+        "hx-m.1" => idles(p),
+        _ => session(p),
+    });
+    await_line(&mut s, "hx-m.2 research started");
+    s.command("/continue @hx-m.1");
+    await_line(&mut s, "hx-m.1 waits for a research slot");
+    s.close();
+
+    let mut s = reopened(&w);
+
+    await_line(&mut s, "hx-m.1 waits for a research slot, 1 of 1 running");
+    wait_a_while(&mut s);
+    let starts = w.called("herdr agent start h-hx-m-1-research");
+    assert_eq!(starts.len(), 1, "{starts:?}");
     s.close();
 }

@@ -18,7 +18,7 @@ use crate::orchestrator::result::{ResultRequirements, StageResult};
 use crate::orchestrator::stage::{
     log_file, result_name, Config, Orchestrator, StageError, AWAY, RESEARCH,
 };
-use crate::shell::suffix;
+use crate::shell::{suffix, suffix_order};
 
 /// A change of a Brainstorm's research, for the Shell to save.
 pub(crate) struct Update {
@@ -113,16 +113,14 @@ pub(crate) fn spawn(
     }
 }
 
-/// One research session's thread: its Stage's outcome.
-type Running = (String, JoinHandle<Result<StageResult, StageError>>);
-
 struct Runner {
     o: Arc<Orchestrator>,
     idea: String,
     map: String,
     /// Every Research Waypoint of the Map it holds: running, kept or Parked.
     research: Vec<Research>,
-    running: Vec<Running>,
+    /// Each running session's thread: its Stage's outcome.
+    running: Vec<(String, JoinHandle<Result<StageResult, StageError>>)>,
     /// Its result written with its Waypoint still open in bd: its pane and
     /// its slot kept until bd shows it closed.
     kept: Vec<String>,
@@ -141,15 +139,16 @@ impl Runner {
     /// Each tick until the Shell closes, or its Map is no longer live and
     /// nothing of its runs, waits on bd or is to be resumed.
     fn run(&mut self, live: &AtomicBool, stop: &AtomicBool, resume: &Mutex<Option<Vec<String>>>) {
-        let saved: Vec<String> = self
-            .research
-            .iter()
+        // the ones in a pane watched again; the rest, a resume that waited
+        // for a slot or one never placed, wait for one again
+        let (panes, waiting): (Vec<_>, Vec<_>) = (self.research.iter())
             .filter(|r| !r.parked)
-            .map(|r| r.waypoint.clone())
-            .collect();
-        for id in saved {
+            .map(|r| (r.waypoint.clone(), !r.pane.is_empty()))
+            .partition(|(_, pane)| *pane);
+        for (id, _) in panes {
             self.take(&id);
         }
+        self.resuming = waiting.into_iter().map(|(id, _)| id).collect();
         loop {
             if stop.load(Ordering::SeqCst) {
                 self.o.stop();
@@ -166,7 +165,8 @@ impl Runner {
             }
             let resumed = std::mem::take(resume.lock().unwrap().as_mut().unwrap());
             for id in resumed {
-                if let Some(r) = self.research.iter_mut().find(|r| r.waypoint == id) {
+                // a repeat finds it no longer Parked
+                if let Some(r) = (self.research.iter_mut()).find(|r| r.waypoint == id && r.parked) {
                     r.parked = false;
                     self.resuming.push(id);
                 }
@@ -193,43 +193,55 @@ impl Runner {
     /// free; the rest said to wait.
     fn resume_waiting(&mut self) {
         let max = app::count(&self.o.cfg.repo, &MAX_RESEARCH);
-        while !self.resuming.is_empty() {
-            let busy = self.running.len() + self.kept.len();
-            if busy < max {
-                let id = self.resuming.remove(0);
-                self.waiting.remove(&id);
-                self.take(&id);
-                continue;
-            }
-            for id in &self.resuming {
-                if self.waiting.insert(id.clone()) {
-                    let text = format!("waits for a research slot, {busy} of {max} running");
-                    self.o.report(id, &text);
-                }
-            }
-            return;
+        while !self.resuming.is_empty() && self.busy() < max {
+            let id = self.resuming.remove(0);
+            self.waiting.remove(&id);
+            self.take(&id);
+        }
+        let busy = self.busy();
+        for id in self.resuming.clone() {
+            self.wait(&id, busy, max);
+        }
+    }
+
+    /// The sessions holding a slot: running, or kept.
+    fn busy(&self) -> usize {
+        self.running.len() + self.kept.len()
+    }
+
+    /// `id` said to wait for a slot, once until it starts.
+    fn wait(&mut self, id: &str, busy: usize, max: usize) {
+        if self.waiting.insert(id.to_string()) {
+            let text = format!("waits for a research slot, {busy} of {max} running");
+            self.o.report(id, &text);
         }
     }
 
     /// The unclaimed Research Waypoints on the frontier, in map order, each
     /// claimed and started while a slot is free, the rest said to wait.
     fn start_ready(&mut self) {
-        let argv = ["ready", "--parent", &self.map, "--unassigned", "--json"];
-        let Ok(ready) = self.o.bd_all(&argv) else {
+        let argv = [
+            "ready",
+            "--parent",
+            &self.map,
+            "--unassigned",
+            "--limit",
+            "0",
+            "--json",
+        ];
+        let Ok(mut ready) = self.o.bd_all(&argv) else {
             return; // bd asked again next tick
         };
+        ready.sort_by_key(|w| suffix_order(&w.id));
         let max = app::count(&self.o.cfg.repo, &MAX_RESEARCH);
         for w in ready.iter().filter(|w| labelled(w, LABEL)) {
             let id = w.id.as_str();
             if self.research.iter().any(|r| r.waypoint == id) {
                 continue;
             }
-            let busy = self.running.len() + self.kept.len();
+            let busy = self.busy();
             if busy >= max {
-                if self.waiting.insert(id.to_string()) {
-                    let text = format!("waits for a research slot, {busy} of {max} running");
-                    self.o.report(id, &text);
-                }
+                self.wait(id, busy, max);
                 continue;
             }
             let claim = ["bd", "update", id, "--claim"];

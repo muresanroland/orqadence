@@ -34,13 +34,18 @@ pub(super) fn waypoint(id: &str, label: &str) -> BdTicket {
     }
 }
 
-/// Map hx-m with five grilling Waypoints and `epics` build-Epic ones.
-pub(super) fn map(epics: usize) -> Vec<BdTicket> {
-    let mut issues = vec![BdTicket {
+/// Map hx-m itself.
+pub(super) fn map_issue() -> BdTicket {
+    BdTicket {
         labels: vec![MAP.to_string()],
         no_epic: true,
         ..BdTicket::new("hx-m")
-    }];
+    }
+}
+
+/// Map hx-m with five grilling Waypoints and `epics` build-Epic ones.
+pub(super) fn map(epics: usize) -> Vec<BdTicket> {
+    let mut issues = vec![map_issue()];
     for n in 1..=5 {
         issues.push(waypoint(&format!("hx-m.{n}"), GRILLING));
     }
@@ -105,6 +110,15 @@ pub(super) fn charted(s: &mut Screen) {
     }
 }
 
+/// The Shell after Start, charting into Map hx-m done and its driver
+/// ended.
+pub(super) fn mapped(w: &Arc<World>) -> Screen {
+    let mut s = started(w);
+    await_line(&mut s, "hx-7 charting done: Map hx-m");
+    charted(&mut s);
+    s
+}
+
 /// A charting session that writes `result` and goes idle.
 pub(super) fn writes(result: &'static str) -> impl Fn(&Prompt) -> (String, String) + Send + Sync {
     move |p: &Prompt| match p.stage.as_str() {
@@ -153,10 +167,10 @@ pub(super) fn pane_alive(w: &World, pane: &str) -> bool {
 }
 
 /// Polls the Shell for a while, as its run loop does.
-fn wait_a_while(s: &mut Screen) {
-    for _ in 0..40 {
+pub(super) fn wait_a_while(s: &mut Screen) {
+    for _ in 0..50 {
         s.poll();
-        thread::sleep(Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(2));
     }
 }
 

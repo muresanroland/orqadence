@@ -944,6 +944,17 @@ impl Orchestrator {
                     return Err(StageError::Stopped); // a late Judgment is not acted on
                 }
                 let stuck = format!("stuck in {label}: {reason} {}", self.locate(&pane));
+                // research has nobody there: under Away it parks, as a
+                // Stage's question does, and /continue @<waypoint> asks
+                let park_away = || {
+                    let lead = format!(
+                        "{label} needed you while you were away and needs a manual resume: \
+                         /continue @{ticket} in the Orqadence Shell resumes its session and \
+                         asks you."
+                    );
+                    self.comment_away(ticket, &lead, &stuck, &[]);
+                    Err(StageError::Parked(AWAY.to_string()))
+                };
                 // At or above the floor the Judgment answers, and the hold
                 // acts on it as on the user's answer.
                 let floor = judged
@@ -955,16 +966,8 @@ impl Orchestrator {
                         self.report(ticket, &format!("judged: {}", judged.said()));
                         Some(Answer::Act(judged.choice))
                     }
-                    // research has nobody there: under Away it parks, as a
-                    // Stage's question does, and /continue @<waypoint> asks
                     _ if st.name == RESEARCH.name && self.cfg.away.load(Ordering::SeqCst) => {
-                        let lead = format!(
-                            "{label} needed you while you were away and needs a manual resume: \
-                             /continue @{ticket} in the Orqadence Shell resumes its session and \
-                             asks you."
-                        );
-                        self.comment_away(ticket, &lead, &stuck, &[]);
-                        return Err(StageError::Parked(AWAY.to_string()));
+                        return park_away();
                     }
                     judged => {
                         // of the nudges, the one the Judgment scored higher
@@ -992,8 +995,11 @@ impl Orchestrator {
                     }
                 };
                 held = self.hold(ticket, st, &label, &pane, &file, want, false, act);
-                if matches!(held, Held::Park) {
-                    return Err(StageError::Parked(format!("{label} {reason}")));
+                match held {
+                    Held::Park => return Err(StageError::Parked(format!("{label} {reason}"))),
+                    // turned on while its Wake's Question waited
+                    Held::Away => return park_away(),
+                    _ => {}
                 }
             }
         }
@@ -1773,7 +1779,7 @@ impl Orchestrator {
     /// session as well: the Ticket Wakes again when the session goes idle
     /// without a result (once the wait is over, whatever its state), dies
     /// or runs out of time, and a prompt it stops at is a blocked session
-    /// as in any Stage.
+    /// as in any Stage. Research's, unarmed, is Away once Away is on.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn hold(
         &self,
@@ -1839,6 +1845,11 @@ impl Orchestrator {
             let (result, reason) = read_stage_result(file, want);
             if reason.is_empty() && matches!(status.as_deref(), None | Some("idle" | "done")) {
                 return Held::Done(Box::new(result));
+            }
+            // research's Wake Question, still unanswered, parks under Away
+            // as a Stage's question does
+            if armed.is_none() && st.name == RESEARCH.name && self.cfg.away.load(Ordering::SeqCst) {
+                return Held::Away;
             }
             if let Some((settled, waiting)) = armed {
                 let now = Instant::now();

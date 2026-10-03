@@ -843,6 +843,8 @@ impl Screen {
         for r in self.research.drain(..) {
             let _ = r.thread.join();
         }
+        // each thread's last sync, after the last poll
+        self.research_updates();
         // cancelled under the lock the pass records under: it records nothing
         // after, and closes a tab it makes after
         let tab = {
@@ -987,12 +989,9 @@ impl Screen {
         self.withdraw(&run);
         // never saved: derived again on resume
         // the Brainstorm's and its research's stay too
-        let researching: Vec<String> = (self.questions.iter())
-            .filter_map(|q| q.ticket.clone())
-            .filter(|id| self.research.iter().any(|r| r.holds(id)))
-            .collect();
         let kept = |q: &Question| {
-            q.outlives_run() || q.ticket.as_ref().is_some_and(|id| researching.contains(id))
+            q.outlives_run()
+                || (q.ticket.as_ref()).is_some_and(|id| self.research.iter().any(|r| r.holds(id)))
         };
         // composing is the front Question's: kept with it
         self.composing &= self.questions.first().is_some_and(kept);
@@ -2371,15 +2370,17 @@ impl Screen {
             }
             match saved {
                 Some(saved) => {
-                    let kept = (saved.research_tab.clone(), saved.research.clone());
-                    resave = (&b.research_tab, &b.research) != (&kept.0, &kept.1);
-                    (b.research_tab, b.research) = kept;
+                    resave = b.research_tab != saved.research_tab || b.research != saved.research;
+                    b.research_tab = saved.research_tab.clone();
+                    b.research = saved.research.clone();
                     *saved = b.clone();
                 }
                 None => self.brainstorms.push(b.clone()),
             }
-            if let Some(Err(err)) = resave.then(|| b.save(&self.cfg.repo)) {
-                self.tell(Some(b.key()), &format!("Brainstorm state not saved: {err}"));
+            if resave {
+                if let Err(err) = b.save(&self.cfg.repo) {
+                    self.tell(Some(b.key()), &format!("Brainstorm state not saved: {err}"));
+                }
             }
             // charting's outcome, once; Start Map makes a Map live again
             if charting && b.phase != Phase::Charting && self.live.as_ref() == Some(&b.idea) {
@@ -3493,7 +3494,7 @@ pub(crate) fn suffix(id: &str) -> &str {
 
 /// Where an id sorts among its siblings: by its child suffix as a number,
 /// one with none last.
-fn suffix_order(id: &str) -> usize {
+pub(crate) fn suffix_order(id: &str) -> usize {
     suffix(id).parse().unwrap_or(usize::MAX)
 }
 

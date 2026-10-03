@@ -174,7 +174,25 @@ impl Screen {
         });
     }
 
-    /// The research threads' changes saved with their Brainstorms; each
+    /// The research threads' changes saved with their Brainstorms, a
+    /// close kept for research_poll.
+    pub(super) fn research_updates(&mut self) {
+        while let Ok(u) = self.research_receiver.try_recv() {
+            if let Some(b) = self.brainstorms.iter_mut().find(|b| b.idea == u.idea) {
+                (b.research_tab, b.research) = (u.tab, u.research);
+                if let Err(err) = b.save(&self.cfg.repo) {
+                    let key = b.key().to_string();
+                    let text = format!("Brainstorm state not saved: {err}");
+                    self.tell(Some(&key), &text);
+                }
+            }
+            if let Some(id) = u.closed {
+                self.research_closed = Some((u.idea, id));
+            }
+        }
+    }
+
+    /// The research threads' changes saved (research_updates); each
     /// told whether its Map is live with research in the background; one
     /// started for the Map that is, or that holds research to take up; and
     /// after a research close, with no session with you running, Next
@@ -183,21 +201,7 @@ impl Screen {
         // the ended ones first: what they sent before they ended is read
         // below, so none is started again over a stale list
         self.research.retain(|r| !r.thread.is_finished());
-        while let Ok(u) = self.research_receiver.try_recv() {
-            if let Some(b) = self.brainstorms.iter_mut().find(|b| b.idea == u.idea) {
-                (b.research_tab, b.research) = (u.tab, u.research);
-                if let Err(err) = b.save(&self.cfg.repo) {
-                    let (key, text) = (
-                        b.key().to_string(),
-                        format!("Brainstorm state not saved: {err}"),
-                    );
-                    self.tell(Some(&key), &text);
-                }
-            }
-            if let Some(id) = u.closed {
-                self.research_closed = Some((u.idea, id));
-            }
-        }
+        self.research_updates();
         let live = |s: &Self, b: &Brainstorm| s.live.as_ref() == Some(&b.idea) && b.background;
         for r in &self.research {
             let b = self.brainstorms.iter().find(|b| b.idea == r.idea);
