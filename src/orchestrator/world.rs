@@ -38,6 +38,7 @@ pub(crate) struct BdTicket {
     pub(crate) labels: Vec<String>,
     /// Its parent, in place of the Epic: a Waypoint's Map.
     pub(crate) parent: String,
+    pub(crate) description: String,
 }
 
 impl BdTicket {
@@ -69,6 +70,7 @@ impl BdTicket {
             "dependencies": deps,
             "close_reason": self.close_reason,
             "labels": self.labels,
+            "description": self.description,
         })
     }
 }
@@ -600,7 +602,8 @@ impl World {
                     "description": w.epic_description, "labels": w.epic_labels}]);
                 return Ok(epic.to_string());
             }
-            let shown = w.tickets.iter().filter(|t| t.id == argv[2]);
+            let ids = &argv[2..argv.len() - 1];
+            let shown = w.tickets.iter().filter(|t| ids.contains(&t.id.as_str()));
             return Ok(json!(shown.map(BdTicket::json).collect::<Vec<_>>()).to_string());
         }
         if cmd.starts_with("bd ready") {

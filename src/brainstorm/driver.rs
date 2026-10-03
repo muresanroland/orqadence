@@ -255,6 +255,7 @@ impl Driver<'_> {
                 Err(err) => self.say(&format!("worktree not removed: {err}")),
             }
             self.b.phase = Phase::Done;
+            self.b.tickets = r.tickets;
             let pr = match r.pr.as_str() {
                 "" => String::new(),
                 pr => format!("; docs PR {pr}"),

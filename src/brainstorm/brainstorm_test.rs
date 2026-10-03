@@ -21,6 +21,7 @@ fn mapped(idea: &str, map: &str) -> Brainstorm {
         session: Some(session("s-1")),
         worktree: format!("/repo/.orqadence-local/worktrees/{idea}"),
         branch: format!("brainstorm/{idea}"),
+        tickets: vec!["hx-1".to_string()],
         background: true,
         research_tab: format!("research-{map}"),
         research: vec![Research {

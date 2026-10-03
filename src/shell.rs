@@ -23,7 +23,7 @@ use crossterm::event::{
 use ratatui::layout::{Position, Rect};
 use ratatui::DefaultTerminal;
 
-use crate::brainstorm::{self, Brainstorm};
+use crate::brainstorm::{self, Brainstorm, Phase};
 use crate::graphify;
 use crate::on_call::{self, Doorbell, OnCall};
 use crate::orchestrator::app::{self, ADDRESS_PR_COMMENTS_COUNTDOWN, RELEASE_ON};
@@ -43,10 +43,12 @@ use crate::orchestrator::state::{
 use crate::setup;
 use crate::tools::{Editor, Tools};
 use crate::update::{self, Checked, Ready, Releases};
+use charted::{StartMap, Tickets};
 use idea::Idea;
 use summary::Summary;
 
 pub(crate) mod brand;
+mod charted;
 mod config;
 mod demo;
 mod draw;
@@ -360,6 +362,14 @@ pub(crate) struct Screen {
     /// /brainstorm's idea modal, while it is open: it takes every key but
     /// Ctrl-C.
     pub(crate) idea: Option<Idea>,
+    /// The Tickets modal, while charting's Tickets wait on the user: it
+    /// takes every key but Ctrl-C.
+    pub(crate) tickets: Option<Tickets>,
+    /// The start-Map modal, or its Continue form: it takes every key but
+    /// Ctrl-C.
+    pub(crate) start_map: Option<StartMap>,
+    /// The live Brainstorm's Idea: one at a time, and none at open.
+    pub(crate) live: Option<String>,
     /// Ctrl+G on the idea modal: the run loop hands the terminal to the
     /// editor, as it re-execs on reexec.
     pub(crate) editing: bool,
@@ -489,6 +499,9 @@ impl Screen {
             approvals: Vec::new(),
             manual_work: None,
             idea: None,
+            tickets: None,
+            start_map: None,
+            live: None,
             editing: false,
             #[cfg(not(test))]
             editor: Arc::new(crate::tools::Exec),
@@ -858,9 +871,17 @@ impl Screen {
             }
         }
         while let Ok(b) = self.brainstorm_receiver.try_recv() {
-            match self.brainstorms.iter_mut().find(|s| s.idea == b.idea) {
-                Some(saved) => *saved = b,
-                None => self.brainstorms.push(b),
+            let saved = self.brainstorms.iter_mut().find(|s| s.idea == b.idea);
+            let charting = saved.as_ref().is_some_and(|s| s.phase == Phase::Charting);
+            match saved {
+                Some(saved) => *saved = b.clone(),
+                None => self.brainstorms.push(b.clone()),
+            }
+            // charting's outcome, once
+            match b.phase {
+                Phase::Map if charting => self.open_start_map(&b, false),
+                Phase::Done if charting && !b.tickets.is_empty() => self.open_tickets(&b),
+                _ => {}
             }
         }
         while let Ok((line, over)) = self.docs_receiver.try_recv() {
@@ -1628,6 +1649,12 @@ impl Screen {
         }
         if self.idea.is_some() && !ctrl_c {
             return self.idea_key(key);
+        }
+        if self.tickets.is_some() && !ctrl_c {
+            return self.tickets_key(key);
+        }
+        if self.start_map.is_some() && !ctrl_c {
+            return self.start_map_key(key);
         }
         if ctrl_c {
             if self.ctrl_c.is_some_and(|at| at.elapsed() < CTRL_C_WINDOW) {
@@ -3190,6 +3217,8 @@ fn edit(terminal: &mut DefaultTerminal, screen: &mut Screen) -> io::Result<()> {
 mod approval_test;
 #[cfg(test)]
 mod chart_test;
+#[cfg(test)]
+mod charted_test;
 #[cfg(test)]
 mod config_test;
 #[cfg(test)]
