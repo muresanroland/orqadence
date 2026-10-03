@@ -5,6 +5,8 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -177,12 +179,24 @@ impl Screen {
         self.chart(b);
     }
 
-    /// The charting session for `b`, on a driver thread of its own, the
-    /// live Brainstorm: never outside herdr, with no Shell's pane to split.
+    /// The charting session for `b`, the live Brainstorm.
     pub(super) fn chart(&mut self, b: Brainstorm) {
+        self.drive(b, "charting", driver::chart);
+    }
+
+    /// `run` for `b` on a driver thread of its own, `b` the live
+    /// Brainstorm: never outside herdr, with no Shell's pane to split, the
+    /// `noun` not started.
+    pub(super) fn drive(
+        &mut self,
+        b: Brainstorm,
+        noun: &str,
+        run: impl FnOnce(&Config, &str, Brainstorm, &Sender<Brainstorm>, &AtomicBool) + Send + 'static,
+    ) {
         if self.shell_pane.is_empty() {
-            let text = "charting not started: the Shell is not in a herdr pane (HERDR_PANE_ID)";
-            return self.tell(Some(&b.idea), text);
+            let text =
+                format!("{noun} not started: the Shell is not in a herdr pane (HERDR_PANE_ID)");
+            return self.tell(Some(b.key()), &text);
         }
         let cfg = Config {
             events: self.sender.clone(),
@@ -194,7 +208,7 @@ impl Screen {
             self.brainstorm_stop.clone(),
         );
         let idea = b.idea.clone();
-        let driver = thread::spawn(move || driver::chart(&cfg, &shell, b, &saved, &stop));
+        let driver = thread::spawn(move || run(&cfg, &shell, b, &saved, &stop));
         self.brainstorm_threads.retain(|(_, t)| !t.is_finished());
         self.brainstorm_threads.push((idea.clone(), driver));
         self.live = Some(idea);

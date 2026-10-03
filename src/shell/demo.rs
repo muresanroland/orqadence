@@ -327,7 +327,8 @@ pub(super) fn stop(s: &mut Screen) {
     s.epics = demo.epics;
     s.state = demo.state;
     s.events = demo.events;
-    s.questions.retain(|q| q.ticket.is_none());
+    s.questions
+        .retain(|q| q.ticket.is_none() || q.brainstorms());
     if s.composing {
         s.composing = false;
         s.input.clear();

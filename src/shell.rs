@@ -224,6 +224,18 @@ pub(crate) struct Question {
     pub(crate) opened: OnceCell<chrono::DateTime<chrono::Local>>,
 }
 
+impl Question {
+    /// The Brainstorm's own, which no run's end drops: Next Waypoint?, or
+    /// a Waypoint session's Manual work.
+    pub(crate) fn brainstorms(&self) -> bool {
+        match &self.about {
+            About::Asked(Ask::NextWaypoint { .. }) => true,
+            About::Asked(Ask::Manual { stage, .. }) => stage == brainstorm::driver::WAYPOINT,
+            _ => false,
+        }
+    }
+}
+
 /// A Notice modal's kind: red and titled ERROR, or green and titled NOTICE.
 pub(crate) enum NoticeKind {
     Error,
@@ -880,9 +892,15 @@ impl Screen {
         }
         self.brainstorm_updates();
         // the live charting's driver gone: its pane closed, its session
-        // dead, or never started
-        if let Some(b) = self.live_brainstorm() {
-            if b.phase == Phase::Charting && !self.driving(&b.idea) {
+        // dead, or never started; a Map's gone holding its session was
+        // interrupted, while one with none waits on research or a Question.
+        // Read again once it is gone: what it sent before it ended counts.
+        let ended = self.live.clone().filter(|idea| !self.driving(idea));
+        if ended.is_some() {
+            self.brainstorm_updates();
+        }
+        if let (Some(_), Some(b)) = (ended, self.live_brainstorm()) {
+            if b.phase == Phase::Charting || b.session.is_some() {
                 self.live = None;
             }
         }
@@ -946,8 +964,11 @@ impl Screen {
         }
         self.running = false;
         self.withdraw(&run);
-        self.questions.retain(|q| q.ticket.is_none()); // never saved: derived again on resume
-        self.composing = false;
+        // never saved: derived again on resume
+        let kept = |q: &Question| q.ticket.is_none() || q.brainstorms();
+        // composing is the front Question's: kept with it
+        self.composing &= self.questions.first().is_some_and(kept);
+        self.questions.retain(kept);
         self.first = None;
         if run.o.stopping() {
             // a long usage limit has said it closed the panes
@@ -1135,6 +1156,7 @@ impl Screen {
             Ask::Tag { .. } => "Tag question",
             Ask::ReleaseAgain { .. } => "Release question",
             Ask::Merge { .. } => "Merge question",
+            Ask::NextWaypoint { .. } => "Waypoint question",
         };
         let mut message = format!("{id} · {kind}");
         if let Some(title) = self.title(id) {
@@ -1272,7 +1294,8 @@ impl Screen {
             | Ask::Labels { .. }
             | Ask::Tag { .. }
             | Ask::ReleaseAgain { .. }
-            | Ask::Merge { .. } => text.as_str(),
+            | Ask::Merge { .. }
+            | Ask::NextWaypoint { .. } => text.as_str(),
         };
         let asking = format!("asking you: {short}");
         // /continue @ticket's goes after a confirmation, and the Question
@@ -1463,7 +1486,8 @@ impl Screen {
                 | Ask::Labels { options }
                 | Ask::Tag { options, .. }
                 | Ask::ReleaseAgain { options }
-                | Ask::Merge { options, .. },
+                | Ask::Merge { options, .. }
+                | Ask::NextWaypoint { options, .. },
             ) => options.clone(),
             About::Confirm(_) => ["yes", "no"].map(str::to_string).to_vec(),
             About::Continue { rows } => rows
@@ -1599,23 +1623,19 @@ impl Screen {
                     .filter(|id| unfinished(&self.epics, issues, id))
                     .map(suffix)
                     .collect();
-                let state = if w.status == "closed" {
-                    Some("closed".to_string())
+                let text = if w.status == "closed" {
+                    format!("{} · closed", w.title)
                 } else if let Some(r) = research {
                     match r.parked {
-                        true => Some("parked, asks you".to_string()),
-                        false => Some("researching".to_string()),
+                        true => format!("{} · parked, asks you", w.title),
+                        false => format!("{} · researching", w.title),
                     }
                 } else if !blockers.is_empty() {
-                    Some(format!("blocked on {}", blockers.join(", ")))
-                } else if w.labels.iter().any(|l| l == brainstorm::EPIC) && left > 1 {
-                    Some(format!("last, {} others open", left - 1))
+                    format!("{} · blocked on {}", w.title, blockers.join(", "))
+                } else if brainstorm::labelled(w, brainstorm::EPIC) && left > 1 {
+                    format!("{} · last, {} others open", w.title, left - 1)
                 } else {
-                    None // ready to take
-                };
-                let text = match state {
-                    Some(state) => format!("{} · {state}", w.title),
-                    None => w.title.clone(),
+                    w.title.clone() // ready to take
                 };
                 rows.push((w.id.clone(), "Waypoint", text));
             }
@@ -2110,6 +2130,12 @@ impl Screen {
                     self.reply(&option.clone(), Answer::Prompt(option));
                 }
             }
+            // yes, no, yes with a prompt of your own (typed in the band)
+            (About::Asked(Ask::NextWaypoint { .. }), 0) => self.reply("yes", Answer::Approve),
+            (About::Asked(Ask::NextWaypoint { .. }), 1) => {
+                self.reply("no", Answer::Act(Action::Park))
+            }
+            (About::Asked(Ask::NextWaypoint { .. }), _) => self.composing = true,
             // yes or no, sent word for word; no's Notice says how to tag it
             (About::Asked(Ask::Tag { options, notice }), n) => {
                 let notice = (n == 1).then(|| notice.clone());
@@ -2223,8 +2249,22 @@ impl Screen {
     /// is the Orchestrator's, once it acts.
     fn reply(&mut self, word: &str, answer: Answer) {
         let q = self.questions.remove(0);
-        let id = q.ticket.unwrap_or_default();
+        let id = q.ticket.clone().unwrap_or_default();
         self.tell(Some(&id), &format!("you answered: {word}"));
+        // the Brainstorm's: no run to answer them
+        if let About::Asked(Ask::NextWaypoint { map, .. }) = &q.about {
+            return self.next_waypoint(map, answer);
+        }
+        if let About::Asked(Ask::Manual { pane, item, .. }) = &q.about {
+            let live = self.live_brainstorm().filter(|b| &b.pane == pane).cloned();
+            if let Some(b) = live {
+                // not taken: the Question stays, to answer again
+                if !self.brainstorm_manual(&id, &b, item, answer) {
+                    self.questions.insert(0, q);
+                }
+                return;
+            }
+        }
         if self.demo.is_some() {
             return demo::answered(self, &id, &q.about, answer);
         }
@@ -2340,6 +2380,7 @@ impl Screen {
         self.brainstorm_updates();
         let Some(b) = self.live_brainstorm().cloned() else {
             self.live = None;
+            self.questions.retain(|q| !q.brainstorms());
             return true;
         };
         // its driver between charting and its pane: that pane would open
@@ -2365,6 +2406,8 @@ impl Screen {
             }
         }
         self.live = None;
+        // its Questions go: /continue @<map> asks them again
+        self.questions.retain(|q| !q.brainstorms());
         true
     }
 
@@ -2522,9 +2565,19 @@ impl Screen {
                     .brainstorms
                     .iter()
                     .find(|b| b.phase != Phase::Done && b.key() == query);
-                match saved.cloned() {
-                    Some(b) => self.continue_brainstorm(b),
-                    None => self.continue_ticket(query),
+                // a Waypoint of a saved Map
+                let of_map = self
+                    .brainstorm_issues
+                    .iter()
+                    .find(|i| i.id == query)
+                    .and_then(|w| {
+                        let map = |b: &&Brainstorm| b.phase == Phase::Map && b.map == w.parent;
+                        self.brainstorms.iter().find(map)
+                    });
+                match (saved.cloned(), of_map.cloned()) {
+                    (Some(b), _) => self.continue_brainstorm(b),
+                    (None, Some(b)) => self.continue_waypoint(b, query),
+                    (None, None) => self.continue_ticket(query),
                 }
             }
             "/continue" => {
@@ -2656,13 +2709,121 @@ impl Screen {
             return;
         }
         match b.phase {
-            Phase::Map => self.open_start_map(&b, true),
             // a driver still running, live or stopping, owns its pane
+            Phase::Map if self.driving(&b.idea) => {
+                self.refuse(&format!("refused: a Waypoint session of {key} is running"))
+            }
+            Phase::Map => self.open_start_map(&b, true),
             _ if self.driving(&b.idea) => {
                 self.refuse(&format!("refused: {key} is already charting"))
             }
             _ => self.chart(b),
         }
+    }
+
+    /// /continue @<waypoint> of saved Map `b`: another Brainstorm live asks
+    /// first; refused while a session of the Map's runs, and for the
+    /// Waypoint's own reasons; else its Map live and brainstorm-waypoint
+    /// started on it with WAYPOINT set.
+    fn continue_waypoint(&mut self, mut b: Brainstorm, id: &str) {
+        let key = b.key().to_string();
+        if self.switch_asked(&key, &format!("/continue @{id}")) {
+            return;
+        }
+        if self.driving(&b.idea) {
+            return self.refuse(&format!("refused: a Waypoint session of {key} is running"));
+        }
+        // a failed bd list is said, never read as a Waypoint to take
+        let Some(issues) = self.reload_issues() else {
+            return;
+        };
+        if let Some(text) = brainstorm::waypoint_refusal(&issues, &b, id) {
+            return self.refuse(&text);
+        }
+        b.started = true;
+        if let Err(err) = b.save(&self.cfg.repo) {
+            return self.tell(Some(&key), &format!("Brainstorm state not saved: {err}"));
+        }
+        if let Some(saved) = self.brainstorms.iter_mut().find(|s| s.idea == b.idea) {
+            *saved = b.clone();
+        }
+        self.work_map(b, None, Some(id.to_string()));
+    }
+
+    /// "Next Waypoint?" answered for `map`, while it is the live Map: yes
+    /// (Approve) starts a fresh session, with your prompt as its PROMPT
+    /// when you typed one; no stops the Brainstorm, saved, for /continue
+    /// @<map>.
+    fn next_waypoint(&mut self, map: &str, answer: Answer) {
+        let live = self.live_brainstorm();
+        let Some(b) = live
+            .filter(|b| b.map == map && b.phase == Phase::Map)
+            .cloned()
+        else {
+            return self.tell(Some(map), "not acted on: the Map is no longer live");
+        };
+        match answer {
+            Answer::Approve => self.work_map(b, None, None),
+            Answer::Prompt(text) => self.work_map(b, Some(text), None),
+            Answer::Act(_) => {
+                self.live = None;
+                let text = "Brainstorm stopped: you answered no to next Waypoint?";
+                self.tell(Some(&b.map), text);
+                self.suggestion = Some(format!("/continue @{}", b.map));
+            }
+        }
+    }
+
+    /// A Waypoint session's Manual work answered: done, with your facts or
+    /// none, goes into its pane as Manual work <n> done: <facts>, its
+    /// result removed first, and the item is marked done; park stops the
+    /// Brainstorm, saved, so /continue @<map> asks it again. Whether the
+    /// answer was taken: not when the prompt or the stop failed.
+    fn brainstorm_manual(
+        &mut self,
+        id: &str,
+        b: &Brainstorm,
+        item: &manual::Item,
+        answer: Answer,
+    ) -> bool {
+        let Answer::Prompt(facts) = answer else {
+            if !self.stop_live() {
+                return false;
+            }
+            let next = format!("/continue @{}", b.map);
+            self.tell(
+                Some(id),
+                &format!("parked: Brainstorm stopped, {next} asks again"),
+            );
+            self.suggestion = Some(next);
+            return true;
+        };
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
+        let kept = fs::read(&b.result);
+        let _ = fs::remove_file(&b.result);
+        let prompt = manual::done_prompt(&item.folder, &facts);
+        if let Err(err) = herdr(tools, repo, &["agent", "prompt", &b.pane, &prompt]) {
+            // put back unless written anew
+            if let Ok(kept) = kept {
+                let _ = File::options()
+                    .write(true)
+                    .create_new(true)
+                    .open(&b.result)
+                    .and_then(|mut f| f.write_all(&kept));
+            }
+            self.tell(Some(id), &format!("never took your answer: {err}"));
+            return false;
+        }
+        let number = manual::number(&item.folder);
+        let marked = manual::done(tools, repo, id, item, &facts);
+        self.tell(Some(id), &format!("sent manual work {number} done"));
+        if let Err(err) = marked {
+            self.tell(
+                Some(id),
+                &format!("manual work {number} not marked done: {err}"),
+            );
+        }
+        true
     }
 
     /// /continue @ticket: unparks that one Ticket at its Stage, watching its
@@ -3448,3 +3609,5 @@ mod graphify_test;
 mod idea_test;
 #[cfg(test)]
 mod shell_test;
+#[cfg(test)]
+mod waypoint_test;

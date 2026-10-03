@@ -3,7 +3,9 @@
 //! result files. Never in the run's state.json, which a run clears.
 
 use crate::orchestrator::scheduler::BdIssue;
+use crate::orchestrator::stage::plural;
 use crate::orchestrator::state::{local_dir, Session, LOCAL};
+use crate::shell::suffix;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -60,6 +62,9 @@ pub(crate) struct Brainstorm {
     pub(crate) pane: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) session: Option<Session>,
+    /// A Waypoint session's result file, kept for its resume.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(crate) result: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub(crate) worktree: String,
     /// brainstorm/<idea>.
@@ -117,6 +122,11 @@ impl Brainstorm {
     }
 }
 
+/// Whether `i` carries bd label `label`.
+pub(crate) fn labelled(i: &BdIssue, label: &str) -> bool {
+    i.labels.iter().any(|l| l == label)
+}
+
 /// The saved Brainstorm whose state.json changed last, a done one never.
 pub(crate) fn most_recent<'a>(repo: &Path, saved: &'a [Brainstorm]) -> Option<&'a Brainstorm> {
     let changed = |b: &Brainstorm| {
@@ -161,7 +171,7 @@ pub(crate) enum Kind {
 }
 
 fn is_map(issue: &BdIssue) -> bool {
-    issue.issue_type == "epic" && issue.labels.iter().any(|l| l == MAP)
+    issue.issue_type == "epic" && labelled(issue, MAP)
 }
 
 /// The issue's Brainstorm kind among `issues`, None for every other issue:
@@ -171,7 +181,7 @@ pub(crate) fn kind(issues: &[BdIssue], issue: &BdIssue) -> Option<Kind> {
         Some(Kind::Map)
     } else if !issue.parent.is_empty() && issues.iter().any(|p| p.id == issue.parent && is_map(p)) {
         Some(Kind::Waypoint)
-    } else if issue.labels.iter().any(|l| l == IDEA) {
+    } else if labelled(issue, IDEA) {
         Some(Kind::Idea)
     } else {
         None
@@ -187,6 +197,36 @@ pub(crate) fn refusal(issues: &[BdIssue], id: &str) -> Option<String> {
         Kind::Waypoint => "refused: a Waypoint never enters the Pipeline".to_string(),
         Kind::Idea => "refused: an Idea never enters the Pipeline".to_string(),
     })
+}
+
+/// Why /continue @<id>, a Waypoint of `b`'s Map among `issues`, is
+/// refused: closed, its research running in the background, the build-Epic
+/// one with others open, or blocked; None when it can be taken.
+pub(crate) fn waypoint_refusal(issues: &[BdIssue], b: &Brainstorm, id: &str) -> Option<String> {
+    let w = issues.iter().find(|i| i.id == id)?;
+    let open = |id: &str| issues.iter().any(|i| i.id == id && i.status != "closed");
+    let name = suffix(id);
+    if w.status == "closed" {
+        return Some(format!("refused: {name} is closed"));
+    }
+    if b.research.iter().any(|r| r.waypoint == id) {
+        return Some(format!(
+            "refused: {name} is a Research Waypoint a background session is running"
+        ));
+    }
+    let others = issues
+        .iter()
+        .filter(|i| i.parent == b.map && i.id != id && i.status != "closed")
+        .count();
+    if labelled(w, EPIC) && others > 0 {
+        let are = if others == 1 { "is" } else { "are" };
+        let others = plural(others, "other Waypoint");
+        return Some(format!(
+            "refused: {name} writes the Epic, and {others} {are} open"
+        ));
+    }
+    let on: Vec<&str> = w.blockers().filter(|b| open(b)).map(suffix).collect();
+    (!on.is_empty()).then(|| format!("refused: {name} is blocked on {}", on.join(", ")))
 }
 
 pub(crate) mod driver;

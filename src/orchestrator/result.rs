@@ -20,6 +20,8 @@ pub(crate) struct StageResult {
     pub(crate) version: String,
     /// A charting result's Map, as its MAP: line names it.
     pub(crate) map: String,
+    /// A Waypoint session's Waypoint, as its WAYPOINT: line names it.
+    pub(crate) waypoint: String,
     /// A charting result's Tickets, as its TICKETS: line lists them.
     pub(crate) tickets: Vec<String>,
     /// Each LABEL: line's text: a label the session proposes.
@@ -99,6 +101,12 @@ pub(crate) fn read_stage_result(path: &Path, want: ResultRequirements) -> (Stage
         }
         if let Some(map) = line.strip_prefix("MAP:").filter(|_| result.map.is_empty()) {
             result.map = map.trim().to_string();
+        }
+        if let Some(id) = line
+            .strip_prefix("WAYPOINT:")
+            .filter(|_| result.waypoint.is_empty())
+        {
+            result.waypoint = id.trim().to_string();
         }
         if let Some(ids) = line
             .strip_prefix("TICKETS:")

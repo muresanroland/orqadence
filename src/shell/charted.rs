@@ -5,11 +5,11 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use super::Screen;
-use crate::brainstorm::{Brainstorm, Phase, EPIC, RESEARCH};
+use super::{About, Screen};
+use crate::brainstorm::{driver, labelled, Brainstorm, Phase, EPIC, RESEARCH};
 use crate::orchestrator::app::{self, MAX_RESEARCH};
 use crate::orchestrator::scheduler::BdIssue;
-use crate::orchestrator::stage::plural;
+use crate::orchestrator::stage::{plural, Ask};
 
 /// One Ticket of the Tickets modal.
 pub(crate) struct Row {
@@ -130,11 +130,16 @@ impl Screen {
     }
 
     /// Start Map, or Continue: the answer in the Brainstorm's state, and
-    /// the Map the live Brainstorm.
+    /// the Map the live Brainstorm, its session with you started.
     fn start_the_map(&mut self) {
         let Some(m) = self.start_map.take() else {
             return;
         };
+        // its driver still running owns its pane, result file and state
+        if self.driving(&m.idea) {
+            let text = format!("refused: a Waypoint session of {} is running", m.map);
+            return self.refuse(&text);
+        }
         let Some(b) = self.brainstorms.iter_mut().find(|b| b.idea == m.idea) else {
             return;
         };
@@ -146,12 +151,26 @@ impl Screen {
             self.start_map = Some(m);
             return;
         }
+        let b = b.clone();
         self.live = Some(m.idea);
         let text = match m.background {
             true => "live: research in the background",
             false => "live: research with you",
         };
         self.tell(Some(&m.map), text);
+        self.work_map(b, None, None);
+    }
+
+    /// A session with the user on the live Map of `b`, on a driver thread
+    /// of its own: its PROMPT `prompt`, its Waypoint `pick` when named. A
+    /// Next Waypoint? still waiting goes; never outside herdr, with no
+    /// Shell's pane to split.
+    pub(super) fn work_map(&mut self, b: Brainstorm, prompt: Option<String>, pick: Option<String>) {
+        self.questions
+            .retain(|q| !matches!(q.about, About::Asked(Ask::NextWaypoint { .. })));
+        self.drive(b, "Waypoint", move |cfg, shell, b, saved, stop| {
+            driver::waypoint(cfg, shell, b, saved, stop, prompt, pick);
+        });
     }
 
     /// Cancel keeps the Map; the start form leaves /continue @<map> as the
@@ -232,7 +251,6 @@ impl Screen {
         let map = self.shown(&[&b.map]).into_iter().next().unwrap_or_default();
         let issues = self.reload_issues().unwrap_or_default();
         let waypoints: Vec<&BdIssue> = issues.iter().filter(|i| i.parent == b.map).collect();
-        let labelled = |i: &BdIssue, label: &str| i.labels.iter().any(|l| l == label);
         let open = |i: &&&BdIssue| i.status != "closed";
         let research = waypoints.iter().filter(|i| labelled(i, RESEARCH));
         let epic = waypoints.iter().filter(|i| labelled(i, EPIC)).count();
