@@ -1967,12 +1967,13 @@ pub(crate) fn preflight(
         }
     }
     // A row that cannot be read is the Orchestrator's to refuse; the
-    // Review's fallback, unset, runs nothing, and the Docs pass nothing
-    // while graphify is off.
+    // Review's fallback, unset, runs nothing, the Docs pass nothing while
+    // graphify is off, and a Brainstorm row is its session's to check.
     for key in app::ROWS {
         let row = match key {
             app::IF_LIMITED => app::fallback_row(repo, &[]).ok().flatten(),
             app::DOCS_PASS if !app::graphify(repo) => None,
+            _ if app::BRAINSTORM.contains(&key) => None,
             _ => app::row(repo, key, &[]).ok(),
         };
         let Some(row) = row else {

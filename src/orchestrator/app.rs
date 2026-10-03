@@ -23,8 +23,25 @@ pub(crate) const RELEASE: &str = "release";
 /// The Docs pass's row: graphify's LLM pass over the docs, run on a new
 /// major or minor tag, not in a Ticket's Pipeline, so no label overrides it.
 pub(crate) const DOCS_PASS: &str = "docs_pass";
+/// The Brainstorm's rows, one per session: charting an Idea, a Waypoint
+/// with you, a Research Waypoint, writing the Epics. A Brainstorm has no
+/// Ticket, so no label overrides them, and each is checked as its session
+/// starts, not as a run does.
+pub(crate) const BRAINSTORM: [&str; 4] = [
+    "brainstorm_chart",
+    "brainstorm_waypoint",
+    "brainstorm_research",
+    "brainstorm_epic",
+];
 /// The rows no Ticket label overrides: they run outside a Ticket.
-pub(crate) const UNLABELLED: [&str; 2] = [RELEASE, DOCS_PASS];
+pub(crate) const UNLABELLED: [&str; 6] = [
+    RELEASE,
+    DOCS_PASS,
+    BRAINSTORM[0],
+    BRAINSTORM[1],
+    BRAINSTORM[2],
+    BRAINSTORM[3],
+];
 
 /// A model id and its effort levels, as an App lists them.
 pub(crate) type Model = (String, Vec<String>);
@@ -685,6 +702,12 @@ pub(crate) const MAX_TICKETS: Count = Count {
     default: 3,
     least: 1,
 };
+/// Research Waypoints a Brainstorm runs at once in the background.
+pub(crate) const MAX_RESEARCH: Count = Count {
+    key: "max_research",
+    default: 2,
+    least: 1,
+};
 /// Rebase and Address PR comments sessions at once, together, apart from
 /// max_tickets.
 pub(crate) const MAX_PR_SESSIONS: Count = Count {
@@ -840,7 +863,7 @@ pub(crate) fn set_switch(repo: &Path, switch: &Switch, on: bool) -> Result<(), S
 
 /// The key of every row of config.json; static, so a label's Check can
 /// borrow one.
-pub(crate) static ROWS: [&str; 11] = [
+pub(crate) static ROWS: [&str; 15] = [
     "implement",
     "review",
     IF_LIMITED,
@@ -852,6 +875,10 @@ pub(crate) static ROWS: [&str; 11] = [
     "address_pr_comments",
     RELEASE,
     DOCS_PASS,
+    BRAINSTORM[0],
+    BRAINSTORM[1],
+    BRAINSTORM[2],
+    BRAINSTORM[3],
 ];
 
 /// A Ticket label's entry in config.json's labels, keyed by its name, the
@@ -1285,8 +1312,9 @@ pub(crate) fn field(doc: &Value, key: &str, name: &str) -> Result<String, String
 /// On codex only Implement (the two-step Plan, plan.rs), the Review, its
 /// fallback and the Debate's sides run, until it has the network the
 /// Moderator's side commands and TypeSafe calls need, and a Git write path
-/// for Fix, Rebase, Address PR comments and the Release: its sandbox keeps
-/// Git metadata read-only. Every other App runs every Stage. The Docs pass
+/// for Fix, Rebase, Address PR comments, the Release and the Brainstorm's
+/// sessions, which commit to its branch: its sandbox keeps Git metadata
+/// read-only. Every other App runs every Stage. The Docs pass
 /// runs on claude or codex alone: graphify installs its skill for those two.
 pub(crate) fn runs_on(key: &str, app: &App) -> Result<(), String> {
     let runs = match key {

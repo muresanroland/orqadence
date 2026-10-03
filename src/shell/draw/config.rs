@@ -19,8 +19,9 @@ use crate::shell::brand::{BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT}
 use crate::shell::config::{
     distinct, family_label, floor_name, job_name, job_said, label_line, number_note, position_name,
     run_numbers, short, short_commit, Field, LabelItem, Listing, Pick, Scope, Settings, Typing,
-    APPS_PAGE, FLOORS, GRAPHIFY_PAGE, GRAPHIFY_SECTION, LABELS_PAGE, ON_CALL_PAGE, REVIEW_ROW,
-    ROWS, RUN_PAGE, SECTIONS, SKILLS_PAGE, SKILL_ROWS, TYPESAFE_PAGE,
+    APPS_PAGE, BRAINSTORM_PAGE, BRAINSTORM_SECTION, FLOORS, GRAPHIFY_PAGE, GRAPHIFY_SECTION,
+    LABELS_PAGE, ON_CALL_PAGE, REVIEW_ROW, ROWS, RUN_PAGE, SECTIONS, SKILLS_PAGE, SKILL_ROWS,
+    TYPESAFE_PAGE,
 };
 use crate::shell::Screen;
 use crate::skills::manifest::NONE;
@@ -680,10 +681,12 @@ fn pipeline(s: &Screen, st: &Settings, height: u16, width: usize) -> Vec<Line<'s
             (true, true) => (bold(TEXT), Some(REST_BG)),
             (false, _) => (fg(TEXT), None),
         };
-        let room = width.saturating_sub(if mark { 14 } else { 12 });
+        // Brainstorm, one longer than the rest, keeps its last letter
+        let named = name.chars().count().max(9) + 1;
+        let room = width.saturating_sub(named + if mark { 4 } else { 2 });
         let mut spans = vec![
             Span::styled(if selected { "▸ " } else { "  " }, fg(PURPLE)),
-            Span::styled(pad(name, 10), name_style),
+            Span::styled(pad(name, named), name_style),
             Span::styled(cut(&summary, room), fg(MUTED)),
         ];
         if mark {
@@ -696,7 +699,7 @@ fn pipeline(s: &Screen, st: &Settings, height: u16, width: usize) -> Vec<Line<'s
     };
     let mut lines = vec![Line::from(Span::styled("PIPELINE", bold(MUTED)))];
     for (i, (_, short, _)) in SECTIONS.iter().enumerate() {
-        if i > 0 && height as usize >= SECTIONS.len() * 2 + 8 {
+        if i > 0 && height as usize >= SECTIONS.len() * 2 + 9 {
             lines.push(Line::from(Span::styled("  │", fg(BORDER))));
         }
         lines.push(row(
@@ -750,6 +753,12 @@ fn pipeline(s: &Screen, st: &Settings, height: u16, width: usize) -> Vec<Line<'s
         false,
         st.section == GRAPHIFY_PAGE,
     ));
+    lines.push(row(
+        "Brainstorm",
+        st.summary(BRAINSTORM_PAGE),
+        st.checks(Some(BRAINSTORM_PAGE)).iter().any(|c| !c.holds),
+        st.section == BRAINSTORM_PAGE,
+    ));
     lines
 }
 
@@ -780,6 +789,8 @@ fn label(st: &Settings, row: usize, field: Field) -> String {
         }
         (Field::Model, _) if row == 0 && split => pad("implement model", 22),
         (Field::Job(j), _) => pad(&job_name(j), 24),
+        // a number rides the page's first row, whose lead is not its own
+        (Field::Number(_), _) => pad(field.name(), 22),
         (_, "") => pad(field.name(), 22),
         (_, lead) => pad(&format!("{lead} {}", field.name()), 22),
     }
@@ -829,11 +840,13 @@ fn value(st: &Settings, row: usize, field: Field) -> Vec<Span<'static>> {
     }
 }
 
-/// The section's page, or the graphify page: its title and Apps, its
-/// description, its rows' settings a blank line apart; and the cursor's line.
+/// The section's page, or the graphify or Brainstorm page: its title and
+/// Apps, its description, its rows' settings a blank line apart; and the
+/// cursor's line.
 fn page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
     let (title, about) = match st.section {
         GRAPHIFY_PAGE => GRAPHIFY_SECTION,
+        BRAINSTORM_PAGE => BRAINSTORM_SECTION,
         section => (SECTIONS[section].0, SECTIONS[section].2),
     };
     let items = st.items();
@@ -841,7 +854,10 @@ fn page(st: &Settings, width: usize) -> (Vec<Line<'static>>, usize) {
     let mut lines = head(title, apps.join(", "), about, width);
     let mut at = 0;
     for (i, &(row, field)) in items.iter().enumerate() {
-        if matches!(field, Field::App | Field::Switch(_)) {
+        let after_row = i > 0 && items[i - 1].1 == Field::Effort;
+        if matches!(field, Field::App | Field::Switch(_))
+            || (after_row && matches!(field, Field::Number(_)))
+        {
             lines.push(Line::default());
         }
         if matches!(field, Field::Job(_)) && !matches!(items[i - 1].1, Field::Job(_)) {
