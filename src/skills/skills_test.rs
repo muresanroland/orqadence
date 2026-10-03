@@ -603,3 +603,54 @@ fn the_code_editing_stages_load_manual_work_and_the_review_and_debate_do_not() {
         }
     }
 }
+
+/// The two skills every Brainstorm skill loads ship, ported from
+/// mattpocock/skills: grilling asks one question at a time through the
+/// App's question tool, never in rounds; domain modeling writes CONTEXT.md
+/// and docs/adr/ and commits only its own paths. Each file keeps the
+/// attribution and the licence, and neither takes a Delegate skill.
+#[test]
+fn the_brainstorm_grilling_and_domain_modeling_skills_ship_with_their_rules() {
+    let grilling = skill("orqa-brainstorm-grilling");
+    for text in [
+        "name: orqa-brainstorm-grilling",
+        "one question at a time",
+        "your App's own question tool (AskUserQuestion on claude)",
+        "`(Recommended)`",
+        "Never ask in rounds",
+    ] {
+        assert!(
+            grilling.contains(text),
+            "brainstorm-grilling lacks {text:?}"
+        );
+    }
+    let domain = skill("orqa-brainstorm-domain-modeling");
+    for text in [
+        "name: orqa-brainstorm-domain-modeling",
+        "`CONTEXT.md`",
+        "`docs/adr/`",
+        "git commit -m '<message>' -- <paths>",
+        "never `git add -A`",
+    ] {
+        assert!(
+            domain.contains(text),
+            "brainstorm-domain-modeling lacks {text:?}"
+        );
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
+    for file in [
+        "orqa-brainstorm-grilling/SKILL.md",
+        "orqa-brainstorm-domain-modeling/SKILL.md",
+        "orqa-brainstorm-domain-modeling/ADR-FORMAT.md",
+        "orqa-brainstorm-domain-modeling/CONTEXT-FORMAT.md",
+    ] {
+        let body = fs::read_to_string(root.join(file)).unwrap();
+        for text in [
+            "of [mattpocock/skills](https://github.com/mattpocock/skills) (MIT License",
+            "The above copyright notice and this permission notice shall be included",
+        ] {
+            assert!(body.contains(text), "{file} lacks {text:?}");
+        }
+        assert!(!body.contains("{{"), "{file} carries a job line");
+    }
+}

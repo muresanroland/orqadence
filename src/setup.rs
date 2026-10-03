@@ -285,7 +285,7 @@ pub(crate) fn install_skills(
             if write {
                 fs::create_dir_all(dest.parent().unwrap())?;
                 fs::write(&dest, body)?;
-                if file != "SKILL.md" {
+                if file.ends_with(".sh") {
                     fs::set_permissions(&dest, fs::Permissions::from_mode(0o755))?;
                 }
                 record.insert(rel, body.to_string());

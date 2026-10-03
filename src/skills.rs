@@ -1,6 +1,8 @@
 //! The skills Orqadence ships: one Stage skill per Stage, plus orqa-create-pr,
 //! orqa-infra-review with its fetch.sh, orqa-address-pr-comments with its
-//! scripts/threads.sh and orqa-manual-work with its template.sh. 'orqa init'
+//! scripts/threads.sh, orqa-manual-work with its template.sh, and the two
+//! skills every Brainstorm skill loads, orqa-brainstorm-grilling and
+//! orqa-brainstorm-domain-modeling with its ADR and CONTEXT formats. 'orqa init'
 //! copies them into a Target repo. A new skill is one more line here, and
 //! one more in EXTRA_FILES for each file beside its SKILL.md.
 
@@ -16,6 +18,14 @@ pub(crate) const SKILLS: &[(&str, &str)] = &[
     (
         "orqa-address-pr-comments",
         include_str!("../skills/orqa-address-pr-comments/SKILL.md"),
+    ),
+    (
+        "orqa-brainstorm-domain-modeling",
+        include_str!("../skills/orqa-brainstorm-domain-modeling/SKILL.md"),
+    ),
+    (
+        "orqa-brainstorm-grilling",
+        include_str!("../skills/orqa-brainstorm-grilling/SKILL.md"),
     ),
     (CREATE_PR, include_str!("../skills/orqa-create-pr/SKILL.md")),
     (
@@ -57,12 +67,23 @@ pub(crate) const SKILLS: &[(&str, &str)] = &[
 ];
 
 /// (skill, file, body): the files a Shipped skill carries beside its
-/// SKILL.md, by their path in its folder. init writes them executable.
+/// SKILL.md, by their path in its folder. init writes the scripts among
+/// them executable.
 pub(crate) const EXTRA_FILES: &[(&str, &str, &str)] = &[
     (
         "orqa-address-pr-comments",
         "scripts/threads.sh",
         include_str!("../skills/orqa-address-pr-comments/scripts/threads.sh"),
+    ),
+    (
+        "orqa-brainstorm-domain-modeling",
+        "ADR-FORMAT.md",
+        include_str!("../skills/orqa-brainstorm-domain-modeling/ADR-FORMAT.md"),
+    ),
+    (
+        "orqa-brainstorm-domain-modeling",
+        "CONTEXT-FORMAT.md",
+        include_str!("../skills/orqa-brainstorm-domain-modeling/CONTEXT-FORMAT.md"),
     ),
     (
         "orqa-infra-review",

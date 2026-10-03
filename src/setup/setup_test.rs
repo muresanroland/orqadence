@@ -416,6 +416,21 @@ fn install_skills_writes_a_skills_other_files_beside_it_executable() {
     }
 }
 
+/// brainstorm-domain-modeling's format files go beside its SKILL.md, not
+/// executable: only a script is.
+#[test]
+fn install_skills_writes_brainstorm_domain_modeling_with_its_formats() {
+    let repo = TempDir::new();
+    install(repo.path(), "");
+    let dir = repo
+        .path()
+        .join(".orqadence/skills/orqa-brainstorm-domain-modeling");
+    for file in ["SKILL.md", "ADR-FORMAT.md", "CONTEXT-FORMAT.md"] {
+        let mode = fs::metadata(dir.join(file)).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0, "{file} mode {mode:o}");
+    }
+}
+
 /// A linked folder inside a skill is the repo's own too: --force does not
 /// write through it.
 #[test]
