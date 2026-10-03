@@ -234,6 +234,11 @@ impl Question {
             _ => false,
         }
     }
+
+    /// Whether a run's end keeps it: not a Ticket's, or the Brainstorm's.
+    pub(crate) fn outlives_run(&self) -> bool {
+        self.ticket.is_none() || self.brainstorms()
+    }
 }
 
 /// A Notice modal's kind: red and titled ERROR, or green and titled NOTICE.
@@ -891,15 +896,12 @@ impl Screen {
                 self.ask_docs_pass(tag);
             }
         }
-        self.brainstorm_updates();
         // the live charting's driver gone: its pane closed, its session
         // dead, or never started; a Map's gone holding its session was
         // interrupted, while one with none waits on research or a Question.
-        // Read again once it is gone: what it sent before it ended counts.
+        // Read once it is gone: what it sent before it ended counts.
         let ended = self.live.clone().filter(|idea| !self.driving(idea));
-        if ended.is_some() {
-            self.brainstorm_updates();
-        }
+        self.brainstorm_updates();
         if let (Some(_), Some(b)) = (ended, self.live_brainstorm()) {
             if b.phase == Phase::Charting || b.session.is_some() {
                 self.live = None;
@@ -966,10 +968,9 @@ impl Screen {
         self.running = false;
         self.withdraw(&run);
         // never saved: derived again on resume
-        let kept = |q: &Question| q.ticket.is_none() || q.brainstorms();
         // composing is the front Question's: kept with it
-        self.composing &= self.questions.first().is_some_and(kept);
-        self.questions.retain(kept);
+        self.composing &= self.questions.first().is_some_and(Question::outlives_run);
+        self.questions.retain(Question::outlives_run);
         self.first = None;
         if run.o.stopping() {
             // a long usage limit has said it closed the panes

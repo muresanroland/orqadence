@@ -444,9 +444,7 @@ fn an_interrupted_session_whose_resume_fails_takes_its_claimed_waypoint() {
         sent.into_iter()
             .find(|p| p.contains("# Brainstorm Waypoint"))
     };
-    while fresh().is_none() {
-        s.poll();
-    }
+    await_until(&mut s, "no fresh Waypoint prompt", |_| fresh().is_some());
     let prompt = fresh().unwrap();
     assert!(prompt.contains("- WAYPOINT: hx-m.1\n"), "{prompt}");
     s.close();
@@ -532,9 +530,7 @@ fn parking_manual_work_stops_the_brainstorm_and_continue_asks_it_again() {
     await_line(&mut s, "hx-m Waypoint stopped: its pane is gone");
     assert_eq!(s.live, None);
     assert_eq!(s.suggestion.as_deref(), Some("/continue @hx-m"));
-    while s.driving("hx-7") {
-        s.poll();
-    }
+    await_until(&mut s, "hx-7's driver never ended", |s| !s.driving("hx-7"));
 
     s.command("/continue @hx-m");
     s.key(key(KeyCode::Enter));

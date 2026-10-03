@@ -280,10 +280,10 @@ impl<'a> Driver<'a> {
         }
     }
 
-    /// `text` under `id` with `ask`, unless it is the line said last.
-    fn once(&self, said: &mut String, id: &str, text: &str, ask: Option<Ask>) {
+    /// `text` under `id`, unless it is the line said last.
+    fn once(&self, said: &mut String, id: &str, text: &str) {
         if said != text {
-            self.send(id, text, true, ask);
+            self.send(id, text, true, None);
             *said = text.to_string();
         }
     }
@@ -294,6 +294,49 @@ impl<'a> Driver<'a> {
             self.say(&format!("Brainstorm state not saved: {err}"));
         }
         let _ = self.saved.send(self.b.clone());
+    }
+
+    /// The Brainstorm saved, then `id`, its `what`, closed in bd with
+    /// `reason`: saved first, as load drops a Brainstorm whose Idea or Map
+    /// is closed in a phase it left. Either failing puts `before` back.
+    fn close_saved(
+        &mut self,
+        before: Brainstorm,
+        id: &str,
+        reason: &str,
+        what: &str,
+    ) -> Result<(), String> {
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
+        let closed = self
+            .b
+            .save(repo)
+            .map_err(|err| format!("Brainstorm state not saved: {err}"))
+            .and_then(|_| {
+                tools
+                    .run(repo, &["bd", "close", id, "--reason", reason])
+                    .map_err(|err| format!("{what} not closed: {err}"))
+            });
+        if closed.is_err() {
+            self.b = before;
+            self.save();
+        }
+        closed.map(|_| ())
+    }
+
+    /// The worktree removed, its branch kept; why not said. Whether it was.
+    fn remove_worktree(&mut self) -> bool {
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
+        let remove = ["git", "worktree", "remove", "--force", &self.b.worktree];
+        match tools.run(repo, &remove) {
+            Ok(_) => {
+                self.b.worktree.clear();
+                true
+            }
+            Err(err) => {
+                self.say(&format!("worktree not removed: {err}"));
+                false
+            }
+        }
     }
 
     /// Its pane closed by the user: the Brainstorm stopped, saved.
@@ -519,7 +562,7 @@ impl<'a> Driver<'a> {
                         .map_err(|why| {
                             let idea = self.b.idea.clone();
                             let text = format!("charting result not taken: {why}");
-                            self.once(&mut said, &idea, &text, None);
+                            self.once(&mut said, &idea, &text);
                         })
                         .is_ok(),
                     EPIC_SESSION => self.epics_done(result, &mut said),
@@ -574,30 +617,13 @@ impl<'a> Driver<'a> {
             self.b.phase = Phase::Map;
             self.b.map = r.map;
         }
-        let closed = self
-            .b
-            .save(repo)
-            .map_err(|err| format!("Brainstorm state not saved: {err}"))
-            .and_then(|_| {
-                tools
-                    .run(repo, &["bd", "close", &self.b.idea, "--reason", &reason])
-                    .map_err(|err| format!("Idea not closed: {err}"))
-            });
-        if let Err(why) = closed {
-            self.b = before;
-            self.save();
-            return Err(why);
-        }
+        let idea = self.b.idea.clone();
+        self.close_saved(before, &idea, &reason, "Idea")?;
         if let Err(err) = self.close_pane() {
             self.say(&format!("charting pane not closed: {err}"));
         }
-        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         let line = if tickets {
-            let remove = ["git", "worktree", "remove", "--force", &self.b.worktree];
-            match tools.run(repo, &remove) {
-                Ok(_) => self.b.worktree.clear(),
-                Err(err) => self.say(&format!("worktree not removed: {err}")),
-            }
+            self.remove_worktree();
             let pr = match self.b.docs_pr.as_str() {
                 "" => String::new(),
                 pr => format!("; docs PR {pr}"),
@@ -776,12 +802,7 @@ impl Driver<'_> {
             Ok(found) => found,
             Err(why) if why.is_empty() => return false,
             Err(why) => {
-                self.once(
-                    said,
-                    &map,
-                    &format!("Waypoint result not taken: {why}"),
-                    None,
-                );
+                self.once(said, &map, &format!("Waypoint result not taken: {why}"));
                 return false;
             }
         };
@@ -793,7 +814,7 @@ impl Driver<'_> {
                 "result written, but {} is still open in bd: {at} kept",
                 suffix(&w.id)
             );
-            self.once(said, &w.id, &text, None);
+            self.once(said, &w.id, &text);
             return false;
         }
         if let Err(err) = self.close_pane() {
@@ -839,7 +860,7 @@ impl Driver<'_> {
             Ok(checked) => checked,
             Err(why) if why.is_empty() => return false,
             Err(why) => {
-                self.once(said, &map, &format!("Epics result not taken: {why}"), None);
+                self.once(said, &map, &format!("Epics result not taken: {why}"));
                 return false;
             }
         };
@@ -854,36 +875,16 @@ impl Driver<'_> {
         self.b.epics = r.epics;
         let wrote = self.b.epics.join(", ");
         let reason = format!("Epics {wrote}");
-        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
-        let closed = self
-            .b
-            .save(repo)
-            .map_err(|err| format!("Brainstorm state not saved: {err}"))
-            .and_then(|_| {
-                tools
-                    .run(repo, &["bd", "close", &map, "--reason", &reason])
-                    .map_err(|err| format!("Map not closed: {err}"))
-            });
-        if let Err(why) = closed {
-            self.b = before;
-            self.save();
-            self.once(said, &map, &format!("Epics result not taken: {why}"), None);
+        if let Err(why) = self.close_saved(before, &map, &reason, "Map") {
+            self.once(said, &map, &format!("Epics result not taken: {why}"));
             return false;
         }
         if let Err(err) = self.close_pane() {
             self.say(&format!("Waypoint pane not closed: {err}"));
         }
-        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
-        let remove = ["git", "worktree", "remove", "--force", &self.b.worktree];
-        let removed = match tools.run(repo, &remove) {
-            Ok(_) => {
-                self.b.worktree.clear();
-                ", worktree removed"
-            }
-            Err(err) => {
-                self.say(&format!("worktree not removed: {err}"));
-                ""
-            }
+        let removed = match self.remove_worktree() {
+            true => ", worktree removed",
+            false => "",
         };
         self.save();
         let waypoint = issues.iter().find(|i| i.parent == map && labelled(i, EPIC));
@@ -1013,7 +1014,7 @@ impl Driver<'_> {
             Err(err) => {
                 let text = format!("Waypoint result not taken: its Manual work: {err}");
                 let map = self.b.map.clone();
-                self.once(said, &map, &text, None);
+                self.once(said, &map, &text);
             }
         }
     }
