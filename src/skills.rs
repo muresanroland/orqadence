@@ -1,12 +1,6 @@
-//! The skills Orqadence ships: one Stage skill per Stage, plus orqa-create-pr,
-//! orqa-infra-review with its fetch.sh, orqa-address-pr-comments with its
-//! scripts/threads.sh, orqa-manual-work with its template.sh, the Brainstorm
-//! skills orqa-brainstorm-chart, orqa-brainstorm-epic, orqa-brainstorm-waypoint
-//! (with the prototype's LOGIC.md and UI.md) and orqa-brainstorm-research, and
-//! the two skills every Brainstorm skill loads, orqa-brainstorm-grilling and
-//! orqa-brainstorm-domain-modeling with its ADR and CONTEXT formats. 'orqa init'
-//! copies them into a Target repo. A new skill is one more line here, and
-//! one more in EXTRA_FILES for each file beside its SKILL.md.
+//! The skills Orqadence ships, which 'orqa init' copies into a Target repo.
+//! A new skill is one more line in SKILLS, and one more in EXTRA_FILES for
+//! each file beside its SKILL.md.
 
 use std::fs;
 use std::io;

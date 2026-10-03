@@ -6,15 +6,6 @@ A single, self-contained HTML file (a **shareable demo**) that lets anyone drive
 
 Because it's one file with nothing to install, you can hand it to a non-developer (a designer, a PM, a domain expert) and let them feel the model for themselves. So it speaks their language, not the code's.
 
-## When this is the right shape
-
-- "I'm not sure if this state machine handles the edge case where X then Y."
-- "Does this data model actually let me represent the case where..."
-- "I want to feel out what the API should look like before writing it."
-- Anything where someone wants to **press buttons and watch state change**.
-
-If the question is "what should this look like," this is the wrong branch. Use [UI.md](UI.md).
-
 ## Process
 
 ### 1. State the question
@@ -51,22 +42,9 @@ Choose scenarios that demonstrate the awkward cases, the ones hard to reason abo
 
 Keep it beautiful but restrained: clean typography, generous spacing, one accent colour. No animations, no gimmicks: nothing that competes with the state and the buttons.
 
-### 4. Hand it over
+### 4. Capture it
 
-Send them the file, or open it for them. They'll click through the walkthroughs and free-play whenever they get to it; the interesting moments are when they say "wait, that shouldn't be possible" or "huh, I assumed X would be different"; those are the bugs in the _idea_, which is the whole point. If they want new actions or a new scenario, add them. Prototypes evolve.
-
-### 5. Capture the answer and the prototype
-
-Once the prototype has answered its question, capture it the way the [SKILL](SKILL.md) describes. Nothing lifts into the real module during a Brainstorm: the whole file, pure module and HTML shell, stays on its `prototype/<name>` branch as a primary source, trivially re-runnable there, and the decision goes on the Waypoint. The validated module is lifted into the real code later, when the Epic is built.
-
-## Anti-patterns
-
-- **Don't add tests.** A prototype that needs tests is no longer a prototype.
-- **Don't wire it to the real database.** Use in-memory state unless the question is specifically about persistence.
-- **Don't generalise.** No "what if we wanted to support X later." The prototype answers one question.
-- **Don't blur the logic and the page together.** If the pure module references the DOM, `document`, or button handlers, it's no longer liftable. Keep the page as a thin shell over a pure module.
-- **Don't reach for a framework, bundler, or server.** One file the recipient double-clicks; a React app or a dev server defeats "shareable".
-- **Don't ship the HTML shell into production.** The page is optimised for being clicked through by hand. The logic module behind it is the bit worth keeping, for the Epic that builds it.
+Capture it as [SKILL.md](SKILL.md) step 5.7 says.
 
 <!--
 mattpocock/skills (https://github.com/mattpocock/skills), its licence:

@@ -608,8 +608,7 @@ fn the_code_editing_stages_load_manual_work_and_the_review_and_debate_do_not() {
 /// The two skills every Brainstorm skill loads ship, ported from
 /// mattpocock/skills: grilling asks one question at a time through the
 /// App's question tool, never in rounds; domain modeling writes CONTEXT.md
-/// and docs/adr/ and commits only its own paths. Each file keeps the
-/// attribution and the licence, and neither takes a Delegate skill.
+/// and docs/adr/ and commits only its own paths.
 #[test]
 fn the_brainstorm_grilling_and_domain_modeling_skills_ship_with_their_rules() {
     let grilling = skill("orqa-brainstorm-grilling");
@@ -637,22 +636,6 @@ fn the_brainstorm_grilling_and_domain_modeling_skills_ship_with_their_rules() {
             domain.contains(text),
             "brainstorm-domain-modeling lacks {text:?}"
         );
-    }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
-    for file in [
-        "orqa-brainstorm-grilling/SKILL.md",
-        "orqa-brainstorm-domain-modeling/SKILL.md",
-        "orqa-brainstorm-domain-modeling/ADR-FORMAT.md",
-        "orqa-brainstorm-domain-modeling/CONTEXT-FORMAT.md",
-    ] {
-        let body = fs::read_to_string(root.join(file)).unwrap();
-        for text in [
-            "of [mattpocock/skills](https://github.com/mattpocock/skills) (MIT License",
-            "The above copyright notice and this permission notice shall be included",
-        ] {
-            assert!(body.contains(text), "{file} lacks {text:?}");
-        }
-        assert!(!body.contains("{{"), "{file} carries a job line");
     }
 }
 
@@ -795,8 +778,18 @@ fn the_brainstorm_waypoint_and_research_skills_ship_with_their_rules() {
         }
         assert!(!text.contains("git add -A"), "{name} names git add -A");
     }
+}
+
+/// Every file ported from mattpocock/skills keeps the attribution and the
+/// licence, and only the two Waypoint skills carry job lines.
+#[test]
+fn the_mattpocock_derived_files_keep_their_licence() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
     for file in [
+        "orqa-brainstorm-grilling/SKILL.md",
+        "orqa-brainstorm-domain-modeling/SKILL.md",
+        "orqa-brainstorm-domain-modeling/ADR-FORMAT.md",
+        "orqa-brainstorm-domain-modeling/CONTEXT-FORMAT.md",
         "orqa-brainstorm-waypoint/SKILL.md",
         "orqa-brainstorm-waypoint/LOGIC.md",
         "orqa-brainstorm-waypoint/UI.md",
@@ -809,7 +802,10 @@ fn the_brainstorm_waypoint_and_research_skills_ship_with_their_rules() {
         ] {
             assert!(body.contains(text), "{file} lacks {text:?}");
         }
-        if !file.ends_with("SKILL.md") {
+        if !matches!(
+            file,
+            "orqa-brainstorm-waypoint/SKILL.md" | "orqa-brainstorm-research/SKILL.md"
+        ) {
             assert!(!body.contains("{{"), "{file} carries a job line");
         }
     }

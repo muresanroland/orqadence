@@ -85,7 +85,7 @@ Read the Waypoint: `bd show <id> --json --include-comments`. Its `## Question` i
 
 - **`brainstorm:grilling`**, and whenever in doubt: load the orqa-brainstorm-grilling skill and the orqa-brainstorm-domain-modeling skill by name, and grill the user until the question is decided.
 - **`brainstorm:task`**: nothing to decide; this work unblocks a decision. Do what you can yourself. The checklist the user must do is Manual work: file it, blocking when the Waypoint cannot resolve without it. The answer records what was done and the facts later Waypoints depend on (where a credential lives, a new URL, a row count; never a secret's value).
-- **`brainstorm:research`**, only when BACKGROUND is off: load the orqa-brainstorm-research skill by name and do the research as it says, here in this session. It posts the resolution comment, closes the Waypoint and creates the Waypoints its findings raise; you then do only step 6's points 3 and 8 (its Decisions-so-far line, the Map write and your commit) and write your own result file.
+- **`brainstorm:research`**, only when BACKGROUND is off: load the orqa-brainstorm-research skill by name and do the research as it says, here in this session. It posts the resolution comment, closes the Waypoint and creates the Waypoints its findings raise; you then do only step 6's points 3, 5 and 8 (its Decisions-so-far line, the fog, the Map write and your commit) and write your own result file.
 - **`brainstorm:prototype`**: build a prototype, below.
 
 ### 5. Prototype
