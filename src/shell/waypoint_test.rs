@@ -96,7 +96,7 @@ fn research_alone_on_the_frontier_in_the_background_waits_with_no_session() {
 }
 
 /// The live Map's first session started on hx-m.1, its pane.
-fn working() -> (Arc<World>, Screen, String) {
+pub(super) fn working() -> (Arc<World>, Screen, String) {
     let (w, mut s) = live(map(1));
     await_line(&mut s, "hx-m.1 Waypoint started");
     let pane = saved(&w).pane;
@@ -116,7 +116,7 @@ fn close(w: &World, id: &str) {
 }
 
 /// hx-m.1 closed by its session: the Question waits.
-fn closed() -> (Arc<World>, Screen, String) {
+pub(super) fn closed() -> (Arc<World>, Screen, String) {
     let (w, mut s, pane) = working();
     close(&w, "hx-m.1");
     result(&w, "hx-m.1");

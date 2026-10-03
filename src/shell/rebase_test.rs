@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use super::chart_test::saved;
 use super::shell_test::{await_line, key};
-use super::waypoint_test::stopped;
+use super::waypoint_test::{closed, stopped, working};
 use super::Screen;
 use crate::brainstorm::research::{self, Update};
 use crate::brainstorm::Research;
@@ -286,5 +286,56 @@ fn the_fetch_and_the_rebase_hold_the_research_gate() {
 
     await_line(&mut s, "hx-m.3 Waypoint started");
     assert_eq!(*held.lock().unwrap(), [true, true]);
+    s.close();
+}
+
+#[test]
+fn continue_at_parked_research_while_its_map_session_runs_skips_the_rebase() {
+    let (w, mut s, _) = working();
+    git(&w, "3", Ok(""), "");
+    let mut b = saved(&w);
+    b.research = vec![parked("hx-m.3")];
+    b.save(&w.repo).unwrap();
+    if let Some(saved) = s.brainstorms.iter_mut().find(|s| s.idea == b.idea) {
+        *saved = b;
+    }
+
+    s.command("/continue @hx-m.3");
+
+    await_line(
+        &mut s,
+        "hx-m rebase skipped: a Waypoint session of hx-m is running",
+    );
+    await_line(&mut s, "hx-m.3 research resumes");
+    assert!(w.called("git fetch").is_empty());
+    assert!(w.called("git rebase").is_empty());
+    s.close();
+}
+
+#[test]
+fn resolve_it_yourself_on_the_live_map_stops_it() {
+    let (w, mut s, _) = closed();
+    git(
+        &w,
+        "3",
+        Err("CONFLICT (content): Merge conflict in CONTEXT.md"),
+        "CONTEXT.md\n",
+    );
+    s.command("/continue @hx-m.3");
+    await_line(
+        &mut s,
+        "hx-m rebasing brainstorm/hx-7 on main conflicts in CONTEXT.md: aborted, asking you",
+    );
+    let starts = w.called("herdr agent start").len();
+    // the rebase Question answered ahead of the pending Next Waypoint?
+    let q = s.questions.pop().unwrap();
+    s.questions.insert(0, q);
+
+    s.key(key(KeyCode::Enter));
+    assert_eq!(s.live, None);
+    s.key(key(KeyCode::Enter));
+
+    await_line(&mut s, "hx-m not acted on: the Map is no longer live");
+    assert_eq!(w.called("herdr agent start").len(), starts);
     s.close();
 }

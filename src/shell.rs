@@ -2180,7 +2180,15 @@ impl Screen {
                 let q = self.questions.remove(0);
                 self.tell(q.ticket.as_deref(), &format!("you answered: {word}"));
                 match n {
-                    0 => self.suggestion = Some(line),
+                    0 => {
+                        // its pending Next Waypoint? and research start
+                        // nothing in the worktree you were sent to
+                        let key = q.ticket.as_deref();
+                        if self.live_brainstorm().is_some_and(|b| Some(b.key()) == key) {
+                            self.live = None;
+                        }
+                        self.suggestion = Some(line);
+                    }
                     _ => {
                         self.skip_rebase = true;
                         self.command(&line);
@@ -2829,8 +2837,8 @@ impl Screen {
 
     /// Before a session of `b` starts on /continue `line`: its branch
     /// rebased in its worktree on origin's default branch, after a fetch,
-    /// when it lacks commits of it. Skipped while a research session of its
-    /// Map runs, and on "carry on from the old base"'s run of `line`. A
+    /// when it lacks commits of it. Skipped while a research or Waypoint
+    /// session of its Map runs, and on "carry on from the old base"'s run of `line`. A
     /// conflict is aborted and asked about: None, and no session starts.
     /// Else the Continue form's rebase line, empty when nothing was tried.
     /// `b`'s research is refreshed from the research threads', for the
@@ -2860,6 +2868,12 @@ impl Screen {
                 Some(&key),
                 &format!("{text}, the next /continue tries again"),
             );
+            return Some(text);
+        }
+        // a Waypoint session of its Map works in the worktree
+        if self.driving(&b.idea) {
+            let text = format!("rebase skipped: a Waypoint session of {key} is running");
+            self.tell(Some(&key), &text);
             return Some(text);
         }
         if b.worktree.is_empty() {
@@ -2903,10 +2917,8 @@ impl Screen {
         if files.is_empty() {
             return skipped(self, format!("git rebase failed: {err}"));
         }
-        let what = format!(
-            "rebasing {branch} on {main} conflicts in {}",
-            files.join(", ")
-        );
+        let files = files.join(", ");
+        let what = format!("rebasing {branch} on {main} conflicts in {files}");
         if let Err(abort) = aborted {
             // the worktree is mid-rebase: nothing to carry on from
             self.tell(Some(&key), &format!("{what}: not aborted: {abort}"));
@@ -2920,7 +2932,6 @@ impl Screen {
             format!("resolve it yourself in {}, then {line}", shown.display()),
             "carry on from the old base".to_string(),
         ];
-        let files = files.join(", ");
         self.push(Event {
             time: chrono::Local::now(),
             ticket: Some(key.clone()),
