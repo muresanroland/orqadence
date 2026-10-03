@@ -63,19 +63,34 @@ pub(crate) fn chart(
         b,
         previous: String::new(),
     };
+    let (tools, repo) = (&*cfg.tools, &cfg.repo);
     let session = d.b.session.clone().filter(|s| !s.id.is_empty());
-    let watched = d.watched_again();
-    if matches!(watched, Ok(false)) && !d.b.pane.is_empty() {
+    // off the saved Brainstorm before the lookup, so no switch closes the
+    // pane while herdr is asked whether its agent lives
+    if !d.b.pane.is_empty() {
         d.previous = std::mem::take(&mut d.b.pane);
         d.save();
     }
+    let watched = d.watched_again();
     let started = match (watched, session) {
         (Err(err), _) => {
+            d.b.pane = std::mem::take(&mut d.previous);
+            d.save();
             let text = format!("charting not resumed: herdr did not answer, try again: {err}");
             return d.say(&text);
         }
         (Ok(true), _) => Ok(d.result_file()),
         (Ok(false), Some(session)) => match d.resume(shell, &session) {
+            // its new pane closed meanwhile, by a switch or the user
+            Err(why)
+                if !why.is_empty()
+                    && !d.b.pane.is_empty()
+                    && !pane_alive(tools, repo, &d.b.pane) =>
+            {
+                d.say(&format!("charting not resumed: {why}"));
+                d.gone();
+                Err(String::new())
+            }
             Err(why) if !why.is_empty() => {
                 d.say(&format!("charting not resumed: {why}, starting it fresh"));
                 d.start(shell)
@@ -148,22 +163,23 @@ impl Driver<'_> {
         false
     }
 
-    /// Whether herdr still names its agent in its saved pane: the session
-    /// is watched again, said so. Only agent_not_found says it is gone;
-    /// another failure is herdr's, so a live session is never replaced.
+    /// Whether herdr still names its agent in its saved pane, set aside in
+    /// `previous`: the session is watched again, said so. Only
+    /// agent_not_found says it is gone; another failure is herdr's, so a
+    /// live session is never replaced.
     fn watched_again(&self) -> Result<bool, RunError> {
-        if self.b.pane.is_empty() {
+        if self.previous.is_empty() {
             return Ok(false);
         }
         let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         let name = agent_name(&self.b.idea, "chart");
         let alive = match herdr(tools, repo, &["agent", "get", &name]) {
-            Ok(reply) => reply.result.agent.pane_id == self.b.pane,
+            Ok(reply) => reply.result.agent.pane_id == self.previous,
             Err(err) if herdr::agent_gone(&err) => false,
             Err(err) => return Err(err),
         };
         if alive {
-            let at = locate(tools, repo, &self.cfg.workspace, &self.b.pane);
+            let at = locate(tools, repo, &self.cfg.workspace, &self.previous);
             self.say(&format!("charting watched again {at}"));
         }
         Ok(alive)

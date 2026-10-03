@@ -439,3 +439,98 @@ fn switching_while_a_resume_replaces_the_dead_sessions_pane_is_refused() {
     assert_ne!(saved(&w).pane, pane);
     s.close();
 }
+
+#[test]
+fn switching_while_the_charting_agent_is_looked_up_is_refused() {
+    let w = world(map(1), idle);
+    stopped_shell(&w);
+    let pane = saved(&w).pane;
+    saved_map(&w);
+    // the driver held in its agent lookup: herdr's agent read blocks
+    let (asking, reached) = (
+        Arc::new(AtomicBool::new(true)),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let (held, at) = (asking.clone(), reached.clone());
+    w.hook(move |_, argv| {
+        while argv == ["herdr", "agent", "get", "h-hx-7-chart"] && held.load(Ordering::SeqCst) {
+            at.store(true, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(1));
+        }
+        None
+    });
+    let mut s = reopened(&w);
+    s.command("/continue @hx-7");
+    while !reached.load(Ordering::SeqCst) {
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    s.command("/continue @hx-m");
+    s.command("y");
+
+    assert_eq!(
+        notice(&s),
+        "refused: hx-7's pane is still opening, try again"
+    );
+    assert!(pane_alive(&w, &pane));
+    assert!(s.start_map.is_none());
+    asking.store(false, Ordering::SeqCst);
+    await_line(&mut s, "hx-7 charting watched again (pane");
+    assert_eq!(saved(&w).pane, pane);
+    s.close();
+}
+
+#[test]
+fn switching_while_a_resume_starts_its_session_starts_no_fresh_charting() {
+    let w = world(map(1), idle);
+    stopped_shell(&w);
+    let mut b = saved(&w);
+    w.lock().names.clear(); // its pane open, no agent in it
+    b.session = Some(Session {
+        app: "claude".to_string(),
+        id: "s-old".to_string(),
+        ..Default::default()
+    });
+    b.save(&w.repo).unwrap();
+    saved_map(&w);
+    // the resumed session's start held in its new pane, then refused
+    // there once the switch has closed it
+    let (starting, reached) = (
+        Arc::new(AtomicBool::new(true)),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let (held, at) = (starting.clone(), reached.clone());
+    w.hook(move |_, argv| {
+        if !argv.starts_with(&["herdr", "agent", "start"]) || !argv.contains(&"--resume") {
+            return None;
+        }
+        at.store(true, Ordering::SeqCst);
+        while held.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        Some(Err(r#"{"error":{"code":"pane_not_found"}}"#.to_string()))
+    });
+    let mut s = reopened(&w);
+    s.command("/continue @hx-7");
+    while !reached.load(Ordering::SeqCst) {
+        thread::sleep(Duration::from_millis(1));
+    }
+    let (splits, starts) = (
+        w.called("herdr pane split").len(),
+        w.called("herdr agent start").len(),
+    );
+
+    s.command("/continue @hx-m");
+    s.command("y");
+    assert!(s.start_map.is_some());
+    starting.store(false, Ordering::SeqCst);
+
+    await_line(
+        &mut s,
+        "hx-7 charting stopped: its pane is gone; Brainstorm saved",
+    );
+    assert_eq!(w.called("herdr pane split").len(), splits);
+    assert_eq!(w.called("herdr agent start").len(), starts);
+    assert!(saved(&w).pane.is_empty());
+    s.close();
+}
