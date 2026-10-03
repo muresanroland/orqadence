@@ -2342,6 +2342,13 @@ impl Screen {
             self.live = None;
             return true;
         };
+        // its driver between charting and its pane: that pane would open
+        // after the next Brainstorm starts
+        if b.pane.is_empty() && self.driving(&b.idea) {
+            let text = format!("refused: {}'s pane is still opening, try again", b.key());
+            self.refuse(&text);
+            return false;
+        }
         if b.pane.is_empty() {
             self.tell(Some(b.key()), "stopped; Brainstorm saved");
         } else if let Err(err) = herdr(

@@ -202,6 +202,12 @@ pub(crate) fn pane_gone(err: &RunError) -> bool {
     err.to_string().contains("pane_not_found")
 }
 
+/// Whether herdr's error says no agent is there: agent_not_found, its only
+/// way of saying so.
+pub(crate) fn agent_gone(err: &RunError) -> bool {
+    err.to_string().contains("agent_not_found")
+}
+
 /// Gives a Brainstorm pane in the Shell's own tab. `shell` is the Shell's
 /// pane (HERDR_PANE_ID); its tab is read live, since the pane can have
 /// moved. `previous`, the last Brainstorm pane, is replaced when it is

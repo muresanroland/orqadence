@@ -24,7 +24,7 @@ use crate::orchestrator::trust::await_trust;
 use crate::shell::bd_list;
 use crate::skills::manifest::Manifest;
 use crate::skills::stage_skill;
-use crate::tools::Tools;
+use crate::tools::{RunError, Tools};
 
 /// One Brainstorm's session as the driver runs it.
 struct Driver<'a> {
@@ -59,18 +59,20 @@ pub(crate) fn chart(
         b,
     };
     let session = d.b.session.clone().filter(|s| !s.id.is_empty());
-    let started = if d.watched_again() {
-        Ok(d.result_file())
-    } else if let Some(session) = session {
-        match d.resume(shell, &session) {
+    let started = match (d.watched_again(), session) {
+        (Err(err), _) => {
+            let text = format!("charting not resumed: herdr did not answer, try again: {err}");
+            return d.say(&text);
+        }
+        (Ok(true), _) => Ok(d.result_file()),
+        (Ok(false), Some(session)) => match d.resume(shell, &session) {
             Err(why) if !why.is_empty() => {
                 d.say(&format!("charting not resumed: {why}, starting it fresh"));
                 d.start(shell)
             }
             resumed => resumed,
-        }
-    } else {
-        d.start(shell)
+        },
+        (Ok(false), None) => d.start(shell),
     };
     match started {
         Ok(result) => d.watch(&result),
@@ -110,6 +112,13 @@ impl Driver<'_> {
         self.say("charting stopped: its pane is gone; Brainstorm saved");
     }
 
+    /// Its session dead in a pane still open: the Brainstorm stopped,
+    /// saved, its pane kept so a resume replaces it.
+    fn died(&self) {
+        self.save();
+        self.say("charting stopped: its session is gone; Brainstorm saved");
+    }
+
     /// One tick. False once the Shell is closing, which it checks every
     /// 50ms so close() joins this thread promptly.
     fn sleep(&self) -> bool {
@@ -125,18 +134,24 @@ impl Driver<'_> {
     }
 
     /// Whether herdr still names its agent in its saved pane: the session
-    /// is watched again, said so.
-    fn watched_again(&self) -> bool {
+    /// is watched again, said so. Only agent_not_found says it is gone;
+    /// another failure is herdr's, so a live session is never replaced.
+    fn watched_again(&self) -> Result<bool, RunError> {
+        if self.b.pane.is_empty() {
+            return Ok(false);
+        }
         let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         let name = agent_name(&self.b.idea, "chart");
-        let alive = !self.b.pane.is_empty()
-            && herdr(tools, repo, &["agent", "get", &name])
-                .is_ok_and(|reply| reply.result.agent.pane_id == self.b.pane);
+        let alive = match herdr(tools, repo, &["agent", "get", &name]) {
+            Ok(reply) => reply.result.agent.pane_id == self.b.pane,
+            Err(err) if herdr::agent_gone(&err) => false,
+            Err(err) => return Err(err),
+        };
         if alive {
             let at = locate(tools, repo, &self.cfg.workspace, &self.b.pane);
             self.say(&format!("charting watched again {at}"));
         }
-        alive
+        Ok(alive)
     }
 
     /// Its result file, in the Brainstorm's folder.
@@ -269,7 +284,9 @@ impl Driver<'_> {
     /// Each tick: a result file that checks out ends the session; one that
     /// does not says why, once per reason, the pane and the Idea left for
     /// the session to rewrite it. Its pane gone stops the Brainstorm,
-    /// saved; a herdr read failing otherwise keeps watching. A new session id herdr reports is saved as the session's.
+    /// saved, and so does its agent gone from it; a herdr read failing
+    /// otherwise keeps watching. A new session id herdr reports is saved as
+    /// the session's.
     fn watch(&mut self, result: &Path) {
         let name = agent_name(&self.b.idea, "chart");
         let mut said = String::new();
@@ -295,9 +312,15 @@ impl Driver<'_> {
                     Err(_) => {}
                 }
             }
-            // None is also a failed agent get: only a gone pane stops it
-            if watched.is_none() && !pane_alive(tools, repo, &self.b.pane) {
-                return self.gone();
+            // None is also a failed agent get: only a gone pane, or a pane
+            // herdr says has no agent, stops it
+            if watched.is_none() {
+                if !pane_alive(tools, repo, &self.b.pane) {
+                    return self.gone();
+                }
+                if agent_dead(tools, repo, &self.b.pane) {
+                    return self.died();
+                }
             }
             if !self.sleep() {
                 return;
@@ -391,6 +414,11 @@ fn outcome(issues: &[BdIssue], r: &StageResult) -> Result<String, String> {
 /// Whether herdr still has `pane`: only pane_not_found says it is gone.
 fn pane_alive(tools: &dyn Tools, repo: &Path, pane: &str) -> bool {
     !herdr(tools, repo, &["pane", "get", pane]).is_err_and(|err| herdr::pane_gone(&err))
+}
+
+/// Whether herdr has no agent in `pane`: only agent_not_found says so.
+fn agent_dead(tools: &dyn Tools, repo: &Path, pane: &str) -> bool {
+    herdr(tools, repo, &["agent", "get", pane]).is_err_and(|err| herdr::agent_gone(&err))
 }
 
 /// TICKET LABELS: each label config.json configures, as "orqa:<name>

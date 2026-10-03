@@ -3,6 +3,7 @@
 //! Brainstorm is live at a time.
 
 use crossterm::event::KeyCode;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -303,5 +304,89 @@ fn continue_the_idea_already_charting_is_refused() {
 
     assert_eq!(notice(&s), "refused: hx-7 is already charting");
     assert_eq!(w.called("herdr agent start").len(), starts);
+    s.close();
+}
+
+#[test]
+fn the_charting_session_dying_in_its_open_pane_stops_the_brainstorm_saved() {
+    let w = world(Vec::new(), idle);
+    let mut s = started(&w);
+    let pane = saved(&w).pane;
+
+    w.lock().agents.remove(&pane);
+    await_line(
+        &mut s,
+        "hx-7 charting stopped: its session is gone; Brainstorm saved",
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while s.live.is_some() {
+        assert!(Instant::now() < deadline, "still live");
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    assert!(pane_alive(&w, &pane));
+    assert_eq!(saved(&w).pane, pane, "a resume replaces the pane");
+    s.close();
+}
+
+#[test]
+fn continue_an_idea_when_herdr_does_not_answer_is_refused() {
+    let w = world(Vec::new(), idle);
+    stopped_shell(&w);
+    let pane = saved(&w).pane;
+    let (splits, starts) = (
+        w.called("herdr pane split").len(),
+        w.called("herdr agent start").len(),
+    );
+    let mut s = reopened(&w);
+    w.fail_once("herdr agent get", "herdr: timeout");
+
+    s.command("/continue @hx-7");
+    await_line(
+        &mut s,
+        "hx-7 charting not resumed: herdr did not answer, try again",
+    );
+
+    assert!(pane_alive(&w, &pane));
+    assert_eq!(saved(&w).pane, pane);
+    assert_eq!(w.called("herdr pane split").len(), splits);
+    assert_eq!(w.called("herdr agent start").len(), starts);
+    s.close();
+}
+
+#[test]
+fn switching_while_the_charting_pane_is_still_opening_is_refused() {
+    let w = world(map(1), idle);
+    saved_map(&w);
+    // the driver held before its pane: the Shell's pane read blocks
+    let opening = Arc::new(AtomicBool::new(true));
+    let held = opening.clone();
+    w.hook(move |_, argv| {
+        if argv.starts_with(&["bd", "create"]) {
+            return Some(Ok("hx-7\n".to_string()));
+        }
+        while argv == ["herdr", "pane", "get", "w1:shell"] && held.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        None
+    });
+    let mut s = reopened(&w);
+    type_line(&mut s, "/brainstorm");
+    type_in(&mut s, "Queue bd writes");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(s.live.as_deref(), Some("hx-7"));
+
+    s.command("/continue @hx-m");
+    s.command("y");
+
+    assert_eq!(
+        notice(&s),
+        "refused: hx-7's pane is still opening, try again"
+    );
+    assert!(s.start_map.is_none());
+    assert_eq!(s.live.as_deref(), Some("hx-7"));
+    opening.store(false, Ordering::SeqCst);
+    await_line(&mut s, "hx-7 charting started");
     s.close();
 }
