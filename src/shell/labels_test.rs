@@ -339,3 +339,33 @@ fn the_drivers_save_during_the_answers_is_kept() {
     assert!(b.label_lines.is_empty(), "{:?}", b.label_lines);
     s.close();
 }
+
+#[test]
+fn an_edit_to_config_during_the_clone_is_kept() {
+    let w = labelled();
+    let mut s = asked(&w);
+    let repo = w.repo.clone();
+    w.hook(move |_, argv| {
+        if argv.contains(&"clone") {
+            let mut doc = config_json(&repo);
+            doc["labels"]["ops"] = serde_json::json!({"kind": "area", "guidance": "Ops"});
+            fs::write(repo.join(".orqadence/config.json"), doc.to_string()).unwrap();
+            let skill = Path::new(argv.last().unwrap()).join("docs-writer/SKILL.md");
+            fs::create_dir_all(skill.parent().unwrap()).unwrap();
+            fs::write(skill, "---\nname: docs-writer\n---\n").unwrap();
+            return Some(Ok(String::new()));
+        }
+        argv.contains(&"rev-parse")
+            .then(|| Ok("abc1234\n".to_string()))
+    });
+
+    apply(&mut s);
+
+    let labels = &config_json(&w.repo)["labels"];
+    assert_eq!(labels["ops"]["guidance"], "Ops");
+    assert_eq!(
+        labels["docs"]["skills"],
+        serde_json::json!(["orqa-docs-writer"])
+    );
+    s.close();
+}

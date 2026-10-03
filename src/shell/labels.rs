@@ -215,18 +215,30 @@ impl Screen {
     /// the skills it could have; one there already is kept as it is. What
     /// it did, said.
     fn write_label(&self, r: &Row) -> Result<String, String> {
-        let (path, mut doc) = app::read_object(&self.cfg.repo)?;
-        if doc["labels"].get(&r.name).is_some() {
-            return Ok("config.json has it already".to_string());
+        // checked again on config.json read after the skills install, so
+        // an edit made to it during a clone is kept
+        let read = || -> Result<_, String> {
+            let (path, doc) = app::read_object(&self.cfg.repo)?;
+            if doc["labels"].get(&r.name).is_some() {
+                return Ok(None);
+            }
+            let name = valid_label(&doc, &r.name)?;
+            Ok(Some((path, doc, name)))
+        };
+        let has = || Ok("config.json has it already".to_string());
+        if read()?.is_none() {
+            return has();
         }
-        let name = valid_label(&doc, &r.name)?;
+        let (skills, off) = self.label_skills(&r.skills);
+        let Some((path, mut doc, name)) = read()? else {
+            return has();
+        };
         if doc["labels"].is_null() {
             doc["labels"] = json!({});
         }
         let labels = doc["labels"]
             .as_object_mut()
             .ok_or_else(|| "labels in config.json is not an object".to_string())?;
-        let (skills, off) = self.label_skills(&r.skills);
         let mut said = "an area label in config.json".to_string();
         if !skills.is_empty() {
             said += &format!(", skills {}", skills.join(", "));
