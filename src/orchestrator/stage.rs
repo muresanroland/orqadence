@@ -219,11 +219,7 @@ pub(crate) enum Ask {
     /// Rebasing a Brainstorm's branch on /continue conflicted (shell.rs):
     /// resolve it yourself, the Brainstorm stopped, or carry on from the
     /// old base, `line` run again without the rebase; the Shell answers it.
-    BrainstormRebase {
-        options: Vec<String>,
-        idea: String,
-        line: String,
-    },
+    BrainstormRebase { options: Vec<String>, line: String },
 }
 
 /// The user's answer to a Question, for the session (pane) it was about.

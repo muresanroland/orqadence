@@ -327,9 +327,9 @@ pub(crate) struct Screen {
     /// A research close of the live Map's, and its Waypoint: Next Waypoint?
     /// once no session with you runs.
     research_closed: Option<(String, String)>,
-    /// The Brainstorm whose /continue runs without the rebase: set while
-    /// "carry on from the old base" runs its line again.
-    skip_rebase: Option<String>,
+    /// Set while "carry on from the old base" runs its /continue again:
+    /// no rebase.
+    skip_rebase: bool,
     /// The suggested command, ghost text in the empty input: Tab fills it
     /// in, running any command clears it.
     pub(crate) suggestion: Option<String>,
@@ -512,7 +512,7 @@ impl Screen {
             research_sender,
             research_receiver,
             research_closed: None,
-            skip_rebase: None,
+            skip_rebase: false,
             suggestion: None,
             state,
             events: Vec::new(),
@@ -2175,23 +2175,16 @@ impl Screen {
             (About::Asked(Ask::NextWaypoint { .. }), _) => self.composing = true,
             // resolve it yourself, the Brainstorm stopped; or carry on,
             // the same /continue again without the rebase
-            (
-                About::Asked(Ask::BrainstormRebase {
-                    options,
-                    idea,
-                    line,
-                }),
-                n,
-            ) => {
-                let (word, idea, line) = (options[n].clone(), idea.clone(), line.clone());
+            (About::Asked(Ask::BrainstormRebase { options, line }), n) => {
+                let (word, line) = (options[n].clone(), line.clone());
                 let q = self.questions.remove(0);
                 self.tell(q.ticket.as_deref(), &format!("you answered: {word}"));
                 match n {
                     0 => self.suggestion = Some(line),
                     _ => {
-                        self.skip_rebase = Some(idea);
+                        self.skip_rebase = true;
                         self.command(&line);
-                        self.skip_rebase = None;
+                        self.skip_rebase = false;
                     }
                 }
             }
@@ -2803,7 +2796,7 @@ impl Screen {
     /// /continue @<idea> or @<map>: another Brainstorm live asks first; a
     /// Map opens its Continue form at the saved answer, an Idea resumes its
     /// charting.
-    fn continue_brainstorm(&mut self, b: Brainstorm) {
+    fn continue_brainstorm(&mut self, mut b: Brainstorm) {
         let key = b.key().to_string();
         let line = format!("/continue @{key}");
         if self.switch_asked(&key, &line) {
@@ -2815,7 +2808,7 @@ impl Screen {
                 self.refuse(&format!("refused: a Waypoint session of {key} is running"))
             }
             Phase::Map => {
-                let Some(rebase) = self.rebase(&b, &line) else {
+                let Some(rebase) = self.rebase(&mut b, &line) else {
                     return;
                 };
                 self.open_start_map(&b, true);
@@ -2827,7 +2820,7 @@ impl Screen {
                 self.refuse(&format!("refused: {key} is already charting"))
             }
             _ => {
-                if self.rebase(&b, &line).is_some() {
+                if self.rebase(&mut b, &line).is_some() {
                     self.chart(b);
                 }
             }
@@ -2840,16 +2833,25 @@ impl Screen {
     /// Map runs, and on "carry on from the old base"'s run of `line`. A
     /// conflict is aborted and asked about: None, and no session starts.
     /// Else the Continue form's rebase line, empty when nothing was tried.
-    fn rebase(&mut self, b: &Brainstorm, line: &str) -> Option<String> {
+    /// `b`'s research is refreshed from the research threads', for the
+    /// caller to save.
+    fn rebase(&mut self, b: &mut Brainstorm, line: &str) -> Option<String> {
         let key = b.key().to_string();
-        if self.skip_rebase.as_deref() == Some(b.idea.as_str()) {
+        if self.skip_rebase {
             return Some(format!("{} stays on its old base", b.branch));
         }
-        // the research threads' last changes, so a session just started counts
+        // its research thread starts nothing while the gate is held, and
+        // sent what it started before letting go of it: a session just
+        // started counts, and none starts under the fetch or the rebase
+        let gate = (self.research.iter())
+            .find(|r| r.idea == b.idea)
+            .map(|r| r.gate.clone());
+        let _held = gate.as_ref().map(|g| g.lock().unwrap());
         self.research_updates();
-        let saved = self.brainstorms.iter().find(|s| s.idea == b.idea);
-        let research = saved.map_or(&b.research, |s| &s.research);
-        if let Some(r) = research.iter().find(|r| !r.parked) {
+        if let Some(saved) = self.brainstorms.iter().find(|s| s.idea == b.idea) {
+            (b.research_tab, b.research) = (saved.research_tab.clone(), saved.research.clone());
+        }
+        if let Some(r) = b.research.iter().find(|r| !r.parked) {
             let text = format!(
                 "rebase skipped: research {} still running",
                 suffix(&r.waypoint)
@@ -2896,16 +2898,15 @@ impl Screen {
         let files: Vec<&str> = files.lines().filter(|f| !f.is_empty()).collect();
         // whatever stopped it: no session starts mid-rebase
         let aborted = tools.run(&dir, &["git", "rebase", "--abort"]);
-        if files.is_empty() && aborted.is_ok() {
+        // nothing conflicted: git refused before starting (a dirty
+        // worktree), its abort failing with no rebase in progress
+        if files.is_empty() {
             return skipped(self, format!("git rebase failed: {err}"));
         }
-        let what = match files.is_empty() {
-            true => format!("rebasing {branch} on {main} failed"),
-            false => format!(
-                "rebasing {branch} on {main} conflicts in {}",
-                files.join(", ")
-            ),
-        };
+        let what = format!(
+            "rebasing {branch} on {main} conflicts in {}",
+            files.join(", ")
+        );
         if let Err(abort) = aborted {
             // the worktree is mid-rebase: nothing to carry on from
             self.tell(Some(&key), &format!("{what}: not aborted: {abort}"));
@@ -2927,7 +2928,6 @@ impl Screen {
             panel: false,
             ask: Some(Ask::BrainstormRebase {
                 options,
-                idea: b.idea.clone(),
                 line: line.to_string(),
             }),
             offer: Vec::new(),
@@ -2958,7 +2958,7 @@ impl Screen {
         if let Some(text) = brainstorm::waypoint_refusal(&issues, &b, id) {
             return self.refuse(&text);
         }
-        if self.rebase(&b, &format!("/continue @{id}")).is_none() {
+        if self.rebase(&mut b, &format!("/continue @{id}")).is_none() {
             return;
         }
         b.started = true;
@@ -2971,11 +2971,14 @@ impl Screen {
         self.work_map(b, None, Some(id.to_string()));
     }
 
-    /// /continue @<waypoint> of Parked Research Waypoint `id` of `b`: its
-    /// research thread resumes its session by id in the research tab, the
-    /// Map live or not, and its Question goes first; Away goes off, the
-    /// user being back.
+    /// /continue @<waypoint> of Parked Research Waypoint `id` of `b`: after
+    /// the rebase, its research thread resumes its session by id in the
+    /// research tab, the Map live or not, and its Question goes first; Away
+    /// goes off, the user being back.
     fn continue_research(&mut self, mut b: Brainstorm, id: &str) {
+        if self.rebase(&mut b, &format!("/continue @{id}")).is_none() {
+            return;
+        }
         let queued = (self.research.iter())
             .find(|r| r.idea == b.idea)
             .is_some_and(|r| r.resume(id));
