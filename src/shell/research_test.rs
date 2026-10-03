@@ -12,7 +12,8 @@ use super::chart_test::{map_issue, mapped, pane_alive, saved, wait_a_while, wayp
 use super::continue_test::reopened;
 use super::shell_test::{await_line, key};
 use super::{About, Screen};
-use crate::brainstorm::{EPIC, GRILLING, RESEARCH};
+use crate::brainstorm::research::Update;
+use crate::brainstorm::{Brainstorm, EPIC, GRILLING, RESEARCH};
 use crate::orchestrator::stage::Ask;
 use crate::orchestrator::state::LOCAL;
 use crate::orchestrator::world::{working, BdTicket, Prompt, World};
@@ -168,6 +169,14 @@ fn idles(p: &Prompt) -> (String, String) {
     }
 }
 
+/// hx-m.1 idles with no result; every other session works on.
+fn first_idles(p: &Prompt) -> (String, String) {
+    match p.ticket.as_str() {
+        "hx-m.1" => idles(p),
+        _ => session(p),
+    }
+}
+
 /// Polls the Shell until a Question about `id` waits.
 fn await_question(s: &mut Screen, id: &str) {
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -196,12 +205,8 @@ fn an_idle_research_pane_with_no_result_wakes() {
     s.close();
 }
 
-/// Research hx-m.1 parked under Away, its slot of one taken by hx-m.2.
-fn parked() -> (Arc<World>, Screen, String) {
-    parked_with(idles)
-}
-
-/// As parked, every session but charting's `session`.
+/// Research hx-m.1 parked under Away, its slot of one taken by hx-m.2,
+/// every session but charting's `session`.
 fn parked_with(
     session: impl Fn(&Prompt) -> (String, String) + Send + Sync + 'static,
 ) -> (Arc<World>, Screen, String) {
@@ -222,7 +227,7 @@ fn parked_with(
 
 #[test]
 fn under_away_the_wake_parks_it_closes_its_pane_and_starts_the_next() {
-    let (w, mut s, first) = parked();
+    let (w, mut s, first) = parked_with(idles);
 
     await_line(&mut s, "hx-m.2 research started");
     assert!(!pane_alive(&w, &first));
@@ -246,7 +251,7 @@ fn under_away_the_wake_parks_it_closes_its_pane_and_starts_the_next() {
 
 #[test]
 fn continue_at_a_parked_research_waypoint_resumes_it_by_id_and_puts_its_question() {
-    let (w, mut s, _) = parked();
+    let (w, mut s, _) = parked_with(idles);
     // the one slot free again: hx-m.2 parked as well
     await_line(&mut s, "hx-m.2 parked");
     let id = saved(&w).research[0].session.id.clone();
@@ -347,11 +352,7 @@ fn a_research_close_that_frees_a_waypoint_for_you_asks_next_waypoint() {
 
 #[test]
 fn a_resumed_research_waypoint_waits_for_a_slot() {
-    // hx-m.1 idles with no result, hx-m.2 works on
-    let (w, mut s, _) = parked_with(|p: &Prompt| match p.ticket.as_str() {
-        "hx-m.1" => idles(p),
-        _ => session(p),
-    });
+    let (w, mut s, _) = parked_with(first_idles);
     await_line(&mut s, "hx-m.2 research started");
 
     s.command("/continue @hx-m.1");
@@ -404,10 +405,7 @@ fn away_turned_on_while_its_wake_waits_parks_it() {
 
 #[test]
 fn a_repeated_continue_resumes_it_once() {
-    let (w, mut s, _) = parked_with(|p: &Prompt| match p.ticket.as_str() {
-        "hx-m.1" => idles(p),
-        _ => session(p),
-    });
+    let (w, mut s, _) = parked_with(first_idles);
     await_line(&mut s, "hx-m.2 research started");
 
     s.command("/continue @hx-m.1");
@@ -435,10 +433,7 @@ fn close_saves_what_research_sent_after_the_last_poll() {
 
 #[test]
 fn a_resume_waiting_for_a_slot_still_waits_in_a_reopened_shell() {
-    let (w, mut s, _) = parked_with(|p: &Prompt| match p.ticket.as_str() {
-        "hx-m.1" => idles(p),
-        _ => session(p),
-    });
+    let (w, mut s, _) = parked_with(first_idles);
     await_line(&mut s, "hx-m.2 research started");
     s.command("/continue @hx-m.1");
     await_line(&mut s, "hx-m.1 waits for a research slot");
@@ -451,4 +446,75 @@ fn a_resume_waiting_for_a_slot_still_waits_in_a_reopened_shell() {
     let starts = w.called("herdr agent start h-hx-m-1-research");
     assert_eq!(starts.len(), 1, "{starts:?}");
     s.close();
+}
+
+#[test]
+fn close_saves_research_over_a_drivers_last_stale_save() {
+    let (w, mut s) = live(research(1), session);
+    await_line(&mut s, "hx-m.1 research started");
+    await_saved(&mut s, &w, |b| {
+        b.research.first().is_some_and(|r| !r.pane.is_empty())
+    });
+    // the driver's last save, its research list stale, not yet read
+    let mut b = saved(&w);
+    b.research.clear();
+    b.result = "waypoint.md".to_string();
+    b.save(&w.repo).unwrap();
+    s.brainstorm_sender.send(b).unwrap();
+
+    s.close();
+
+    let b = saved(&w);
+    assert_eq!(b.result, "waypoint.md");
+    assert_eq!(b.research[0].pane, pane(&w, "hx-m.1"));
+}
+
+#[test]
+fn a_stopped_maps_research_close_keeps_the_live_maps() {
+    let (_w, mut s) = live(research(1), session);
+    await_line(&mut s, "hx-m.1 research started");
+    let live = s.live.clone().unwrap();
+    s.research_closed = Some((live.clone(), "hx-m.1".to_string()));
+
+    let stopped = Update {
+        idea: "hx-9".to_string(),
+        tab: String::new(),
+        research: Vec::new(),
+        closed: Some("hx-n.1".to_string()),
+    };
+    s.research_sender.send(stopped).unwrap();
+    s.research_updates();
+
+    assert_eq!(s.research_closed, Some((live, "hx-m.1".to_string())));
+    s.close();
+}
+
+#[test]
+fn a_spent_nudge_stays_spent_in_a_reopened_shell() {
+    let (w, mut s) = live(research(1), idles);
+    await_question(&mut s, "hx-m.1");
+    assert!(s.options()[0].starts_with("nudge"), "{:?}", s.options());
+
+    s.key(key(KeyCode::Enter));
+    await_saved(&mut s, &w, |b| b.research.first().is_some_and(|r| r.nudged));
+    s.close();
+
+    let mut s = reopened(&w);
+    await_question(&mut s, "hx-m.1");
+    let options = s.options();
+    assert!(
+        !options.iter().any(|o| o.starts_with("nudge")),
+        "{options:?}"
+    );
+    s.close();
+}
+
+/// Polls the Shell until hx-7's saved state satisfies `ok`.
+fn await_saved(s: &mut Screen, w: &World, ok: impl Fn(&Brainstorm) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !ok(&saved(w)) {
+        assert!(Instant::now() < deadline, "saved state never matched");
+        s.poll();
+        thread::sleep(Duration::from_millis(10));
+    }
 }

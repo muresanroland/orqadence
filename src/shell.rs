@@ -843,7 +843,9 @@ impl Screen {
         for r in self.research.drain(..) {
             let _ = r.thread.join();
         }
-        // each thread's last sync, after the last poll
+        // each thread's last sync, after the last poll: the drivers' first,
+        // so their stale research is saved over
+        self.brainstorm_updates();
         self.research_updates();
         // cancelled under the lock the pass records under: it records nothing
         // after, and closes a tab it makes after

@@ -966,9 +966,6 @@ impl Orchestrator {
                         self.report(ticket, &format!("judged: {}", judged.said()));
                         Some(Answer::Act(judged.choice))
                     }
-                    _ if st.name == RESEARCH.name && self.cfg.away.load(Ordering::SeqCst) => {
-                        return park_away();
-                    }
                     judged => {
                         // of the nudges, the one the Judgment scored higher
                         let picked = judged

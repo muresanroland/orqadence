@@ -4,7 +4,7 @@
 
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::plural;
-use crate::orchestrator::state::{local_dir, Session, LOCAL};
+use crate::orchestrator::state::{is_zero, local_dir, Session, LOCAL};
 use crate::shell::suffix;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -48,6 +48,13 @@ pub(crate) struct Research {
     pub(crate) parked: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) limited: bool,
+    /// Its Stage's spent retry, nudge and waits, as a Ticket's are saved.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) retried: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) nudged: bool,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub(crate) waits: usize,
 }
 
 /// What Orqadence knows about one Brainstorm.

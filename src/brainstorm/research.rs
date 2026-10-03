@@ -141,14 +141,13 @@ impl Runner {
     fn run(&mut self, live: &AtomicBool, stop: &AtomicBool, resume: &Mutex<Option<Vec<String>>>) {
         // the ones in a pane watched again; the rest, a resume that waited
         // for a slot or one never placed, wait for one again
-        let (panes, waiting): (Vec<_>, Vec<_>) = (self.research.iter())
-            .filter(|r| !r.parked)
-            .map(|r| (r.waypoint.clone(), !r.pane.is_empty()))
-            .partition(|(_, pane)| *pane);
-        for (id, _) in panes {
-            self.take(&id);
+        for r in self.research.clone().into_iter().filter(|r| !r.parked) {
+            if r.pane.is_empty() {
+                self.resuming.push(r.waypoint);
+            } else {
+                self.take(&r.waypoint);
+            }
         }
-        self.resuming = waiting.into_iter().map(|(id, _)| id).collect();
         loop {
             if stop.load(Ordering::SeqCst) {
                 self.o.stop();
@@ -272,6 +271,7 @@ impl Runner {
             self.o.update(id, |ts| {
                 ts.stage = RESEARCH.name.to_string();
                 ts.round = 0;
+                (ts.retried, ts.nudged, ts.waits) = (r.retried, r.nudged, r.waits);
                 if !r.pane.is_empty() {
                     ts.panes.insert(RESEARCH.name.to_string(), r.pane.clone());
                 }
@@ -279,21 +279,24 @@ impl Runner {
                     .insert(RESEARCH.name.to_string(), r.session.clone());
             });
         }
-        let (o, map, id) = (self.o.clone(), self.map.clone(), id.to_string());
-        let thread = {
-            let id = id.clone();
-            thread::spawn(move || {
-                let file = o.run_dir(&id).join(result_name(&RESEARCH, 0));
-                let file = file.display().to_string();
-                let inputs = [
-                    ("MAP", map.as_str()),
-                    ("WAYPOINT", id.as_str()),
-                    ("RESULT FILE", file.as_str()),
-                ];
-                o.run_stage(&id, &RESEARCH, 0, &inputs, ResultRequirements::default())
-            })
-        };
-        self.running.push((id, thread));
+        let (o, map, waypoint) = (self.o.clone(), self.map.clone(), id.to_string());
+        let thread = thread::spawn(move || {
+            let file = o.run_dir(&waypoint).join(result_name(&RESEARCH, 0));
+            let file = file.display().to_string();
+            let inputs = [
+                ("MAP", map.as_str()),
+                ("WAYPOINT", waypoint.as_str()),
+                ("RESULT FILE", file.as_str()),
+            ];
+            o.run_stage(
+                &waypoint,
+                &RESEARCH,
+                0,
+                &inputs,
+                ResultRequirements::default(),
+            )
+        });
+        self.running.push((id.to_string(), thread));
     }
 
     /// Each session that ended: its Waypoint closed in bd closes its pane
@@ -397,6 +400,7 @@ impl Runner {
             if let Some(session) = ts.sessions.get(RESEARCH.name) {
                 r.session = session.clone();
             }
+            (r.retried, r.nudged, r.waits) = (ts.retried, ts.nudged, ts.waits);
         }
         let tab = self.o.place.as_ref().unwrap().tab.lock().unwrap().clone();
         if closed.is_none() && self.sent == (tab.clone(), self.research.clone()) {

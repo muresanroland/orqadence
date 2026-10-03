@@ -186,7 +186,8 @@ impl Screen {
                     self.tell(Some(&key), &text);
                 }
             }
-            if let Some(id) = u.closed {
+            // only the live Map's close is asked about
+            if let Some(id) = u.closed.filter(|_| self.live.as_ref() == Some(&u.idea)) {
                 self.research_closed = Some((u.idea, id));
             }
         }
