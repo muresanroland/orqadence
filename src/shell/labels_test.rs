@@ -67,7 +67,12 @@ fn a_label_line_opens_the_modal_before_the_tickets_modal_and_esc_keeps_it() {
 /// The world where charting writes LABELLED, orqa:fe and orqa:be
 /// configured, and git clone finds one skill, docs-writer.
 fn labelled() -> Arc<World> {
-    let w = world(tickets(), writes(LABELLED));
+    labelled_by(LABELLED)
+}
+
+/// labelled, with charting writing `result`.
+fn labelled_by(result: &'static str) -> Arc<World> {
+    let w = world(tickets(), writes(result));
     let config = w.repo.join(".orqadence/config.json");
     let mut doc = config_json(&w);
     doc["labels"]["be"] = serde_json::json!({"kind": "area", "guidance": "Servers"});
@@ -294,17 +299,20 @@ fn a_line_missing_its_guidance_reads_its_fields_by_their_keys() {
 }
 
 #[test]
-fn a_source_already_installed_goes_on_the_label_without_a_clone() {
-    let w = labelled();
-    w.installed("orqa-docs-pack");
+fn two_rows_sharing_a_single_skill_source_both_get_its_skill() {
+    let w = labelled_by(
+        "STATUS: done\nTICKETS: hx-1 hx-2\n\
+         LABEL: docs | Docs only | skills: o/docs-pack | tickets: hx-2\n\
+         LABEL: guides | Guides | skills: o/docs-pack | tickets: hx-1\n",
+    );
     let mut s = asked(&w);
-    s.labels.as_mut().unwrap().rows[0].skills = vec!["o/orqa-docs-pack".to_string()];
 
     apply(&mut s);
 
-    assert!(w.called("env GIT_TERMINAL_PROMPT=0 git clone").is_empty());
-    let docs = &config_json(&w)["labels"]["docs"];
-    assert_eq!(docs["skills"], serde_json::json!(["orqa-docs-pack"]));
+    let labels = &config_json(&w)["labels"];
+    let skills = serde_json::json!(["orqa-docs-writer"]);
+    assert_eq!(labels["docs"]["skills"], skills);
+    assert_eq!(labels["guides"]["skills"], skills);
     s.close();
 }
 

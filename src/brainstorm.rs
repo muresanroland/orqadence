@@ -103,6 +103,12 @@ pub(crate) struct Brainstorm {
     pub(crate) docs_merged: bool,
 }
 
+/// Held across a state.json read, its write and the Shell's copy sent, by
+/// the docs merge on a driver's thread and the label modal's Apply on the
+/// Shell's, so neither saves over the other.
+// ponytail: one lock for every Brainstorm; one each if they ever contend
+pub(crate) static STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn brainstorms(repo: &Path) -> PathBuf {
     repo.join(LOCAL).join("brainstorms")
 }

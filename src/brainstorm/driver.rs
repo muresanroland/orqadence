@@ -12,7 +12,7 @@ use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{brainstorms, is_map, labelled, Brainstorm, Phase, EPIC, MAP, RESEARCH};
+use super::{brainstorms, is_map, labelled, Brainstorm, Phase, EPIC, MAP, RESEARCH, STATE};
 use crate::orchestrator::app::{self, BRAINSTORM, RELEASE_ON};
 use crate::orchestrator::herdr::{self, agent_name, herdr, locate, place_beside_shell};
 use crate::orchestrator::manual;
@@ -958,8 +958,7 @@ impl Driver<'_> {
                 Some("MERGED") => {
                     // the label modal answers on the Shell's thread: its
                     // lines as saved, never this copy's from the result
-                    // ponytail: an answer saved between this read and the
-                    // save below is lost; a lock per Brainstorm if seen
+                    let held = STATE.lock().unwrap_or_else(|e| e.into_inner());
                     let file = brainstorms(repo).join(&self.b.idea).join("state.json");
                     let on_disk = fs::read(file)
                         .ok()
@@ -969,6 +968,7 @@ impl Driver<'_> {
                     }
                     self.b.docs_merged = true;
                     self.save();
+                    drop(held);
                     return self.say(&format!("docs {number} merged{next}"));
                 }
                 Some("CLOSED") if !closed => {

@@ -372,6 +372,22 @@ pub(crate) fn add(
     source: &str,
     name: Option<&str>,
 ) -> Result<Added, String> {
+    add_from(repo, tools, source, name, false)
+}
+
+/// add, but the skill the source resolves to, installed already from the
+/// same repo, ref and folder, is Installed under the name it has.
+pub(crate) fn add_or_reuse(repo: &Path, tools: &dyn Tools, source: &str) -> Result<Added, String> {
+    add_from(repo, tools, source, None, true)
+}
+
+fn add_from(
+    repo: &Path,
+    tools: &dyn Tools,
+    source: &str,
+    name: Option<&str>,
+    reuse: bool,
+) -> Result<Added, String> {
     let name = name.map(|name| name.strip_prefix(PREFIX).unwrap_or(name));
     let source = parse_source(source)?;
     let mut manifest = Manifest::load(repo)?;
@@ -404,11 +420,14 @@ pub(crate) fn add(
         }
     };
     let name = format!("{PREFIX}{name}");
-    if let Some((other, _)) = manifest
+    if let Some((other, skill)) = manifest
         .skills
         .iter()
         .find(|(_, skill)| skill.repo == source.repo && skill.path == path)
     {
+        if reuse && skill.git_ref == source.git_ref {
+            return Ok(Added::Installed(other.clone()));
+        }
         return Err(format!(
             "{}/{path} is already installed, as {other}: update it instead",
             source.repo

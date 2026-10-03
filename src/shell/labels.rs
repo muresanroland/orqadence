@@ -9,9 +9,9 @@ use serde_json::json;
 
 use super::config::valid_label;
 use super::Screen;
-use crate::brainstorm::Brainstorm;
+use crate::brainstorm::{Brainstorm, STATE};
 use crate::orchestrator::app;
-use crate::skills::manifest::{self, parse_source, Added, Installed, Manifest, PREFIX};
+use crate::skills::manifest::{self, parse_source, Added, Manifest, PREFIX};
 
 /// A row's answer.
 #[derive(Clone, Debug, PartialEq)]
@@ -139,17 +139,21 @@ impl Screen {
             KeyCode::BackTab if f == n => l.focus = 0,
             KeyCode::BackTab => l.focus = n + 1,
             KeyCode::Enter if f == n => self.apply_labels(),
-            KeyCode::Enter if f == n + 1 => self.close_labels(),
-            KeyCode::Esc => self.close_labels(),
+            KeyCode::Enter if f == n + 1 => self.cancel_labels(),
+            KeyCode::Esc => self.cancel_labels(),
             _ => {}
         }
     }
 
+    /// Cancel: the lines kept for /continue @<id>.
+    fn cancel_labels(&mut self) {
+        if let Some(l) = self.labels.take() {
+            self.close_labels(l);
+        }
+    }
+
     /// Closed: the outcome it stood before, as the Brainstorm is now.
-    fn close_labels(&mut self) {
-        let Some(l) = self.labels.take() else {
-            return;
-        };
+    fn close_labels(&mut self, l: Labels) {
         let b = self.brainstorms.iter().find(|b| b.idea == l.idea).cloned();
         if let (true, Some(b)) = (l.outcome, b) {
             self.open_outcome(&b);
@@ -160,34 +164,29 @@ impl Screen {
     /// that failed keeps its line in the Brainstorm's state; the rest are
     /// gone from it.
     fn apply_labels(&mut self) {
-        let Some(l) = &self.labels else {
+        let Some(l) = self.labels.take() else {
             return;
         };
-        let (idea, key) = (l.idea.clone(), l.key.clone());
-        let rows: Vec<(String, Result<String, String>)> = l
-            .rows
-            .iter()
-            .map(|r| (r.line.clone(), self.answer_label(r)))
-            .collect();
         let mut left = Vec::new();
-        for (line, said) in rows {
-            let text = said.unwrap_or_else(|err| {
-                left.push(line);
+        for r in &l.rows {
+            let text = self.answer_label(r).unwrap_or_else(|err| {
+                left.push(r.line.clone());
                 err
             });
-            self.tell(Some(&key), &text);
+            self.tell(Some(&l.key), &text);
         }
-        // the drivers' saves taken after the answers, which can take a
-        // clone and bd's calls: the save below is then of the Brainstorm
-        // as it is now
+        // a driver's save, file and Shell copy, lands wholly before the
+        // drain or wholly after this save, which it then reads
+        let held = STATE.lock().unwrap_or_else(|e| e.into_inner());
         self.brainstorm_updates();
-        if let Some(b) = self.brainstorms.iter_mut().find(|b| b.idea == idea) {
+        if let Some(b) = self.brainstorms.iter_mut().find(|b| b.idea == l.idea) {
             b.label_lines = left;
             if let Err(err) = b.save(&self.cfg.repo) {
-                self.tell(Some(&key), &format!("Brainstorm state not saved: {err}"));
+                self.tell(Some(&l.key), &format!("Brainstorm state not saved: {err}"));
             }
         }
-        self.close_labels();
+        drop(held);
+        self.close_labels(l);
     }
 
     /// What `r`'s answer does, said; Err says why it did not.
@@ -250,23 +249,11 @@ impl Screen {
         let mut off = Vec::new();
         for skill in skills {
             let names = [skill.clone(), format!("{PREFIX}{skill}")];
-            let mut had = names.into_iter().find(|n| have.skills.contains_key(n));
-            // a source installed already: add would refuse it
-            let source = parse_source(skill);
-            if let (None, Ok(source)) = (&had, &source) {
-                let from = |i: &Installed| {
-                    (&i.repo, &i.git_ref, &i.path) == (&source.repo, &source.git_ref, &source.path)
-                };
-                had = have
-                    .skills
-                    .iter()
-                    .find(|(_, i)| from(i))
-                    .map(|(n, _)| n.clone());
-            }
-            let got = match had {
+            let got = match names.into_iter().find(|n| have.skills.contains_key(n)) {
                 Some(name) => Ok(name),
-                None if source.is_err() => Err("not installed".to_string()),
-                None => match manifest::add(repo, tools, skill, None) {
+                None if parse_source(skill).is_err() => Err("not installed".to_string()),
+                // resolved first: one installed from that source is reused
+                None => match manifest::add_or_reuse(repo, tools, skill) {
                     Ok(Added::Installed(name)) => Ok(name),
                     Ok(Added::Choose(names)) => Err(format!("it holds {}", names.join(", "))),
                     Err(err) => Err(err),
