@@ -112,6 +112,11 @@ impl Brainstorm {
         fs::rename(tmp, dir.join("state.json"))
     }
 
+    /// Done with a docs PR not yet merged.
+    pub(crate) fn docs_waiting(&self) -> bool {
+        self.phase == Phase::Done && !self.docs_pr.is_empty() && !self.docs_merged
+    }
+
     /// What /continue @ takes: the Map once there is one, else the Idea.
     pub(crate) fn key(&self) -> &str {
         if self.map.is_empty() {

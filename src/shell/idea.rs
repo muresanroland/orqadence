@@ -213,4 +213,20 @@ impl Screen {
         self.brainstorm_threads.push((idea.clone(), driver));
         self.live = Some(idea);
     }
+
+    /// Each done Brainstorm's docs PR not yet merged polled on a thread of
+    /// its own until it merges, with or without a run.
+    pub(super) fn track_docs(&mut self) {
+        let waiting = self.brainstorms.iter().filter(|b| b.docs_waiting());
+        for b in waiting.cloned().collect::<Vec<_>>() {
+            let cfg = Config {
+                events: self.sender.clone(),
+                ..self.cfg.clone()
+            };
+            let (saved, stop) = (self.brainstorm_sender.clone(), self.brainstorm_stop.clone());
+            let idea = b.idea.clone();
+            let poll = thread::spawn(move || driver::docs_pr(&cfg, b, &saved, &stop));
+            self.brainstorm_threads.push((idea, poll));
+        }
+    }
 }

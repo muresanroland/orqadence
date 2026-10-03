@@ -611,6 +611,7 @@ impl Screen {
         // every issue: a saved Brainstorm's closed issue may have lost its label
         let issues = screen.reload_issues().unwrap_or_default();
         screen.brainstorms = brainstorm::load(repo, &issues);
+        screen.track_docs();
         // nothing is live at open
         screen.suggestion = brainstorm::most_recent(repo, &screen.brainstorms)
             .map(|b| format!("/continue @{}", b.key()));
@@ -2321,11 +2322,23 @@ impl Screen {
         }
     }
 
-    /// The drivers' state changes, each Brainstorm's copy replaced.
+    /// The drivers' state changes, each Brainstorm's copy replaced. Its
+    /// Epics written and its docs PR merged or never opened suggests
+    /// /start-epic of the first, once.
     fn brainstorm_updates(&mut self) {
+        // ponytail: a docs PR closed unmerged counts as none
+        let built = |b: &Brainstorm| {
+            b.phase == Phase::Done && !b.epics.is_empty() && (b.docs_pr.is_empty() || b.docs_merged)
+        };
         while let Ok(b) = self.brainstorm_receiver.try_recv() {
             let saved = self.brainstorms.iter_mut().find(|s| s.idea == b.idea);
             let charting = saved.as_ref().is_some_and(|s| s.phase == Phase::Charting);
+            if built(&b) && !saved.as_deref().is_some_and(built) {
+                self.suggestion = Some(format!("/start-epic {}", b.epics[0]));
+            }
+            if b.phase == Phase::Done && self.live.as_ref() == Some(&b.idea) {
+                self.live = None;
+            }
             match saved {
                 Some(saved) => *saved = b.clone(),
                 None => self.brainstorms.push(b.clone()),
@@ -2339,6 +2352,19 @@ impl Screen {
                 Phase::Done if charting && !b.tickets.is_empty() => self.charted.push_back(b),
                 _ => {}
             }
+        }
+    }
+
+    /// The Notice for Epic `id` a Brainstorm wrote while its docs PR is
+    /// not merged.
+    fn docs_unmerged(&mut self, id: &str) {
+        let unmerged = |b: &&Brainstorm| b.docs_waiting() && b.epics.iter().any(|e| e == id);
+        if let Some(b) = self.brainstorms.iter().find(unmerged) {
+            let text = format!(
+                "docs PR {} not merged; Tickets won't see its docs",
+                b.docs_pr
+            );
+            self.notify(NoticeKind::Info, &text, None);
         }
     }
 
@@ -2518,7 +2544,10 @@ impl Screen {
                 if let Some(id) = self.resolve(query, true) {
                     match self.epic_waits(&id, &|_| false) {
                         Some(text) => self.refuse(&text),
-                        None => self.start(&[id], true, false),
+                        None => {
+                            self.docs_unmerged(&id);
+                            self.start(&[id], true, false)
+                        }
                     }
                 }
             }
@@ -3603,6 +3632,8 @@ mod config_test;
 mod continue_test;
 #[cfg(test)]
 mod demo_test;
+#[cfg(test)]
+mod epic_test;
 #[cfg(test)]
 mod graphify_test;
 #[cfg(test)]
