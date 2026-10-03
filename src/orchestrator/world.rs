@@ -38,6 +38,7 @@ pub(crate) struct BdTicket {
     pub(crate) labels: Vec<String>,
     /// Its parent, in place of the Epic: a Waypoint's Map.
     pub(crate) parent: String,
+    /// Its description, as 'bd show --json' prints it.
     pub(crate) description: String,
 }
 

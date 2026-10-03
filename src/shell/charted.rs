@@ -169,11 +169,10 @@ impl Screen {
         argv.extend(ids);
         argv.push("--json");
         let out = self.cfg.tools.run(&self.cfg.repo, &argv);
-        match out
-            .map_err(|e| e.to_string())
-            .and_then(|out| serde_json::from_str::<Vec<BdIssue>>(&out).map_err(|e| e.to_string()))
-        {
-            Ok(issues) => issues,
+        match out.map_err(|e| e.to_string()).and_then(|out| {
+            serde_json::from_str::<Option<Vec<BdIssue>>>(&out).map_err(|e| e.to_string())
+        }) {
+            Ok(issues) => issues.unwrap_or_default(),
             Err(err) => {
                 self.say(&format!("bd show failed: {err}"));
                 Vec::new()

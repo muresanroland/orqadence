@@ -264,6 +264,10 @@ fn the_continue_form_shows_the_saved_answer() {
     ] {
         assert!(text.contains(want), "{want:?} not in:\n{text}");
     }
+    s.key(key(KeyCode::Char(' ')));
+    assert!(!shown(&s).contains("your answer last time"), "flipped");
+
+    s.key(key(KeyCode::Char(' ')));
     s.key(key(KeyCode::Enter));
     assert_eq!(s.live.as_deref(), Some("hx-7"));
     s.close();

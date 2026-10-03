@@ -1202,7 +1202,9 @@ pub(super) fn start_map(f: &mut Frame, s: &Screen) {
     let style = if focused { bold(TEXT) } else { fg(TEXT) };
     row.spans
         .push(Span::styled("start the research in the background", style));
-    if m.again {
+    // only while the box still holds the saved answer
+    let saved = s.brainstorms.iter().find(|b| b.idea == m.idea);
+    if m.again && saved.is_some_and(|b| b.background == m.background) {
         row.spans
             .push(Span::styled("   your answer last time", fg(MUTED)));
     }
