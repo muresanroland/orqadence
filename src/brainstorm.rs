@@ -4,12 +4,13 @@
 
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::plural;
-use crate::orchestrator::state::{local_dir, Session, LOCAL};
+use crate::orchestrator::state::{is_zero, local_dir, Session, LOCAL};
 use crate::shell::suffix;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// The Idea, a task.
 pub(crate) const IDEA: &str = "brainstorm:idea";
@@ -47,6 +48,13 @@ pub(crate) struct Research {
     pub(crate) parked: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) limited: bool,
+    /// Its Stage's spent retry, nudge and waits, as a Ticket's are saved.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) retried: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) nudged: bool,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub(crate) waits: usize,
 }
 
 /// What Orqadence knows about one Brainstorm.
@@ -101,15 +109,20 @@ fn brainstorms(repo: &Path) -> PathBuf {
 
 impl Brainstorm {
     /// Writes its state.json atomically: a reader sees the old or the new
-    /// state, never half of one.
+    /// state, never half of one. Each write has a tmp file of its own, as a
+    /// driver's thread and the Shell can save at once.
     pub(crate) fn save(&self, repo: &Path) -> io::Result<()> {
+        static WRITES: AtomicUsize = AtomicUsize::new(0);
         local_dir(repo)?;
         let dir = brainstorms(repo).join(&self.idea);
         fs::create_dir_all(&dir)?;
         let raw = serde_json::to_vec_pretty(self)?;
-        let tmp = dir.join("state.json.tmp");
+        let n = WRITES.fetch_add(1, Ordering::SeqCst);
+        let tmp = dir.join(format!("state.json.{n}.tmp"));
         fs::write(&tmp, raw)?;
-        fs::rename(tmp, dir.join("state.json"))
+        fs::rename(&tmp, dir.join("state.json")).inspect_err(|_| {
+            let _ = fs::remove_file(&tmp);
+        })
     }
 
     /// Done with a docs PR not yet merged.
@@ -229,7 +242,7 @@ pub(crate) fn waypoint_refusal(issues: &[BdIssue], b: &Brainstorm, id: &str) -> 
     if w.status == "closed" {
         return Some(format!("refused: {name} is closed"));
     }
-    if b.research.iter().any(|r| r.waypoint == id) {
+    if b.research.iter().any(|r| r.waypoint == id && !r.parked) {
         return Some(format!(
             "refused: {name} is a Research Waypoint a background session is running"
         ));
@@ -250,6 +263,7 @@ pub(crate) fn waypoint_refusal(issues: &[BdIssue], b: &Brainstorm, id: &str) -> 
 }
 
 pub(crate) mod driver;
+pub(crate) mod research;
 
 #[cfg(test)]
 mod brainstorm_test;

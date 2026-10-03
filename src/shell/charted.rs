@@ -4,12 +4,13 @@
 //! Continue form asks again with the answer saved last time.
 
 use crossterm::event::{KeyCode, KeyEvent};
+use std::sync::atomic::Ordering;
 
 use super::{About, Screen};
-use crate::brainstorm::{driver, labelled, Brainstorm, Phase, EPIC, RESEARCH};
+use crate::brainstorm::{driver, labelled, research, Brainstorm, Phase, EPIC, RESEARCH};
 use crate::orchestrator::app::{self, MAX_RESEARCH};
 use crate::orchestrator::scheduler::BdIssue;
-use crate::orchestrator::stage::{plural, Ask};
+use crate::orchestrator::stage::{plural, Ask, Config};
 
 /// One Ticket of the Tickets modal.
 pub(crate) struct Row {
@@ -171,6 +172,78 @@ impl Screen {
         self.drive(b, "Waypoint", move |cfg, shell, b, saved, stop| {
             driver::waypoint(cfg, shell, b, saved, stop, prompt, pick);
         });
+    }
+
+    /// The research threads' changes saved with their Brainstorms, a
+    /// close kept for research_poll.
+    pub(super) fn research_updates(&mut self) {
+        while let Ok(u) = self.research_receiver.try_recv() {
+            if let Some(b) = self.brainstorms.iter_mut().find(|b| b.idea == u.idea) {
+                (b.research_tab, b.research) = (u.tab, u.research);
+                if let Err(err) = b.save(&self.cfg.repo) {
+                    let key = b.key().to_string();
+                    let text = format!("Brainstorm state not saved: {err}");
+                    self.tell(Some(&key), &text);
+                }
+            }
+            // only the live Map's close is asked about
+            if let Some(id) = u.closed.filter(|_| self.live.as_ref() == Some(&u.idea)) {
+                self.research_closed = Some((u.idea, id));
+            }
+        }
+    }
+
+    /// The research threads' changes saved (research_updates); each
+    /// told whether its Map is live with research in the background; one
+    /// started for the Map that is, or that holds research to take up; and
+    /// after a research close, with no session with you running, Next
+    /// Waypoint? asked when the frontier gives one.
+    pub(super) fn research_poll(&mut self) {
+        // the ended ones first: what they sent before they ended is read
+        // below, so none is started again over a stale list
+        self.research.retain(|r| !r.thread.is_finished());
+        self.research_updates();
+        let live = |s: &Self, b: &Brainstorm| s.live.as_ref() == Some(&b.idea) && b.background;
+        for r in &self.research {
+            let b = self.brainstorms.iter().find(|b| b.idea == r.idea);
+            r.live
+                .store(b.is_some_and(|b| live(self, b)), Ordering::SeqCst);
+        }
+        let wanted: Vec<Brainstorm> = (self.brainstorms.iter())
+            .filter(|b| b.phase == Phase::Map && !self.research.iter().any(|r| r.idea == b.idea))
+            .filter(|b| live(self, b) || b.research.iter().any(|r| !r.parked))
+            .cloned()
+            .collect();
+        for b in wanted {
+            let on = live(self, &b);
+            let (stop, sender) = (self.brainstorm_stop.clone(), self.research_sender.clone());
+            let cfg = Config {
+                events: self.sender.clone(),
+                ..self.cfg.clone()
+            };
+            self.research
+                .push(research::spawn(&cfg, b, on, stop, sender));
+        }
+        let Some((idea, id)) = self.research_closed.clone() else {
+            return;
+        };
+        let live = self
+            .live_brainstorm()
+            .filter(|b| b.idea == idea && b.phase == Phase::Map);
+        let Some(b) = live.cloned() else {
+            self.research_closed = None;
+            return;
+        };
+        if self.driving(&idea) {
+            return; // its session's own end asks, or it is still starting
+        }
+        self.research_closed = None;
+        let asked = |q: &super::Question| matches!(&q.about, About::Asked(Ask::NextWaypoint { map, .. }) if *map == b.map);
+        if b.pane.is_empty() && b.session.is_none() && !self.questions.iter().any(asked) {
+            self.drive(b, "Waypoint", move |cfg, _, b, saved, stop| {
+                driver::research_closed(cfg, b, saved, stop, &id);
+            });
+        }
     }
 
     /// Cancel keeps the Map; the start form leaves /continue @<map> as the

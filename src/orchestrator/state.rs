@@ -201,7 +201,7 @@ pub(crate) enum Review {
     Unreviewed,
 }
 
-fn is_zero(n: &usize) -> bool {
+pub(crate) fn is_zero(n: &usize) -> bool {
     *n == 0
 }
 

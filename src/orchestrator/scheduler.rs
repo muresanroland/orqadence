@@ -92,7 +92,7 @@ fn pr_stage(ts: &TicketState) -> Option<&'static Stage> {
 
 impl Orchestrator {
     /// Every issue bd's reply to args holds, Epics included.
-    pub(super) fn bd_all(&self, args: &[&str]) -> Result<Vec<BdIssue>, String> {
+    pub(crate) fn bd_all(&self, args: &[&str]) -> Result<Vec<BdIssue>, String> {
         let mut argv = vec!["bd"];
         argv.extend_from_slice(args);
         let out = self
