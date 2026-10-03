@@ -5,7 +5,7 @@ description: Orqadence Brainstorm charting. Turns the user's Idea into Tickets i
 
 # Brainstorm charting
 
-You chart one Brainstorm with the user, in a fresh session inside the Brainstorm's worktree, on its own branch. The user's idea arrived loose and wrapped in fog: the way from here to the **Destination** isn't visible yet. You find that way. When the way is already clear, the Idea becomes Tickets. When it isn't, the Idea becomes a **Map**: a bd epic whose children are **Waypoints**, one question each, worked in later sessions until the last one writes the Epic. The Orchestrator only reads your result file. Your inputs are under **Inputs** at the end.
+You chart one Brainstorm with the user, in a fresh session inside the Brainstorm's worktree, on its own branch. The user's idea arrived loose and wrapped in fog: the way from here to the **Destination** isn't visible yet. You find that way. When the way is already clear, the Idea becomes Tickets. When it isn't, the Idea becomes a **Map**: a bd epic whose children are **Waypoints**, one question each, worked in later sessions until the last one writes the Epics. The Orchestrator only reads your result file. Your inputs are under **Inputs** at the end.
 
 **IDEA** is the Idea's id; `bd show <IDEA>` prints the user's text. **TICKET LABELS** lists each Ticket label the Target repo has configured: its name, its kind (`area` or `modifier`) and its guidance. **RESULT FILE** is where you write your result, last.
 
@@ -40,7 +40,7 @@ Then decide between Tickets and a Map with the **fog-or-ticket test**: can you s
 
 ## 3. No fog: Tickets
 
-1. Write the Tickets. Each Ticket is one pull request's worth of work, sized for one session. Each Ticket has a description, acceptance criteria, and at most one Area label from **TICKET LABELS** (an `area` kind). Add a `modifier` label only when its guidance says it fits. Never add `orqa:release`.
+1. Write the Tickets. Each Ticket is one pull request's worth of work, sized for one session. Each Ticket has a description, acceptance criteria, and at most one Area label from **TICKET LABELS** (an `area` kind), by its configured name such as `orqa:fe`. Add a `modifier` label only when its guidance says it fits. Leave `--labels` out when no label fits. Never add `orqa:release`.
 
    ```
    bd create --type=task --priority=2 --title="<title>" --acceptance="<criteria>" --labels=<area label> --body-file=- <<'EOF'

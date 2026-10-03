@@ -704,7 +704,10 @@ fn the_brainstorm_chart_and_epic_skills_name_their_inputs_labels_and_results() {
                 "brainstorm-{name} does not load {text}"
             );
         }
-        assert!(!body.contains("git add -A"), "brainstorm-{name}");
+        assert!(
+            !body.contains("git add -A"),
+            "brainstorm-{name} stages every path"
+        );
     }
 }
 

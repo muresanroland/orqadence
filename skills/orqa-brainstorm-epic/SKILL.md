@@ -42,7 +42,7 @@ Write the build Epics in build order, one per area: an Epic builds one area's pa
    EOF
    ```
 
-2. Create its Tickets as its children, each sized for one pull request, so /start-epic can run them. Each Ticket has a description, acceptance criteria, and at most one Area label from **TICKET LABELS** (an `area` kind). Add a `modifier` label only when its guidance says it fits.
+2. Create its Tickets as its children, each sized for one pull request, so /start-epic can run them. Each Ticket has a description, acceptance criteria, and at most one Area label from **TICKET LABELS** (an `area` kind), by its configured name such as `orqa:fe`. Add a `modifier` label only when its guidance says it fits. Leave `--labels` out when no label fits.
 
    ```
    bd create --parent <epic> --no-inherit-labels --type=task --priority=2 --title="<title>" --acceptance="<criteria>" --labels=<area label> --body-file=- <<'EOF'
@@ -57,14 +57,14 @@ Write the build Epics in build order, one per area: an Epic builds one area's pa
 
 With **RELEASES** `on`, ask the user which Epics carry `orqa:release`, through the grilling skill, every Epic checked by default. Add the label to each Epic chosen, never to a Ticket: `bd label add <epic> orqa:release`. With **RELEASES** `off`, never add it.
 
-## 4. Commit and open the docs PR
+## 4. Commit and open the docs pull request
 
 1. Commit the document changes you made (`CONTEXT.md`, `docs/adr/`, notes), if any.
-2. If the branch has commits the default branch lacks (`git log --oneline origin/HEAD..HEAD`, falling back to `main`), run the orqa-create-pr skill to open the one docs pull request for this Brainstorm. Its title names the Map. Its body names the Epics, in build order, by title. With no commits, open no PR.
+2. Find the default branch: `git symbolic-ref --short refs/remotes/origin/HEAD`, falling back to `main`. If the branch has commits it lacks (`git log --oneline <default branch>..HEAD`), run the orqa-create-pr skill to open the one docs pull request for this Brainstorm. Its title names the Map. Its body names the Epics, in build order, by title. With no commits, open no PR.
 
 ## 5. Resolve the WAYPOINT
 
-1. Post the resolution: `bd comments add <WAYPOINT> "<the Epics in build order, by title and id, and the docs PR>"`.
+1. Post the resolution: `bd comments add <WAYPOINT> "<the Epics in build order, by title and id, and the docs pull request>"`.
 2. Add its line to the Map's Decisions so far, as in step 1.
 3. Close it with a reason naming the Epics: `bd close <WAYPOINT> --reason="Epics: <title> (<id>), <title> (<id>)"`.
 
