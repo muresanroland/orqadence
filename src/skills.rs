@@ -1,7 +1,8 @@
 //! The skills Orqadence ships: one Stage skill per Stage, plus orqa-create-pr,
 //! orqa-infra-review with its fetch.sh, orqa-address-pr-comments with its
-//! scripts/threads.sh, orqa-manual-work with its template.sh, and the two
-//! skills every Brainstorm skill loads, orqa-brainstorm-grilling and
+//! scripts/threads.sh, orqa-manual-work with its template.sh, the Brainstorm
+//! skills orqa-brainstorm-chart and orqa-brainstorm-epic, and the two skills
+//! every Brainstorm skill loads, orqa-brainstorm-grilling and
 //! orqa-brainstorm-domain-modeling with its ADR and CONTEXT formats. 'orqa init'
 //! copies them into a Target repo. A new skill is one more line here, and
 //! one more in EXTRA_FILES for each file beside its SKILL.md.
@@ -20,8 +21,16 @@ pub(crate) const SKILLS: &[(&str, &str)] = &[
         include_str!("../skills/orqa-address-pr-comments/SKILL.md"),
     ),
     (
+        "orqa-brainstorm-chart",
+        include_str!("../skills/orqa-brainstorm-chart/SKILL.md"),
+    ),
+    (
         "orqa-brainstorm-domain-modeling",
         include_str!("../skills/orqa-brainstorm-domain-modeling/SKILL.md"),
+    ),
+    (
+        "orqa-brainstorm-epic",
+        include_str!("../skills/orqa-brainstorm-epic/SKILL.md"),
     ),
     (
         "orqa-brainstorm-grilling",
