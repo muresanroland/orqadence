@@ -303,3 +303,25 @@ fn the_pane_closed_by_the_user_stops_the_brainstorm_saved() {
     assert!(worktree(&w).exists());
     s.close();
 }
+
+#[test]
+fn a_result_written_as_the_session_exits_is_still_taken() {
+    let w = world(vec![BdTicket::new("hx-1")], idle);
+    let world = Arc::downgrade(&w);
+    w.session(move |p: &Prompt| {
+        // the session writes its result and its pane closes with it
+        if let Some(w) = world.upgrade() {
+            w.lock().agents.remove(&p.pane);
+        }
+        (
+            "STATUS: done\nTICKETS: hx-1\n".to_string(),
+            "idle".to_string(),
+        )
+    });
+    let mut s = started(&w);
+
+    await_line(&mut s, "hx-7 charting done: Tickets hx-1; Idea closed");
+
+    assert!(!s.events.iter().any(|e| e.text.contains("charting stopped")));
+    s.close();
+}

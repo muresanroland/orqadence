@@ -3182,7 +3182,7 @@ fn edit(terminal: &mut DefaultTerminal, screen: &mut Screen) -> io::Result<()> {
 #[cfg(test)]
 mod approval_test;
 #[cfg(test)]
-mod brainstorm_test;
+mod chart_test;
 #[cfg(test)]
 mod config_test;
 #[cfg(test)]

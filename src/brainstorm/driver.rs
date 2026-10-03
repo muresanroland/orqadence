@@ -11,7 +11,7 @@ use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::Instant;
 
-use super::{brainstorms, Brainstorm, Phase, EPIC, MAP};
+use super::{brainstorms, is_map, Brainstorm, Phase, EPIC, MAP};
 use crate::orchestrator::app::{self, BRAINSTORM};
 use crate::orchestrator::herdr::{self, agent_name, herdr, locate, place_beside_shell};
 use crate::orchestrator::result::{
@@ -33,6 +33,7 @@ struct Driver<'a> {
     saved: &'a Sender<Brainstorm>,
     /// The Shell is closing: the session's pane stays running in herdr.
     stop: &'a AtomicBool,
+    /// The Brainstorm charted, as last saved.
     b: Brainstorm,
 }
 
@@ -163,6 +164,11 @@ impl Driver<'_> {
         let name = agent_name(&self.b.idea, "chart");
         let mut said = String::new();
         loop {
+            // The status before the result: a result written as the
+            // session exits, between the two reads, is still taken.
+            let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
+            let known = self.b.session.as_ref().map(|s| s.id.clone());
+            let watched = herdr::watch(tools, repo, &self.b.pane, &name, known.as_deref());
             if result.exists() {
                 match self.done(result) {
                     Ok(()) => return,
@@ -173,9 +179,7 @@ impl Driver<'_> {
                     Err(_) => {}
                 }
             }
-            let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
-            let known = self.b.session.as_ref().map(|s| s.id.clone());
-            match herdr::watch(tools, repo, &self.b.pane, &name, known.as_deref()) {
+            match watched {
                 None => {
                     self.b.pane.clear();
                     self.save();
@@ -248,7 +252,7 @@ fn outcome(issues: &[BdIssue], r: &StageResult) -> Result<String, String> {
     let labelled = |i: &BdIssue, label: &str| i.labels.iter().any(|l| l == label);
     if !r.map.is_empty() {
         let map = r.map.as_str();
-        if !open(map).is_some_and(|i| i.issue_type == "epic" && labelled(i, MAP)) {
+        if !open(map).is_some_and(is_map) {
             return Err(format!("{map} is not an open epic labelled {MAP}"));
         }
         let epics = issues
