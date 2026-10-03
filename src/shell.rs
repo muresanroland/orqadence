@@ -2326,10 +2326,8 @@ impl Screen {
     /// Epics written and its docs PR merged or never opened suggests
     /// /start-epic of the first, once.
     fn brainstorm_updates(&mut self) {
-        // ponytail: a docs PR closed unmerged counts as none
-        let built = |b: &Brainstorm| {
-            b.phase == Phase::Done && !b.epics.is_empty() && (b.docs_pr.is_empty() || b.docs_merged)
-        };
+        let built =
+            |b: &Brainstorm| b.phase == Phase::Done && !b.epics.is_empty() && !b.docs_waiting();
         while let Ok(b) = self.brainstorm_receiver.try_recv() {
             let saved = self.brainstorms.iter_mut().find(|s| s.idea == b.idea);
             let charting = saved.as_ref().is_some_and(|s| s.phase == Phase::Charting);

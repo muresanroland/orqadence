@@ -121,6 +121,22 @@ fn status(w: &World, id: &str) -> (String, String) {
     (t.status.clone(), t.close_reason.clone())
 }
 
+/// The prompt herdr took that contains `needle`, waited for up to 5s.
+pub(super) fn await_prompt(w: &World, needle: &str) -> String {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let sent = w.called("herdr agent prompt");
+        if let Some(p) = sent.into_iter().find(|p| p.contains(needle)) {
+            return p;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no prompt contains {needle}"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
 pub(super) fn pane_alive(w: &World, pane: &str) -> bool {
     w.lock().panes.iter().any(|p| p.pane_id == pane)
 }

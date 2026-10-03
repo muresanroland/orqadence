@@ -562,13 +562,8 @@ impl<'a> Driver<'a> {
         tools
             .run(repo, &["bd", "close", &self.b.idea, "--reason", &reason])
             .map_err(|err| format!("Idea not closed: {err}"))?;
-        // Only a closed or already gone pane is forgotten; another
-        // failure keeps its id so the pane stays tracked.
-        match herdr(tools, repo, &["pane", "close", &self.b.pane]) {
-            Err(err) if !herdr::pane_gone(&err) => {
-                self.say(&format!("charting pane not closed: {err}"));
-            }
-            _ => self.b.pane.clear(),
+        if let Err(err) = self.close_pane() {
+            self.say(&format!("charting pane not closed: {err}"));
         }
         self.b.label_lines = r.labels;
         let line = if r.map.is_empty() {
@@ -752,17 +747,7 @@ impl Driver<'_> {
     /// Whether it ended the session; each line not taken said once.
     fn waypoint_done(&mut self, result: &Path, said: &mut String) -> bool {
         let map = self.b.map.clone();
-        let (r, why) = read_stage_result(result, ResultRequirements::default());
-        if why == MANUAL {
-            self.manual(result, said);
-            return false;
-        }
-        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
-        let issues = match why.is_empty() {
-            true => bd_list(repo, tools).map_err(|err| format!("bd list failed: {err}")),
-            false => Err(why),
-        };
-        let found = issues.and_then(|issues| {
+        let found = self.read(result, said).and_then(|(r, issues)| {
             let w = issues
                 .iter()
                 .find(|i| i.id == r.waypoint && i.parent == map);
@@ -774,6 +759,7 @@ impl Driver<'_> {
         });
         let (w, issues) = match found {
             Ok(found) => found,
+            Err(why) if why.is_empty() => return false,
             Err(why) => {
                 self.once(
                     said,
@@ -784,6 +770,7 @@ impl Driver<'_> {
                 return false;
             }
         };
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         if w.status != "closed" {
             let at = locate(tools, repo, &self.cfg.workspace, &self.b.pane);
             let at = at.trim_start_matches('(').trim_end_matches(')');
@@ -794,12 +781,8 @@ impl Driver<'_> {
             self.once(said, &w.id, &text, None);
             return false;
         }
-        // Only a closed or already gone pane is forgotten.
-        match herdr(tools, repo, &["pane", "close", &self.b.pane]) {
-            Err(err) if !herdr::pane_gone(&err) => {
-                self.tell(&w.id, &format!("Waypoint pane not closed: {err}"));
-            }
-            _ => self.b.pane.clear(),
+        if let Err(err) = self.close_pane() {
+            self.tell(&w.id, &format!("Waypoint pane not closed: {err}"));
         }
         self.b.session = None;
         self.b.result.clear();
@@ -834,38 +817,47 @@ impl Driver<'_> {
     /// session.
     fn epics_done(&mut self, result: &Path, said: &mut String) -> bool {
         let map = self.b.map.clone();
-        let (r, why) = read_stage_result(result, ResultRequirements::default());
-        if why == MANUAL {
-            self.manual(result, said);
-            return false;
-        }
-        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
-        let checked = match why.is_empty() {
-            true => bd_list(repo, tools).map_err(|err| format!("bd list failed: {err}")),
-            false => Err(why),
-        };
-        let checked = checked.and_then(|issues| open_epics(&issues, &r.epics).map(|_| issues));
-        let reason = format!("Epics {}", r.epics.join(", "));
-        let closed = checked.and_then(|issues| {
-            tools
-                .run(repo, &["bd", "close", &map, "--reason", &reason])
-                .map(|_| issues)
-                .map_err(|err| format!("Map not closed: {err}"))
-        });
-        let issues = match closed {
-            Ok(issues) => issues,
+        let checked = self
+            .read(result, said)
+            .and_then(|(r, issues)| open_epics(&issues, &r.epics).map(|_| (r, issues)));
+        let (r, issues) = match checked {
+            Ok(checked) => checked,
+            Err(why) if why.is_empty() => return false,
             Err(why) => {
-                let text = format!("Epics result not taken: {why}");
-                self.once(said, &map, &text, None);
+                self.once(said, &map, &format!("Epics result not taken: {why}"), None);
                 return false;
             }
         };
-        match herdr(tools, repo, &["pane", "close", &self.b.pane]) {
-            Err(err) if !herdr::pane_gone(&err) => {
-                self.say(&format!("Waypoint pane not closed: {err}"));
-            }
-            _ => self.b.pane.clear(),
+        // done saved before the Map closes: load drops a Map-phase
+        // Brainstorm whose Map is closed, and its docs PR with it
+        let before = self.b.clone();
+        self.b.phase = Phase::Done;
+        self.b.session = None;
+        self.b.result.clear();
+        self.b.label_lines = r.labels;
+        self.b.docs_pr = r.pr;
+        self.b.epics = r.epics;
+        let reason = format!("Epics {}", self.b.epics.join(", "));
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
+        let closed = self
+            .b
+            .save(repo)
+            .map_err(|err| format!("Brainstorm state not saved: {err}"))
+            .and_then(|_| {
+                tools
+                    .run(repo, &["bd", "close", &map, "--reason", &reason])
+                    .map_err(|err| format!("Map not closed: {err}"))
+            });
+        if let Err(why) = closed {
+            self.b = before;
+            self.save();
+            self.once(said, &map, &format!("Epics result not taken: {why}"), None);
+            return false;
         }
+        if let Err(err) = self.close_pane() {
+            self.say(&format!("Waypoint pane not closed: {err}"));
+        }
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         let remove = ["git", "worktree", "remove", "--force", &self.b.worktree];
         let removed = match tools.run(repo, &remove) {
             Ok(_) => {
@@ -877,12 +869,6 @@ impl Driver<'_> {
                 ""
             }
         };
-        self.b.phase = Phase::Done;
-        self.b.session = None;
-        self.b.result.clear();
-        self.b.label_lines = r.labels;
-        self.b.docs_pr = r.pr;
-        self.b.epics = r.epics;
         self.save();
         let waypoint = issues.iter().find(|i| i.parent == map && labelled(i, EPIC));
         let waypoint = waypoint.map_or(map.as_str(), |w| w.id.as_str());
@@ -902,8 +888,9 @@ impl Driver<'_> {
     }
 
     /// A done Brainstorm's docs PR polled with gh at the Shell's PR poll
-    /// interval until it merges, or closes unmerged, said and saved; a gh
-    /// failure keeps polling. Nothing once the Shell is closing.
+    /// interval until it merges, said and saved. Closed unmerged is said
+    /// once and still polled, kept until a reopen merges; a gh failure
+    /// keeps polling. Nothing once the Shell is closing.
     fn track_docs(&mut self) {
         if !self.b.docs_waiting() {
             return;
@@ -915,6 +902,7 @@ impl Driver<'_> {
             Some(epic) => format!(": /start-epic {epic} is next"),
             None => String::new(),
         };
+        let mut closed = false;
         loop {
             let viewed = tools.run(repo, &["gh", "pr", "view", &url, "--json", "state"]);
             let state = viewed
@@ -927,15 +915,51 @@ impl Driver<'_> {
                     self.save();
                     return self.say(&format!("docs {number} merged{next}"));
                 }
-                Some("CLOSED") => {
-                    self.b.docs_pr.clear();
-                    self.save();
-                    return self.say(&format!("docs {number} closed unmerged{next}"));
+                Some("CLOSED") if !closed => {
+                    closed = true;
+                    self.say(&format!("docs {number} closed unmerged"));
                 }
+                Some("OPEN") => closed = false,
                 _ => {}
             }
             if !self.sleep_for(self.cfg.poll_prs) {
                 return;
+            }
+        }
+    }
+
+    /// The result read, with bd's issues; Manual work put to the user
+    /// gives an empty why.
+    fn read(
+        &mut self,
+        result: &Path,
+        said: &mut String,
+    ) -> Result<(StageResult, Vec<BdIssue>), String> {
+        let (r, why) = read_stage_result(result, ResultRequirements::default());
+        if why == MANUAL {
+            self.manual(result, said);
+            return Err(String::new());
+        }
+        if !why.is_empty() {
+            return Err(why);
+        }
+        let issues = bd_list(&self.cfg.repo, &*self.cfg.tools)
+            .map_err(|err| format!("bd list failed: {err}"))?;
+        Ok((r, issues))
+    }
+
+    /// Its pane closed. Only a closed or already gone pane is forgotten;
+    /// another failure keeps its id so the pane stays tracked.
+    fn close_pane(&mut self) -> Result<(), RunError> {
+        match herdr(
+            &*self.cfg.tools,
+            &self.cfg.repo,
+            &["pane", "close", &self.b.pane],
+        ) {
+            Err(err) if !herdr::pane_gone(&err) => Err(err),
+            _ => {
+                self.b.pane.clear();
+                Ok(())
             }
         }
     }

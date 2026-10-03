@@ -2,12 +2,11 @@
 //! other Waypoint of the Map is closed, its Epics closing the Map, and the
 //! docs PR tracked until it merges.
 
-use crossterm::event::KeyCode;
 use std::sync::Arc;
 
-use super::chart_test::{map, pane_alive, saved, started, world};
-use super::shell_test::{await_line, key, type_line};
-use super::Screen;
+use super::chart_test::{await_prompt, map, pane_alive, saved, world};
+use super::shell_test::{await_line, type_line};
+use super::waypoint_test::live_in as live;
 use crate::brainstorm::Phase;
 use crate::orchestrator::app::{self, RELEASE_ON};
 use crate::orchestrator::state::LOCAL;
@@ -42,28 +41,9 @@ fn last_left(epic: &'static str) -> Arc<World> {
     w
 }
 
-/// Idea hx-7 charted into Map hx-m over `issues`, Start Map pressed.
-fn live(w: Arc<World>) -> (Arc<World>, Screen) {
-    let mut s = started(&w);
-    await_line(&mut s, "hx-7 charting done: Map hx-m");
-    s.key(key(KeyCode::Enter));
-    (w, s)
-}
-
 /// The prompt the brainstorm-epic session took.
 fn epic_prompt(w: &World) -> String {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        let sent = w.called("herdr agent prompt");
-        if let Some(p) = sent.into_iter().find(|p| p.contains("# Brainstorm Epics")) {
-            return p;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "no brainstorm-epic prompt"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    await_prompt(w, "# Brainstorm Epics")
 }
 
 #[test]
@@ -176,6 +156,41 @@ fn the_docs_pr_merged_suggests_start_epic_of_the_first_epic() {
     await_line(&mut s, "hx-m docs PR #71 merged: /start-epic hx-9a is next");
     assert_eq!(s.suggestion.as_deref(), Some("/start-epic hx-9a"));
     assert!(saved(&w).docs_merged);
+    s.close();
+}
+
+#[test]
+fn the_docs_pr_closed_unmerged_is_kept_and_its_merge_after_a_reopen_seen() {
+    let result = "STATUS: done\nEPICS: hx-9a hx-9b\nPR: https://github.com/o/r/pull/71\n";
+    let (w, mut s) = live(last_left(result));
+    await_line(&mut s, "hx-m Map closed");
+
+    let closed = r#"{"state":"CLOSED"}"#.to_string();
+    w.lock().prs.insert(PR.to_string(), closed);
+
+    await_line(&mut s, "hx-m docs PR #71 closed unmerged");
+    assert_eq!(s.suggestion, None);
+    assert_eq!(saved(&w).docs_pr, PR, "kept until it merges");
+
+    let merged = r#"{"state":"MERGED"}"#.to_string();
+    w.lock().prs.insert(PR.to_string(), merged);
+
+    await_line(&mut s, "hx-m docs PR #71 merged: /start-epic hx-9a is next");
+    assert_eq!(s.suggestion.as_deref(), Some("/start-epic hx-9a"));
+    s.close();
+}
+
+#[test]
+fn the_map_not_closing_keeps_the_brainstorm_on_its_map_and_tries_again() {
+    let w = last_left("STATUS: done\nEPICS: hx-9a hx-9b\n");
+    w.fail_once("bd close hx-m ", "dolt is busy");
+    let (w, mut s) = live(w);
+
+    await_line(&mut s, "hx-m Epics result not taken: Map not closed");
+    await_line(&mut s, "hx-m Map closed, worktree removed");
+
+    assert_eq!(w.called("bd close hx-m ").len(), 2);
+    assert_eq!(saved(&w).phase, Phase::Done);
     s.close();
 }
 

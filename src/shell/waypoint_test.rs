@@ -5,8 +5,8 @@
 use crossterm::event::KeyCode;
 use std::sync::Arc;
 
-use super::chart_test::{map, pane_alive, saved, started, waypoint, world};
-use super::shell_test::{await_line, key, line, notice, type_in};
+use super::chart_test::{await_prompt, map, pane_alive, saved, started, waypoint, world};
+use super::shell_test::{await_line, await_until, key, line, notice, type_in};
 use super::Screen;
 use crate::brainstorm::{Phase, Research, EPIC, GRILLING, MAP, RESEARCH};
 use crate::orchestrator::stage::Ask;
@@ -25,19 +25,7 @@ fn session(p: &Prompt) -> (String, String) {
 /// The prompt that named `result`, once the session has taken it: its
 /// line is said before the prompt goes in.
 fn prompt(w: &World, result: &std::path::Path) -> String {
-    let file = result.display().to_string();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        let sent = w.called("herdr agent prompt");
-        if let Some(p) = sent.into_iter().find(|p| p.contains(&file)) {
-            return p;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "no prompt names {file}"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
+    await_prompt(w, &result.display().to_string())
 }
 
 /// Idea hx-7 charted into Map hx-m over `issues`, and Start Map pressed
@@ -46,7 +34,8 @@ fn live(issues: Vec<BdTicket>) -> (Arc<World>, Screen) {
     live_in(world(issues, session))
 }
 
-fn live_in(w: Arc<World>) -> (Arc<World>, Screen) {
+/// Idea hx-7 charted into Map hx-m in `w`, and Start Map pressed.
+pub(super) fn live_in(w: Arc<World>) -> (Arc<World>, Screen) {
     let mut s = started(&w);
     await_line(&mut s, "hx-7 charting done: Map hx-m");
     s.key(key(KeyCode::Enter));
@@ -355,12 +344,9 @@ fn an_interrupted_session_resumes_by_its_id() {
 #[test]
 fn manual_work_its_session_waits_on_is_asked_once_and_done_goes_into_its_pane() {
     let (w, mut s, pane) = working();
-    let folder = w.repo.join(LOCAL).join("runs/hx-m.1/manual-work/1");
-    std::fs::create_dir_all(&folder).unwrap();
-    let item = "Ticket: hx-m.1 · Stage: waypoint · Blocks: yes\n\n## What\nSet the token.\n";
-    std::fs::write(folder.join("manual-work.md"), item).unwrap();
     let file = saved(&w).result;
-    std::fs::write(&file, format!("STATUS: manual\n{}\n", folder.display())).unwrap();
+    file_manual(&w, 1);
+    let folder = w.repo.join(LOCAL).join("runs/hx-m.1/manual-work/1");
 
     await_line(&mut s, "hx-m.1 manual work in Waypoint (pane 1-2)");
     for _ in 0..20 {
@@ -536,12 +522,7 @@ fn parking_manual_work_stops_the_brainstorm_and_continue_asks_it_again() {
     w.lock().integration = true;
     let (w, mut s) = live_in(w);
     await_line(&mut s, "hx-m.1 Waypoint started");
-    let folder = w.repo.join(LOCAL).join("runs/hx-m.1/manual-work/1");
-    std::fs::create_dir_all(&folder).unwrap();
-    let item = "Ticket: hx-m.1 · Stage: waypoint · Blocks: yes\n\n## What\nSet the token.\n";
-    std::fs::write(folder.join("manual-work.md"), item).unwrap();
-    let file = saved(&w).result;
-    std::fs::write(&file, format!("STATUS: manual\n{}\n", folder.display())).unwrap();
+    file_manual(&w, 1);
     await_line(&mut s, "hx-m.1 manual work in Waypoint");
 
     s.key(key(KeyCode::Down));
@@ -563,16 +544,7 @@ fn parking_manual_work_stops_the_brainstorm_and_continue_asks_it_again() {
     s.key(key(KeyCode::Enter));
 
     await_line(&mut s, "hx-m Waypoint resumed");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let asked = |s: &Screen| {
-        let manual =
-            |e: &&crate::orchestrator::stage::Event| line(e).contains("manual work in Waypoint");
-        s.events.iter().filter(manual).count()
-    };
-    while asked(&s) < 2 {
-        assert!(std::time::Instant::now() < deadline, "not asked again");
-        s.poll();
-    }
+    await_until(&mut s, "not asked again", |s| manual_asked(s) >= 2);
     s.close();
 }
 
@@ -606,11 +578,7 @@ fn manual_work_filed_anew_before_a_tick_sees_no_result_is_asked_too() {
 
     file_manual(&w, 2);
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while manual_asked(&s) < 2 {
-        assert!(std::time::Instant::now() < deadline, "item 2 never asked");
-        s.poll();
-    }
+    await_until(&mut s, "item 2 never asked", |s| manual_asked(s) >= 2);
     s.close();
 }
 
@@ -631,14 +599,9 @@ fn manual_work_filed_again_in_the_folder_done_deleted_is_asked_too() {
     std::fs::rename(&next, &folder).unwrap();
     file_manual(&w, 1);
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while manual_asked(&s) == asked {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the new item 1 never asked"
-        );
-        s.poll();
-    }
+    await_until(&mut s, "the new item 1 never asked", |s| {
+        manual_asked(s) != asked
+    });
     s.close();
 }
 
