@@ -1083,14 +1083,14 @@ fn buttons_line(green: &str, enabled: bool, focus: Option<usize>) -> Line<'stati
 }
 
 /// A checkbox, the cursor's marked with ›.
-fn check(on: bool, focused: bool) -> [Span<'static>; 2] {
+fn check(on: bool, focused: bool) -> Line<'static> {
     let mark = if focused { "› " } else { "  " };
     let boxed = if on { "[x] " } else { "[ ] " };
     let c = if focused { PURPLE } else { TEXT };
-    [
+    Line::from(vec![
         Span::styled(mark, bold(PURPLE)),
         Span::styled(boxed, bold(c)),
-    ]
+    ])
 }
 
 /// The Tickets modal in the dock: what charting came out as, a checkbox
@@ -1126,7 +1126,7 @@ pub(super) fn tickets(f: &mut Frame, s: &Screen) {
     let mut at = 0; // the last line to keep in view: the focused row's about line
     for (i, r) in t.rows.iter().enumerate() {
         let focused = t.focus == i;
-        let mut row = Line::from(check(r.on, focused).to_vec());
+        let mut row = check(r.on, focused);
         row.spans
             .push(Span::styled(format!("{}  ", r.id), fg(BLUE)));
         let style = if focused { bold(TEXT) } else { fg(TEXT) };
@@ -1159,7 +1159,8 @@ pub(super) fn tickets(f: &mut Frame, s: &Screen) {
 /// The start-Map modal in the dock, or its Continue form: the Map, its
 /// Destination and counts (the Continue form's counts and its rebase
 /// line), the background checkbox and what it does, Start Map (Continue)
-/// and Cancel, and the start form's foot line.
+/// and Cancel, and the start form's foot line. Wrapped; the form from the
+/// checkbox down keeps its rows, a long Destination cut short above it.
 pub(super) fn start_map(f: &mut Frame, s: &Screen) {
     let Some(m) = &s.start_map else {
         return;
@@ -1204,9 +1205,9 @@ pub(super) fn start_map(f: &mut Frame, s: &Screen) {
         }
         lines.push(muted(m.counts.clone()));
     }
-    lines.push(Line::default());
+    let mut form = vec![Line::default()];
     let focused = m.focus == 0;
-    let mut row = Line::from(check(m.background, focused).to_vec());
+    let mut row = check(m.background, focused);
     let style = if focused { bold(TEXT) } else { fg(TEXT) };
     row.spans
         .push(Span::styled("start the research in the background", style));
@@ -1216,8 +1217,8 @@ pub(super) fn start_map(f: &mut Frame, s: &Screen) {
         row.spans
             .push(Span::styled("   your answer last time", fg(MUTED)));
     }
-    lines.push(row);
-    lines.push(muted(match m.background {
+    form.push(row);
+    form.push(muted(match m.background {
         true => format!(
             "      {} start in tab research-{}, {} at once at most (max_research)",
             plural(m.research, "Research Waypoint"),
@@ -1226,16 +1227,26 @@ pub(super) fn start_map(f: &mut Frame, s: &Screen) {
         ),
         false => "      the sessions with you take research as it reaches the frontier".to_string(),
     }));
-    lines.push(Line::default());
+    form.push(Line::default());
     let green = if m.again { "Continue" } else { "Start Map" };
-    lines.push(buttons_line(green, true, m.focus.checked_sub(1)));
+    form.push(buttons_line(green, true, m.focus.checked_sub(1)));
     if !m.again {
-        lines.push(Line::default());
-        lines.push(muted(format!(
+        form.push(Line::default());
+        form.push(muted(format!(
             "Start runs brainstorm-waypoint on the next Waypoint in a pane beside the Shell. \
              Cancel keeps the Map: /continue @{} starts it later.",
             m.map
         )));
     }
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    let wrap = Wrap { trim: false };
+    let (head, form) = (
+        Paragraph::new(lines).wrap(wrap),
+        Paragraph::new(form).wrap(wrap),
+    );
+    let form_h = (form.line_count(inner.width) as u16).min(inner.height);
+    let head_h = (head.line_count(inner.width) as u16).min(inner.height - form_h);
+    let [head_at, form_at] =
+        Layout::vertical([Constraint::Length(head_h), Constraint::Length(form_h)]).areas(inner);
+    f.render_widget(head, head_at);
+    f.render_widget(form, form_at);
 }

@@ -193,10 +193,10 @@ impl Driver<'_> {
     fn watch(&mut self, result: &Path) {
         let name = agent_name(&self.b.idea, "chart");
         let mut said = String::new();
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         loop {
             // The status before the result: a result written as the
             // session exits, between the two reads, is still taken.
-            let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
             let known = self.b.session.as_ref().map(|s| s.id.clone());
             let watched = herdr::watch(tools, repo, &self.b.pane, &name, known.as_deref());
             if let Some((_, Some(id))) = &watched {
@@ -216,7 +216,6 @@ impl Driver<'_> {
                 }
             }
             // None is also a failed agent get: only a gone pane stops it
-            let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
             if watched.is_none() && !pane_alive(tools, repo, &self.b.pane) {
                 return self.gone();
             }

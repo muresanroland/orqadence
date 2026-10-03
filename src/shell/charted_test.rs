@@ -204,6 +204,23 @@ fn shown(s: &Screen) -> String {
 }
 
 #[test]
+fn at_80_by_24_a_long_destination_leaves_the_form_in_view() {
+    let (_w, mut s) = map_modal();
+    s.start_map.as_mut().unwrap().destination = "far away ".repeat(200);
+    let shown = |s: &Screen| rows(&render(s, 80, 24)).join("\n");
+    assert!(
+        shown(&s).contains("start the research in the background"),
+        "{}",
+        shown(&s)
+    );
+
+    s.key(key(KeyCode::Tab));
+    assert!(shown(&s).contains("› Start Map"), "{}", shown(&s));
+    assert!(shown(&s).contains("Cancel keeps the Map"), "{}", shown(&s));
+    s.close();
+}
+
+#[test]
 fn space_flips_the_checkbox_and_its_line() {
     let (_w, mut s) = map_modal();
     let on = "2 Research Waypoints start in tab research-hx-m, 2 at once at most (max_research)";
