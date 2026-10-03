@@ -1,3 +1,4 @@
+use super::manifest::Manifest;
 use super::SKILLS;
 use crate::orchestrator::write_file;
 use crate::tempdir::TempDir;
@@ -729,4 +730,111 @@ fn the_brainstorm_chart_and_epic_skills_fill_the_prose_line() {
             "{name}"
         );
     }
+}
+
+/// The two Waypoint skills ship: brainstorm-waypoint works one Waypoint
+/// with the user, prototypes in a worktree of its own, and leaves research
+/// and the build-Epic Waypoint to Orqadence; brainstorm-research works one
+/// Research Waypoint alone and never touches the Map. Both file Manual work
+/// and name the Waypoint they took; neither commits more than its paths.
+#[test]
+fn the_brainstorm_waypoint_and_research_skills_ship_with_their_rules() {
+    let waypoint = skill("orqa-brainstorm-waypoint");
+    for text in [
+        "name: orqa-brainstorm-waypoint",
+        "- **MAP**",
+        "- **BACKGROUND**",
+        "- **PROMPT**",
+        "- **WAYPOINT**",
+        "- **RESULT FILE**",
+        "bd ready --parent <MAP> --unassigned --json",
+        "skip `brainstorm:research` when BACKGROUND is on",
+        "never take `brainstorm:epic`",
+        "`.orqadence-local/worktrees/<idea>-proto-<name>`",
+        "`prototype/<name>`",
+        "--no-inherit-labels",
+        "load the orqa-brainstorm-research skill by name",
+        "[LOGIC.md](LOGIC.md)",
+        "[UI.md](UI.md)",
+    ] {
+        assert!(
+            waypoint.contains(text),
+            "brainstorm-waypoint lacks {text:?}"
+        );
+    }
+    assert_eq!(waypoint.matches("{{working-mode}}").count(), 1);
+    let research = skill("orqa-brainstorm-research");
+    for text in [
+        "name: orqa-brainstorm-research",
+        "- **MAP**",
+        "- **WAYPOINT**",
+        "- **RESULT FILE**",
+        "Never edit the Map's description",
+        "git commit -m '<message>' -- docs/research/<name>.md",
+        "--no-inherit-labels",
+        "never hand the research to a background agent",
+    ] {
+        assert!(
+            research.contains(text),
+            "brainstorm-research lacks {text:?}"
+        );
+    }
+    assert!(!research.contains("{{working-mode}}"));
+    for (name, text) in [
+        ("orqa-brainstorm-waypoint", waypoint),
+        ("orqa-brainstorm-research", research),
+    ] {
+        for want in [
+            "load the orqa-manual-work skill by name",
+            "`STATUS: manual`",
+            "WAYPOINT: <id>",
+            "{{prose}}",
+            "index.lock",
+        ] {
+            assert!(text.contains(want), "{name} lacks {want:?}");
+        }
+        assert!(!text.contains("git add -A"), "{name} names git add -A");
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
+    for file in [
+        "orqa-brainstorm-waypoint/SKILL.md",
+        "orqa-brainstorm-waypoint/LOGIC.md",
+        "orqa-brainstorm-waypoint/UI.md",
+        "orqa-brainstorm-research/SKILL.md",
+    ] {
+        let body = fs::read_to_string(root.join(file)).unwrap();
+        for text in [
+            "of [mattpocock/skills](https://github.com/mattpocock/skills) (MIT License",
+            "The above copyright notice and this permission notice shall be included",
+        ] {
+            assert!(body.contains(text), "{file} lacks {text:?}");
+        }
+        if !file.ends_with("SKILL.md") {
+            assert!(!body.contains("{{"), "{file} carries a job line");
+        }
+    }
+}
+
+/// fill_jobs fills brainstorm-waypoint's working-mode line and both
+/// skills' prose lines with the jobs' defaults.
+#[test]
+fn fill_jobs_fills_the_brainstorm_waypoint_and_research_job_lines() {
+    let have = ["orqa-ponytail".to_string(), "orqa-caveman".to_string()];
+    let manifest = Manifest::default();
+    let (waypoint, lacking) = manifest.fill_jobs(skill("orqa-brainstorm-waypoint"), &have, &[], "");
+    assert!(lacking.is_empty(), "{lacking:?}");
+    assert!(!waypoint.contains("{{"), "{waypoint}");
+    for text in ["Use the orqa-ponytail skill", "Use the orqa-caveman skill"] {
+        assert!(
+            waypoint.contains(text),
+            "brainstorm-waypoint lacks {text:?}"
+        );
+    }
+    let (research, lacking) = manifest.fill_jobs(skill("orqa-brainstorm-research"), &have, &[], "");
+    assert!(lacking.is_empty(), "{lacking:?}");
+    assert!(!research.contains("{{"), "{research}");
+    assert!(
+        research.contains("Use the orqa-caveman skill"),
+        "{research}"
+    );
 }
