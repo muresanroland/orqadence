@@ -164,12 +164,6 @@ impl Screen {
             return;
         };
         let (idea, key) = (l.idea.clone(), l.key.clone());
-        // the drivers' saves taken first: its save below is then of the
-        // Brainstorm as it is now
-        self.brainstorm_updates();
-        let Some(l) = &self.labels else {
-            return;
-        };
         let rows: Vec<(String, Result<String, String>)> = l
             .rows
             .iter()
@@ -183,6 +177,10 @@ impl Screen {
             });
             self.tell(Some(&key), &text);
         }
+        // the drivers' saves taken after the answers, which can take a
+        // clone and bd's calls: the save below is then of the Brainstorm
+        // as it is now
+        self.brainstorm_updates();
         if let Some(b) = self.brainstorms.iter_mut().find(|b| b.idea == idea) {
             b.label_lines = left;
             if let Err(err) = b.save(&self.cfg.repo) {
@@ -254,9 +252,10 @@ impl Screen {
             let names = [skill.clone(), format!("{PREFIX}{skill}")];
             let mut had = names.into_iter().find(|n| have.skills.contains_key(n));
             // a source installed already: add would refuse it
-            if let (None, Ok(source)) = (&had, parse_source(skill)) {
+            let source = parse_source(skill);
+            if let (None, Ok(source)) = (&had, &source) {
                 let from = |i: &Installed| {
-                    i.repo == source.repo && (source.path.is_empty() || i.path == source.path)
+                    (&i.repo, &i.git_ref, &i.path) == (&source.repo, &source.git_ref, &source.path)
                 };
                 had = have
                     .skills
@@ -266,7 +265,7 @@ impl Screen {
             }
             let got = match had {
                 Some(name) => Ok(name),
-                None if parse_source(skill).is_err() => Err("not installed".to_string()),
+                None if source.is_err() => Err("not installed".to_string()),
                 None => match manifest::add(repo, tools, skill, None) {
                     Ok(Added::Installed(name)) => Ok(name),
                     Ok(Added::Choose(names)) => Err(format!("it holds {}", names.join(", "))),

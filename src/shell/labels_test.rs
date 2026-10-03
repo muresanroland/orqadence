@@ -284,13 +284,12 @@ fn a_line_missing_its_guidance_reads_its_fields_by_their_keys() {
         tickets(),
         writes("STATUS: done\nTICKETS: hx-1 hx-2\nLABEL: docs | skills: a | tickets: hx-2\n"),
     );
-    let s = asked(&w);
+    let mut s = asked(&w);
 
     let r = &s.labels.as_ref().unwrap().rows[0];
     assert_eq!(r.guidance, "");
     assert_eq!(r.skills, ["a"]);
     assert_eq!(r.tickets, ["hx-2"]);
-    let mut s = s;
     s.close();
 }
 
@@ -306,5 +305,48 @@ fn a_source_already_installed_goes_on_the_label_without_a_clone() {
     assert!(w.called("env GIT_TERMINAL_PROMPT=0 git clone").is_empty());
     let docs = &config_json(&w)["labels"]["docs"];
     assert_eq!(docs["skills"], serde_json::json!(["orqa-docs-pack"]));
+    s.close();
+}
+
+#[test]
+fn another_skill_installed_from_the_source_is_not_taken_for_it() {
+    let w = labelled();
+    w.installed("orqa-docs-other");
+    let mut manifest = Manifest::load(&w.repo).unwrap();
+    let other = manifest.skills.get_mut("orqa-docs-other").unwrap();
+    (other.repo, other.path) = ("https://github.com/o/docs-pack".into(), "other".into());
+    manifest.save(&w.repo).unwrap();
+    let mut s = asked(&w);
+
+    apply(&mut s);
+
+    let docs = &config_json(&w)["labels"]["docs"];
+    assert_eq!(docs["skills"], serde_json::json!(["orqa-docs-writer"]));
+    s.close();
+}
+
+#[test]
+fn the_drivers_save_during_the_answers_is_kept() {
+    let w = labelled();
+    let mut s = asked(&w);
+    // the docs PR merges while bd labels the Tickets: the driver's save,
+    // with the lines as they were on disk
+    let (send, mut merged) = (s.brainstorm_sender.clone(), saved(&w));
+    merged.docs_merged = true;
+    let send = std::sync::Mutex::new(send);
+    w.hook(move |_, argv| {
+        if argv.starts_with(&["bd", "label", "add"]) {
+            send.lock().unwrap().send(merged.clone()).unwrap();
+        }
+        None
+    });
+
+    s.key(key(KeyCode::Right));
+    apply(&mut s);
+    s.tick();
+
+    let b = saved(&w);
+    assert!(b.docs_merged);
+    assert!(b.label_lines.is_empty(), "{:?}", b.label_lines);
     s.close();
 }
