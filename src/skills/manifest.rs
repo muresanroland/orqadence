@@ -11,6 +11,7 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use crate::on_call;
+use crate::orchestrator::app::App;
 use crate::skills::CREATE_PR;
 use crate::tempdir::TempDir;
 use crate::tools::Tools;
@@ -222,6 +223,25 @@ impl Manifest {
     /// lacks: added in /config and not yet merged.
     pub(crate) fn unmerged(&self, worktree: &Path, name: &str) -> bool {
         self.skills.contains_key(name) && !skill_dir(worktree, name).exists()
+    }
+
+    /// The skills a session on `app` in `worktree` has, by name: listed
+    /// there, at home and as personal skills, in a folder the App loads. A
+    /// pick not merged is not had, though a personal skill has its name.
+    pub(crate) fn have(
+        &self,
+        repo: &Path,
+        worktree: &Path,
+        home: &Path,
+        tools: &dyn Tools,
+        app: &App,
+    ) -> Vec<String> {
+        list(worktree, home, tools, personal(repo))
+            .into_iter()
+            .filter(|(name, path)| path.parent().is_some_and(|dir| app.loads(name, dir)))
+            .filter(|(name, _)| !self.unmerged(worktree, name))
+            .map(|(name, _)| name)
+            .collect()
     }
 
     /// A Stage skill with each job's placeholder filled in with the job's

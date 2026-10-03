@@ -25,6 +25,41 @@ pub(crate) fn trusts(app: &App, home: &Path, dir: &Path, repo: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Holds a session until `app` trusts `dir`, the directory its pane started
+/// in. Only the user can accept a trust dialog, so the pane, named `at`, is
+/// said with `say` and waited on instead of prompted into. Ok(true) when it
+/// had to wait; Err once `sleep` says stop. No home, no trust stores to
+/// read: the session tries.
+pub(crate) fn await_trust(
+    app: &App,
+    home: &Path,
+    dir: &Path,
+    repo: &Path,
+    at: &str,
+    say: impl Fn(&str),
+    sleep: impl Fn() -> bool,
+) -> Result<bool, ()> {
+    if home.as_os_str().is_empty() {
+        return Ok(false);
+    }
+    let trusted = || trusts(app, home, dir, repo);
+    if trusted() {
+        return Ok(false);
+    }
+    let shown = dir.display();
+    say(&format!(
+        "waiting: {} does not trust {shown} yet, open it there once and accept {at}",
+        app.name
+    ));
+    while !trusted() {
+        if !sleep() {
+            return Err(());
+        }
+    }
+    say(&format!("{} trusts {shown} now, carrying on", app.name));
+    Ok(true)
+}
+
 /// dir's parents up to and including repo, nearest first.
 pub(crate) fn ancestors(dir: &Path, repo: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();

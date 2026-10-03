@@ -216,9 +216,13 @@ fn start_creates_the_idea_its_worktree_and_its_state() {
     assert_eq!(saved, want);
     assert_eq!(s.brainstorms, [want]);
     assert!(s.idea.is_none(), "the modal closed");
+    let said: Vec<String> = s.events.iter().map(line).collect();
     assert_eq!(
-        line(s.events.last().unwrap()),
-        "hx-7 Idea created from your text; worktree on brainstorm/hx-7"
+        said,
+        [
+            "hx-7 Idea created from your text; worktree on brainstorm/hx-7",
+            "hx-7 charting not started: the Shell is not in a herdr pane (HERDR_PANE_ID)",
+        ]
     );
 }
 

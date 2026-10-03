@@ -303,3 +303,30 @@ fn status_manual_is_not_done_and_names_its_folder() {
     write_file(&path, "STATUS: question\n/runs/hx-1/manual-work/1\n");
     assert_eq!(read_manual(&path), None, "a question is no Manual work");
 }
+
+/// A charting result names its Map, or its Tickets with their docs PR and
+/// the labels it proposes, a LABEL: line each.
+#[test]
+fn a_charting_result_gives_its_map_tickets_and_label_lines() {
+    let dir = TempDir::new();
+    let file = dir.path().join("chart.md");
+    write_file(&file, "STATUS: done\nMAP: hx-m\n\nThe Destination\n");
+    let (result, reason) = read_stage_result(&file, ResultRequirements::default());
+    assert_eq!(reason, "");
+    assert_eq!(result.map, "hx-m");
+    assert!(result.tickets.is_empty());
+
+    write_file(
+        &file,
+        "STATUS: done\nTICKETS: hx-1  hx-2\nPR: https://example.test/pr/3\n\
+         LABEL: docs | Docs only | skills: a, b | tickets: hx-2\n\nhx-1 builds x\n",
+    );
+    let (result, _) = read_stage_result(&file, ResultRequirements::default());
+    assert_eq!(result.map, "");
+    assert_eq!(result.tickets, ["hx-1", "hx-2"]);
+    assert_eq!(result.pr, "https://example.test/pr/3");
+    assert_eq!(
+        result.labels,
+        ["docs | Docs only | skills: a, b | tickets: hx-2"]
+    );
+}

@@ -196,6 +196,70 @@ pub(crate) fn herdr(tools: &dyn Tools, dir: &Path, args: &[&str]) -> Result<Herd
     })
 }
 
+/// Gives a Brainstorm pane in the Shell's own tab. `shell` is the Shell's
+/// pane (HERDR_PANE_ID); its tab is read live, since the pane can have
+/// moved. `previous`, the last Brainstorm pane, is replaced when it is
+/// still in that tab: split, then closed. Otherwise the Shell's pane is
+/// split, once. The panes the user opened there are never split.
+pub(crate) fn place_beside_shell(
+    tools: &dyn Tools,
+    dir: &Path,
+    shell: &str,
+    previous: &str,
+    placement: &[&str],
+) -> Result<String, RunError> {
+    let herdr = |args: &[&str]| herdr(tools, dir, args);
+    let tab = herdr(&["pane", "get", shell])?.result.pane.tab_id;
+    // Only pane_not_found means the previous pane is gone; another
+    // failed lookup must not split the Shell a second time.
+    let beside = !previous.is_empty()
+        && previous != shell
+        && match herdr(&["pane", "get", previous]) {
+            Ok(r) => r.result.pane.tab_id == tab,
+            Err(err) if err.to_string().contains("pane_not_found") => false,
+            Err(err) => return Err(err),
+        };
+    if beside {
+        let mut argv = vec!["pane", "split", previous, "--direction", "right"];
+        argv.extend_from_slice(placement);
+        let pane = herdr(&argv)?.result.pane.pane_id;
+        // A previous pane left open would be untracked: take the new
+        // one back so the caller still holds a valid `previous`.
+        match herdr(&["pane", "close", previous]) {
+            Err(err) if !err.to_string().contains("pane_not_found") => {
+                let _ = herdr(&["pane", "close", &pane]);
+                return Err(err);
+            }
+            _ => return Ok(pane),
+        }
+    }
+    let direction = herdr(&["pane", "layout", "--pane", shell])
+        .ok()
+        .and_then(|r| {
+            r.result
+                .layout
+                .panes
+                .into_iter()
+                .find(|p| p.pane_id == shell)
+        })
+        .map_or("right", |p| cut(&p.rect));
+    let mut argv = vec![
+        "pane",
+        "split",
+        shell,
+        "--direction",
+        direction,
+        "--ratio",
+        SHELL_RATIO,
+    ];
+    argv.extend_from_slice(placement);
+    Ok(herdr(&argv)?.result.pane.pane_id)
+}
+
+/// The share of its pane the Shell keeps when a Brainstorm pane is split out
+/// of it.
+const SHELL_RATIO: &str = "0.6";
+
 /// herdr agent start's `argv` run in dir, giving a pane that has just been
 /// created the moment it needs to get a shell: until it has one herdr
 /// refuses with agent_pane_busy, which is not the pane being unusable.
@@ -217,6 +281,30 @@ pub(crate) fn start_agent(
             return Err(err);
         }
     }
+}
+
+/// The agent in `pane`: its herdr state, and the session id herdr reports
+/// there when it is new, differing from `known`, the id saved for the
+/// session. A new id is given only while herdr still names agent `name` in
+/// that pane, so another agent's id is never taken for it, and never with
+/// no id saved to replace. None when no agent lives there any more.
+pub(crate) fn watch(
+    tools: &dyn Tools,
+    dir: &Path,
+    pane: &str,
+    name: &str,
+    known: Option<&str>,
+) -> Option<(String, Option<String>)> {
+    let agent = herdr(tools, dir, &["agent", "get", pane])
+        .ok()?
+        .result
+        .agent;
+    let id = agent.agent_session.map(|s| s.value).unwrap_or_default();
+    let new = !id.is_empty()
+        && known.is_some_and(|known| known != id)
+        && herdr(tools, dir, &["agent", "get", name])
+            .is_ok_and(|reply| reply.result.agent.pane_id == pane);
+    Some((agent.status, new.then_some(id)))
 }
 
 /// A pane of `workspace` as event lines name it: "(pane 2-1)".

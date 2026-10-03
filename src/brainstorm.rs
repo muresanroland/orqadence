@@ -25,7 +25,6 @@ pub(crate) const TASK: &str = "brainstorm:task";
 #[allow(dead_code)]
 pub(crate) const RESEARCH: &str = "brainstorm:research";
 /// The one build-Epic Waypoint.
-#[allow(dead_code)]
 pub(crate) const EPIC: &str = "brainstorm:epic";
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -184,6 +183,8 @@ pub(crate) fn refusal(issues: &[BdIssue], id: &str) -> Option<String> {
         Kind::Idea => "refused: an Idea never enters the Pipeline".to_string(),
     })
 }
+
+pub(crate) mod driver;
 
 #[cfg(test)]
 mod brainstorm_test;

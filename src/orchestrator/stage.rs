@@ -26,7 +26,7 @@ use super::result::{
     ASKED, MANUAL, PLANNED,
 };
 use super::state::{load_state, Session, State, TicketState, LOCAL, STATUS_RUNNING};
-use super::trust::trusts;
+use super::trust;
 use crate::skills::manifest::{self, Manifest};
 use crate::skills::stage_skill;
 use crate::tools::{RunError, Tools};
@@ -659,6 +659,25 @@ pub(crate) fn log_line(time: chrono::DateTime<chrono::Local>, ticket: &str, text
     format!("{} {id}{text}\n", time.format("%Y-%m-%d %H:%M:%S"))
 }
 
+/// A line of the Shell's own, appended to repo's orchestrator.log in one
+/// write: the Ticket threads append to the same file.
+pub(crate) fn append_log(
+    repo: &Path,
+    time: chrono::DateTime<chrono::Local>,
+    ticket: &str,
+    text: &str,
+) {
+    let log = super::state::local_dir(repo).and_then(|dir| {
+        fs::File::options()
+            .create(true)
+            .append(true)
+            .open(dir.join("orchestrator.log"))
+    });
+    if let Ok(mut log) = log {
+        let _ = log.write_all(log_line(time, ticket, text).as_bytes());
+    }
+}
+
 /// A Ticket's worktree under the Target repo.
 pub(crate) fn worktree(repo: &Path, ticket: &str) -> PathBuf {
     repo.join(LOCAL).join("worktrees").join(ticket)
@@ -1000,13 +1019,7 @@ impl Orchestrator {
         // not the base's. Its Stage skill body is the worktree's all the same.
         // A pick not merged is not had, though a personal skill has its name:
         // run without it, its line is left out (ask_unmerged_picks).
-        let personal = manifest::personal(&self.cfg.repo);
-        let have: Vec<String> = manifest::list(&worktree, home, &*self.cfg.tools, personal)
-            .into_iter()
-            .filter(|(name, path)| path.parent().is_some_and(|dir| runs.loads(name, dir)))
-            .filter(|(name, _)| !manifest.unmerged(&worktree, name))
-            .map(|(name, _)| name)
-            .collect();
+        let have = manifest.have(&self.cfg.repo, &worktree, home, &*self.cfg.tools, runs);
         let (skill, mut lacking) = manifest.fill_jobs(&skill, &have, runs.built_in, runs.mention);
         // The code-editing Stages get the Ticket's labels, their skills the
         // App loads (the rest join Not installed) and their guidance.
@@ -1098,7 +1111,11 @@ impl Orchestrator {
                 &format!("retrying {label} with a fresh session {at}"),
             );
         }
-        let Ok(waited) = self.await_trust(ticket, st, row.app, &at) else {
+        let (home, repo) = (&self.cfg.home, &self.cfg.repo);
+        let dir = self.stage_cwd(ticket, st);
+        let say = |text: &str| self.report(ticket, text);
+        let Ok(waited) = trust::await_trust(row.app, home, &dir, repo, &at, say, || self.sleep())
+        else {
             return Held::Stopped;
         };
         // The previous session can still write while its pane is closing.
@@ -1282,40 +1299,6 @@ impl Orchestrator {
     fn waits_on_you(&self, ticket: &str, st: &Stage, reason: &str) -> bool {
         let planned = reason == PLANNED && st.name == IMPLEMENT.name;
         reason == ASKED || reason == MANUAL || planned && self.writes_plan(ticket)
-    }
-
-    /// Holds a Stage until its agent trusts the directory its pane started
-    /// in. Only the user can accept a trust dialog, so the Orchestrator names
-    /// the pane, already in that directory, and waits instead of prompting
-    /// into one.
-    /// Ok(true) when it had to wait.
-    fn await_trust(&self, ticket: &str, st: &Stage, app: &App, at: &str) -> Result<bool, String> {
-        if self.cfg.home.as_os_str().is_empty() {
-            return Ok(false); // no home, no trust stores to read: let the Stage try
-        }
-        let dir = self.stage_cwd(ticket, st);
-        let trusted = || trusts(app, &self.cfg.home, &dir, &self.cfg.repo);
-        if trusted() {
-            return Ok(false);
-        }
-        self.report(
-            ticket,
-            &format!(
-                "waiting: {} does not trust {} yet, open it there once and accept {at}",
-                app.name,
-                dir.display()
-            ),
-        );
-        while !trusted() {
-            if !self.sleep() {
-                return Err("stopped".to_string());
-            }
-        }
-        self.report(
-            ticket,
-            &format!("{} trusts {} now, carrying on", app.name, dir.display()),
-        );
-        Ok(true)
     }
 
     /// The Stage's row with the Ticket's labels: the Extra review's is the
@@ -1827,25 +1810,27 @@ impl Orchestrator {
     /// non-blocking Manual work filed since the last (notice_manual).
     pub(super) fn watch(&self, ticket: &str, st: &Stage, pane: &str) -> Option<String> {
         self.notice_manual(ticket, st);
-        let agent = self.herdr(&["agent", "get", pane]).ok()?.result.agent;
-        let id = agent.agent_session.map(|s| s.value).unwrap_or_default();
-        if !id.is_empty()
-            && self
-                .ticket(ticket)
-                .sessions
-                .get(st.name)
-                .is_some_and(|s| s.id != id)
-            && self
-                .herdr(&["agent", "get", &agent_name(ticket, st.name)])
-                .is_ok_and(|reply| reply.result.agent.pane_id == pane)
-        {
+        let known = self
+            .ticket(ticket)
+            .sessions
+            .get(st.name)
+            .map(|s| s.id.clone());
+        let name = agent_name(ticket, st.name);
+        let (status, new) = herdr::watch(
+            &*self.cfg.tools,
+            &self.cfg.repo,
+            pane,
+            &name,
+            known.as_deref(),
+        )?;
+        if let Some(id) = new {
             self.update(ticket, |ts| {
                 if let Some(session) = ts.sessions.get_mut(st.name) {
                     session.id = id;
                 }
             });
         }
-        Some(agent.status)
+        Some(status)
     }
 
     /// Non-blocking Manual work in the Ticket's Run directory not noticed

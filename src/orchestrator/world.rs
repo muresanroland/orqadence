@@ -36,6 +36,8 @@ pub(crate) struct BdTicket {
     pub(crate) no_epic: bool,
     /// Its bd labels.
     pub(crate) labels: Vec<String>,
+    /// Its parent, in place of the Epic: a Waypoint's Map.
+    pub(crate) parent: String,
 }
 
 impl BdTicket {
@@ -59,7 +61,11 @@ impl BdTicket {
             "title": format!("Ticket {}", self.id),
             "status": self.status,
             "issue_type": self.issue_type,
-            "parent": if self.no_epic { "" } else { EPIC },
+            "parent": match self.parent.as_str() {
+                "" if self.no_epic => "",
+                "" => EPIC,
+                parent => parent,
+            },
             "dependencies": deps,
             "close_reason": self.close_reason,
             "labels": self.labels,
@@ -101,7 +107,7 @@ fn parse_prompt(pane: &str, text: &str) -> Prompt {
         match name {
             "Ticket" => p.ticket = value.to_string(),
             "Round" => p.round = value.parse().unwrap_or(0),
-            "Result file" => {
+            "Result file" | "RESULT FILE" => {
                 p.file = value.to_string();
                 let base = Path::new(value).file_name().unwrap().to_string_lossy();
                 // its name without the Round: verdict, extra-review,
@@ -364,6 +370,12 @@ impl World {
         if cmd.starts_with("herdr pane list") {
             return reply(json!({ "panes": w.panes }));
         }
+        if cmd.starts_with("herdr pane get") {
+            return match w.panes.iter().find(|p| p.pane_id == argv[3]) {
+                Some(pane) => reply(json!({ "pane": pane })),
+                None => Err(r#"{"error":{"code":"pane_not_found"}}"#.to_string()),
+            };
+        }
         if cmd.starts_with("herdr pane layout") {
             let layout = w.layout(flag_value(argv, "--pane"));
             return reply(json!({ "layout": { "panes": layout } }));
@@ -505,6 +517,17 @@ impl World {
             // <rev>:<path> on the base, which is the checkout (check_out)
             let path = argv[2].split_once(':').map_or("", |(_, path)| path);
             return fs::read_to_string(self.repo.join(path)).map_err(|e| e.to_string());
+        }
+        if cmd.starts_with("git worktree add") {
+            // git worktree add -b <branch> <path> <base>
+            return fs::create_dir_all(argv[5])
+                .and_then(|()| self.check_out(&w, Path::new(argv[5])))
+                .map(|()| String::new())
+                .map_err(|e| e.to_string());
+        }
+        if cmd.starts_with("git worktree remove") {
+            let _ = fs::remove_dir_all(argv[argv.len() - 1]);
+            return Ok(String::new());
         }
         if cmd.starts_with("bd worktree remove") {
             let _ = fs::remove_dir_all(argv[3]);
