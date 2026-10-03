@@ -34,13 +34,15 @@ Create a single switcher component on the route:
 
 ```tsx
 // pseudo-code, adapt to the project's framework
-const variant = searchParams.get('variant') ?? 'A';
+const variants = ['A', 'B', 'C'];
+const param = searchParams.get('variant');
+const variant = variants.includes(param) ? param : 'A'; // missing or unknown falls back to A
 return (
   <>
     {variant === 'A' && <VariantA {...data} />}
     {variant === 'B' && <VariantB {...data} />}
     {variant === 'C' && <VariantC {...data} />}
-    <PrototypeSwitcher variants={['A','B','C']} current={variant} />
+    <PrototypeSwitcher variants={variants} current={variant} />
   </>
 );
 ```
