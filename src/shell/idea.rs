@@ -117,14 +117,15 @@ impl Screen {
     /// step says so on RECENT and stops, leaving what bd or git already
     /// hold. The modal closes once bd holds the text.
     fn start_idea(&mut self) {
-        let Some(text) = self.idea.as_ref().map(|i| i.text.trim().to_string()) else {
+        let Some(text) = self.idea.as_ref().map(|i| i.text.clone()) else {
             return;
         };
-        if text.is_empty() {
+        if text.trim().is_empty() {
             return self.notice("write the idea first", NOTICE_WINDOW);
         }
         let (tools, repo) = (self.cfg.tools.clone(), self.cfg.repo.clone());
-        let title = format!("--title={}", text.lines().next().unwrap_or_default());
+        let first = text.trim().lines().next().unwrap_or_default();
+        let title = format!("--title={first}");
         let labels = format!("--labels={IDEA}");
         let description = format!("--description={text}");
         let create = [

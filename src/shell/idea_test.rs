@@ -223,6 +223,21 @@ fn start_creates_the_idea_its_worktree_and_its_state() {
 }
 
 #[test]
+fn start_keeps_the_whole_text_as_the_description() {
+    let repo = TempDir::new();
+    let tools = bd("nothing");
+    let mut s = opened(tools.clone(), repo.path());
+    s.paste("\n  Queue bd writes\n\n    while offline\n");
+    s.key(key(KeyCode::Tab));
+    s.key(key(KeyCode::Enter));
+    assert_eq!(
+        tools.calls()[0],
+        "bd create --type=task --labels=brainstorm:idea --title=Queue bd writes \
+         --description=\n  Queue bd writes\n\n    while offline\n --silent"
+    );
+}
+
+#[test]
 fn a_failed_bd_create_keeps_the_modal_and_its_text() {
     let repo = TempDir::new();
     let mut s = opened(bd("bd create"), repo.path());
