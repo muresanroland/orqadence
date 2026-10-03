@@ -9,6 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::chart_test::{saved, started, world, writes};
+use super::config_test::config_json;
 use super::epic_test::last_left;
 use super::shell_test::{await_line, key, render, rows, type_line};
 use super::waypoint_test::live_in;
@@ -30,27 +31,12 @@ fn a_label_line_opens_the_modal_before_the_tickets_modal_and_esc_keeps_it() {
     await_line(&mut s, "hx-7 charting done: Tickets hx-1, hx-2");
 
     let l = s.labels.as_ref().expect("no label modal");
-    let rows: Vec<_> = l
-        .rows
-        .iter()
-        .map(|r| {
-            (
-                r.name.as_str(),
-                r.guidance.as_str(),
-                &r.skills[..],
-                &r.tickets[..],
-            )
-        })
-        .collect();
-    assert_eq!(
-        rows,
-        [(
-            "docs",
-            "Docs only",
-            &["o/docs-pack".to_string()][..],
-            &["hx-2".to_string()][..]
-        )]
-    );
+    assert_eq!(l.rows.len(), 1);
+    let r = &l.rows[0];
+    assert_eq!(r.name, "docs");
+    assert_eq!(r.guidance, "Docs only");
+    assert_eq!(r.skills, ["o/docs-pack"]);
+    assert_eq!(r.tickets, ["hx-2"]);
     assert!(s.tickets.is_none(), "the Tickets modal waits");
 
     s.key(key(KeyCode::Esc));
@@ -74,7 +60,7 @@ fn labelled() -> Arc<World> {
 fn labelled_by(result: &'static str) -> Arc<World> {
     let w = world(tickets(), writes(result));
     let config = w.repo.join(".orqadence/config.json");
-    let mut doc = config_json(&w);
+    let mut doc = config_json(&w.repo);
     doc["labels"]["be"] = serde_json::json!({"kind": "area", "guidance": "Servers"});
     fs::write(&config, doc.to_string()).unwrap();
     w.hook(|_, argv| {
@@ -91,11 +77,6 @@ fn labelled_by(result: &'static str) -> Arc<World> {
             .then(|| Ok("abc1234\n".to_string()))
     });
     w
-}
-
-fn config_json(w: &World) -> serde_json::Value {
-    let raw = fs::read(w.repo.join(".orqadence/config.json")).unwrap();
-    serde_json::from_slice(&raw).unwrap()
 }
 
 /// The label modal open on LABELLED's line.
@@ -119,7 +100,7 @@ fn accept_writes_the_label_installs_its_skills_and_labels_its_tickets() {
 
     apply(&mut s);
 
-    let docs = &config_json(&w)["labels"]["docs"];
+    let docs = &config_json(&w.repo)["labels"]["docs"];
     assert_eq!(
         *docs,
         serde_json::json!({"kind": "area", "guidance": "Docs only", "skills": ["orqa-docs-writer"]})
@@ -143,7 +124,7 @@ fn accept_writes_the_label_installs_its_skills_and_labels_its_tickets() {
 #[test]
 fn picking_orqa_be_labels_the_tickets_with_it_and_writes_no_config() {
     let w = labelled();
-    let before = config_json(&w);
+    let before = config_json(&w.repo);
     let mut s = asked(&w);
 
     // the picker: accept, orqa:be, orqa:fe, none
@@ -151,7 +132,7 @@ fn picking_orqa_be_labels_the_tickets_with_it_and_writes_no_config() {
     apply(&mut s);
 
     assert_eq!(w.called("bd label add"), ["bd label add hx-2 orqa:be"]);
-    assert_eq!(config_json(&w), before);
+    assert_eq!(config_json(&w.repo), before);
     assert!(w.called("env GIT_TERMINAL_PROMPT=0 git clone").is_empty());
     assert!(saved(&w).label_lines.is_empty());
     await_line(&mut s, "hx-7 orqa:be in place of orqa:docs; on hx-2");
@@ -161,14 +142,14 @@ fn picking_orqa_be_labels_the_tickets_with_it_and_writes_no_config() {
 #[test]
 fn none_writes_nothing() {
     let w = labelled();
-    let before = config_json(&w);
+    let before = config_json(&w.repo);
     let mut s = asked(&w);
 
     s.key(key(KeyCode::Left));
     apply(&mut s);
 
     assert!(w.called("bd label add").is_empty());
-    assert_eq!(config_json(&w), before);
+    assert_eq!(config_json(&w.repo), before);
     assert!(saved(&w).label_lines.is_empty(), "answered");
     await_line(&mut s, "hx-7 orqa:docs not added");
     s.close();
@@ -309,7 +290,7 @@ fn two_rows_sharing_a_single_skill_source_both_get_its_skill() {
 
     apply(&mut s);
 
-    let labels = &config_json(&w)["labels"];
+    let labels = &config_json(&w.repo)["labels"];
     let skills = serde_json::json!(["orqa-docs-writer"]);
     assert_eq!(labels["docs"]["skills"], skills);
     assert_eq!(labels["guides"]["skills"], skills);
@@ -328,7 +309,7 @@ fn another_skill_installed_from_the_source_is_not_taken_for_it() {
 
     apply(&mut s);
 
-    let docs = &config_json(&w)["labels"]["docs"];
+    let docs = &config_json(&w.repo)["labels"]["docs"];
     assert_eq!(docs["skills"], serde_json::json!(["orqa-docs-writer"]));
     s.close();
 }
