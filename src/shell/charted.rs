@@ -276,16 +276,27 @@ impl Screen {
         }
     }
 
-    /// The next of charting's outcomes, once neither modal is open.
+    /// The next of charting's outcomes or the Maps' ends, once no modal
+    /// of theirs is open: its LABEL lines asked first.
     pub(super) fn open_charted(&mut self) {
-        while self.tickets.is_none() && self.start_map.is_none() {
+        while self.labels.is_none() && self.tickets.is_none() && self.start_map.is_none() {
             let Some(b) = self.charted.pop_front() else {
                 return;
             };
-            match b.phase {
-                Phase::Map => self.open_start_map(&b, false),
-                _ => self.open_tickets(&b),
+            match b.label_lines.is_empty() {
+                true => self.open_outcome(&b),
+                false => self.open_labels(&b, true),
             }
+        }
+    }
+
+    /// The modal of what `b` came out as: the start-Map modal for a Map,
+    /// the Tickets modal for Tickets; for Epics, nothing yet.
+    pub(super) fn open_outcome(&mut self, b: &Brainstorm) {
+        match b.phase {
+            Phase::Map => self.open_start_map(b, false),
+            Phase::Done if !b.tickets.is_empty() => self.open_tickets(b),
+            _ => {}
         }
     }
 

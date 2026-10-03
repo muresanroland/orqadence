@@ -61,7 +61,7 @@ fn await_probe(s: &mut Screen) {
     }
 }
 
-fn config_json(repo: &Path) -> Value {
+pub(super) fn config_json(repo: &Path) -> Value {
     serde_json::from_str(&std::fs::read_to_string(repo.join(".orqadence/config.json")).unwrap())
         .unwrap()
 }

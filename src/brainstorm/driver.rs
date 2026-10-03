@@ -12,7 +12,7 @@ use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{brainstorms, is_map, labelled, Brainstorm, Phase, EPIC, MAP, RESEARCH};
+use super::{brainstorms, is_map, labelled, Brainstorm, Phase, EPIC, MAP, RESEARCH, STATE};
 use crate::orchestrator::app::{self, BRAINSTORM, RELEASE_ON};
 use crate::orchestrator::herdr::{self, agent_name, herdr, locate, place_beside_shell};
 use crate::orchestrator::manual;
@@ -898,7 +898,8 @@ impl Driver<'_> {
         self.b.phase = Phase::Done;
         self.b.session = None;
         self.b.result.clear();
-        self.b.label_lines = r.labels;
+        // charting's lines not yet answered stay asked
+        self.b.label_lines.extend(r.labels);
         self.b.docs_pr = r.pr;
         self.b.epics = r.epics;
         let wrote = self.b.epics.join(", ");
@@ -955,8 +956,19 @@ impl Driver<'_> {
                 .and_then(|v| v["state"].as_str().map(String::from));
             match state.as_deref() {
                 Some("MERGED") => {
+                    // the label modal answers on the Shell's thread: its
+                    // lines as saved, never this copy's from the result
+                    let held = STATE.lock().unwrap_or_else(|e| e.into_inner());
+                    let file = brainstorms(repo).join(&self.b.idea).join("state.json");
+                    let on_disk = fs::read(file)
+                        .ok()
+                        .and_then(|raw| serde_json::from_slice::<Brainstorm>(&raw).ok());
+                    if let Some(on_disk) = on_disk {
+                        self.b.label_lines = on_disk.label_lines;
+                    }
                     self.b.docs_merged = true;
                     self.save();
+                    drop(held);
                     return self.say(&format!("docs {number} merged{next}"));
                 }
                 Some("CLOSED") if !closed => {

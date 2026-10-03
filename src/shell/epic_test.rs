@@ -27,7 +27,7 @@ fn ends(epic: &'static str) -> impl Fn(&Prompt) -> (String, String) + Send + Syn
 /// Map hx-m with every Waypoint closed but its build-Epic one, hx-m.e1,
 /// beside Epics hx-9a and hx-9b and a closed hx-9c; brainstorm-epic writes
 /// `epic`.
-fn last_left(epic: &'static str) -> Arc<World> {
+pub(super) fn last_left(epic: &'static str) -> Arc<World> {
     let mut issues = map(1);
     issues.extend(["hx-9a", "hx-9b", "hx-9c"].map(BdTicket::new));
     let w = world(issues, ends(epic));

@@ -46,6 +46,7 @@ use crate::tools::{Editor, Tools};
 use crate::update::{self, Checked, Ready, Releases};
 use charted::{StartMap, Tickets};
 use idea::Idea;
+use labels::Labels;
 use summary::Summary;
 
 pub(crate) mod brand;
@@ -54,6 +55,7 @@ mod config;
 mod demo;
 mod draw;
 mod idea;
+mod labels;
 mod summary;
 
 /// The screen redraws every 50 ms while a run is live, for the spinner and
@@ -391,13 +393,16 @@ pub(crate) struct Screen {
     /// /brainstorm's idea modal, while it is open: it takes every key but
     /// Ctrl-C.
     pub(crate) idea: Option<Idea>,
+    /// The proposed-label modal, ahead of charting's outcome or the Map's
+    /// end: it takes every key but Ctrl-C.
+    pub(crate) labels: Option<Labels>,
     /// The Tickets modal, while charting's Tickets wait on the user: it
     /// takes every key but Ctrl-C.
     pub(crate) tickets: Option<Tickets>,
     /// The start-Map modal, or its Continue form: it takes every key but
     /// Ctrl-C.
     pub(crate) start_map: Option<StartMap>,
-    /// Charting's outcomes waiting on the Tickets or start-Map modal open,
+    /// Charting's outcomes and the Maps' ends waiting on the modal open,
     /// oldest first.
     pub(crate) charted: VecDeque<Brainstorm>,
     /// The live Brainstorm's Idea: one at a time, and none at open.
@@ -536,6 +541,7 @@ impl Screen {
             approvals: Vec::new(),
             manual_work: None,
             idea: None,
+            labels: None,
             tickets: None,
             start_map: None,
             charted: VecDeque::new(),
@@ -1796,6 +1802,9 @@ impl Screen {
         if self.idea.is_some() && !ctrl_c {
             return self.idea_key(key);
         }
+        if self.labels.is_some() && !ctrl_c {
+            return self.labels_key(key);
+        }
         if self.tickets.is_some() && !ctrl_c {
             return self.tickets_key(key);
         }
@@ -2364,6 +2373,7 @@ impl Screen {
             let saved = self.brainstorms.iter_mut().find(|s| s.idea == b.idea);
             let charting = saved.as_ref().is_some_and(|s| s.phase == Phase::Charting);
             let mut resave = false;
+            let on_map = saved.as_ref().is_some_and(|s| s.phase == Phase::Map);
             if built(&b) && !saved.as_deref().is_some_and(built) {
                 self.suggestion = Some(format!("/start-epic {}", b.epics[0]));
             }
@@ -2391,6 +2401,8 @@ impl Screen {
             match b.phase {
                 Phase::Map if charting => self.charted.push_back(b),
                 Phase::Done if charting && !b.tickets.is_empty() => self.charted.push_back(b),
+                // brainstorm-epic's end
+                Phase::Done if on_map => self.charted.push_back(b),
                 _ => {}
             }
         }
@@ -2631,6 +2643,15 @@ impl Screen {
                 }
             },
             "/continue" if !query.is_empty() => {
+                // a done one's LABEL lines not yet answered
+                let unanswered = self.brainstorms.iter().find(|b| {
+                    b.phase == Phase::Done
+                        && !b.label_lines.is_empty()
+                        && (b.idea == query || b.map == query)
+                });
+                if let Some(b) = unanswered.cloned() {
+                    return self.open_labels(&b, false);
+                }
                 let saved = self
                     .brainstorms
                     .iter()
@@ -3703,6 +3724,8 @@ mod graphify_test;
 mod idea_test;
 #[cfg(test)]
 mod research_test;
+#[cfg(test)]
+mod labels_test;
 #[cfg(test)]
 mod shell_test;
 #[cfg(test)]
