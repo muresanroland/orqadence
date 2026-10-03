@@ -20,7 +20,7 @@ use crate::graphify;
 use crate::setup::{put_gh_label, DEFAULT_TEMPLATE, TEMPLATE_DIR};
 use crate::skills::manifest::{placeholder, unlink_checkout_skills, Manifest, FILES, JOBS, LINKS};
 use crate::skills::{stage_skill, CREATE_PR};
-use crate::tools::RunError;
+use crate::tools::{RunError, Tools};
 
 pub(crate) const MAX_ROUNDS: usize = 3;
 
@@ -525,16 +525,9 @@ impl Orchestrator {
         Ok(inputs)
     }
 
-    /// The remote's default branch as the Ticket's worktree names it,
-    /// "origin/main"; origin/main when origin/HEAD is unset.
+    /// The remote's default branch as the Ticket's worktree names it.
     pub(super) fn origin_head(&self, ticket: &str) -> String {
-        let origin = ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"];
-        let worktree = self.worktree(ticket);
-        let head = self.cfg.tools.run(&worktree, &origin).unwrap_or_default();
-        match head.trim() {
-            "" => "origin/main".into(),
-            h => h.into(),
-        }
+        origin_head(&*self.cfg.tools, &self.worktree(ticket))
     }
 
     /// Runs an Extra review skill's fetch.sh `script` with network, before
@@ -1186,5 +1179,16 @@ impl Orchestrator {
             drop(shadows);
             self.wait_at_start(ticket)?;
         }
+    }
+}
+
+/// The remote's default branch as the checkout in `dir` names it,
+/// "origin/main"; origin/main when origin/HEAD is unset.
+pub(crate) fn origin_head(tools: &dyn Tools, dir: &Path) -> String {
+    let origin = ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"];
+    let head = tools.run(dir, &origin).unwrap_or_default();
+    match head.trim() {
+        "" => "origin/main".into(),
+        h => h.into(),
     }
 }

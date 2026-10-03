@@ -2,7 +2,7 @@
 //! Shell keeps the left 42% and the plan takes the right 58%, its markdown
 //! styled; under 110 columns it folds to a box over the dimmed Shell. A Wake
 //! and a Stage's own question dock in the same frame (harness-crk), and so
-//! do the approval modal and /manual-work.
+//! do the approval modal, /manual-work and /brainstorm's idea modal.
 
 use std::cell::Cell;
 use std::fs;
@@ -12,6 +12,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Wrap,
 };
 use ratatui::Frame;
 
@@ -19,7 +20,7 @@ use super::{bold, cut, fg, shell};
 use crate::orchestrator::judgment::{Action, WAITS};
 use crate::orchestrator::manual;
 use crate::orchestrator::stage::{plural, Ask};
-use crate::shell::brand::{lerp, BORDER, CYAN, GREEN, MUTED, ORANGE, PURPLE, RED, TEXT};
+use crate::shell::brand::{lerp, BORDER, CYAN, GREEN, INK, MUTED, ORANGE, PURPLE, RED, TEXT};
 use crate::shell::{About, NoticeKind, Question, Screen};
 
 /// Under this many columns the dock folds over the Shell.
@@ -997,4 +998,77 @@ pub(super) fn wrap_spans(
     }
     lines.push(Line::from(row));
     lines
+}
+
+/// /brainstorm's idea modal in the dock: the question, the text in a
+/// rounded box ten rows tall (wrapped, each newline a row, its last rows
+/// shown, the cursor at its end while focused), the Ctrl+G line, Start
+/// and Cancel filled, the focused one bright with ›, and the foot line; the
+/// keys at its foot.
+pub(super) fn idea(f: &mut Frame, s: &Screen) {
+    let Some(idea) = &s.idea else {
+        return;
+    };
+    let (rect, block) = dock(f, s);
+    let foot = " Enter starts · Tab moves · Ctrl+J a new line · Esc cancels ";
+    let block = block
+        .title(Span::styled(" BRAINSTORM · a new idea ", bold(PURPLE)))
+        .title_bottom(Span::styled(foot, fg(MUTED)));
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let [_, ask, _, input, keys, _, buttons, _, about] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(10),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .areas(inner);
+    let ask_line = Span::styled("What is the idea? Paste or write it here", bold(TEXT));
+    f.render_widget(Line::from(ask_line), ask);
+
+    let edit = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(fg(if idea.focus == 0 { PURPLE } else { BORDER }))
+        .padding(Padding::horizontal(1));
+    let room = edit.inner(input);
+    let cursor = if idea.focus == 0 { "▌" } else { "" };
+    let text = format!("{}{cursor}", idea.text);
+    let rows: Vec<Line> = text
+        .split('\n')
+        .flat_map(|l| {
+            let piece = vec![(l.to_string(), fg(TEXT))];
+            wrap_spans(piece, room.width as usize, "", "", fg(TEXT))
+        })
+        .collect();
+    let from = rows.len().saturating_sub(room.height as usize);
+    let rows: Vec<Line> = rows.into_iter().skip(from).collect();
+    f.render_widget(Paragraph::new(rows).block(edit), input);
+
+    let muted = |t: &str| Line::from(Span::styled(t.to_string(), fg(MUTED)));
+    let editor = "Ctrl+G opens it in your editor ($VISUAL, $EDITOR, else code -w, vi, nano)";
+    f.render_widget(muted(editor), keys);
+    let button = |text: &str, c: Color, focused: bool| {
+        let style = match focused {
+            true => bold(INK).bg(c),
+            false => fg(c).bg(lerp((c, INK), 0.8)),
+        };
+        let mark = if focused { "›" } else { " " };
+        Span::styled(format!(" {mark} {text}   "), style)
+    };
+    let line = Line::from(vec![
+        button("Start", GREEN, idea.focus == 1),
+        Span::raw("   "),
+        button("Cancel", RED, idea.focus == 2),
+    ]);
+    f.render_widget(line, buttons);
+    let said = "Start creates the Idea in bd and its worktree on brainstorm/<idea>.";
+    f.render_widget(
+        Paragraph::new(muted(said)).wrap(Wrap { trim: false }),
+        about,
+    );
 }

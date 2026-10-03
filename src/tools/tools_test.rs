@@ -103,3 +103,31 @@ fn run_within_is_not_held_by_a_descendant_holding_the_pipes() {
     assert!(started.elapsed().as_secs() < 4, "it waited for the sleeps");
     assert!(err.status.starts_with("timed out"), "{err}");
 }
+
+/// The editor: VISUAL, then EDITOR, an empty one unset and a bare code or
+/// subl given its wait flag; else the first of code -w, vi, nano on PATH.
+#[test]
+fn the_editor_is_visual_then_editor_then_the_first_fallback_on_path() {
+    let (a, b) = (TempDir::new(), TempDir::new());
+    std::fs::write(b.path().join("nano"), "").unwrap();
+    let path = format!("{}:{}", a.path().display(), b.path().display());
+    let pick = |visual: &str, editor: &str| {
+        super::editor(&|k| match k {
+            "VISUAL" => visual.to_string(),
+            "EDITOR" => editor.to_string(),
+            "PATH" => path.clone(),
+            _ => String::new(),
+        })
+    };
+    assert_eq!(pick("hx", "emacs").as_deref(), Some("hx"));
+    assert_eq!(pick("", "emacs -nw").as_deref(), Some("emacs -nw"));
+    assert_eq!(pick(" ", "code").as_deref(), Some("code -w"));
+    assert_eq!(pick("subl", "").as_deref(), Some("subl -w"));
+    assert_eq!(pick("", "").as_deref(), Some("nano"));
+    std::fs::write(a.path().join("vi"), "").unwrap();
+    assert_eq!(pick("", "").as_deref(), Some("vi"));
+    std::fs::write(b.path().join("code"), "").unwrap();
+    assert_eq!(pick("", "").as_deref(), Some("code -w"));
+    let none = super::editor(&|_| String::new());
+    assert_eq!(none, None);
+}

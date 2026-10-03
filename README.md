@@ -95,6 +95,7 @@ orqa init
 | `/start-ticket <ticket>…` | Start a Ticket run over one or more Tickets (`/start-ticket @a @b @c`), with or without an Epic. It stays live until every PR is merged, closing each Ticket as its PR merges; while it runs, `/start-ticket` adds Tickets to it |
 | `/remove-ticket <ticket>` | Take a Ticket out of the live Ticket run: a queued or Parked one, or one whose PR is open (the PR stays open). `/start-ticket` adds it back where it left off. A working one is refused: `/park` it first; so is one another Ticket of the run waits on |
 | `/continue [<ticket>]` | Resume the saved run, e.g. after `/stop-work` or a restart. With a Ticket: unpark that Ticket at its Stage and put its question to you first |
+| `/brainstorm` | Open the idea modal: write or paste the idea (Ctrl+J a new line, Ctrl+G opens it in `$VISUAL`, `$EDITOR`, else `code -w`, `vi` or `nano`). Start creates the Idea in bd (`brainstorm:idea`, in progress, titled by the text's first line), its worktree in `.orqadence-local/worktrees/<idea>` on a new branch `brainstorm/<idea>` and its state in `.orqadence-local/brainstorms/<idea>/`; Esc or Cancel changes nothing |
 | `/stop-work` | Stop scheduling. Agent panes keep running and the state is saved |
 | `/retry <ticket>` | Rerun the Ticket's failed Stage with a fresh session |
 | `/park <ticket>` | Take the Ticket out of the pipeline; the others keep going |
