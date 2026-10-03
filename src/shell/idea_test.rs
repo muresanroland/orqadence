@@ -248,6 +248,20 @@ fn a_failed_bd_create_keeps_the_modal_and_its_text() {
 }
 
 #[test]
+fn a_bd_create_with_no_id_keeps_the_modal_and_creates_nothing() {
+    let tools = Fake::quiet();
+    let mut s = opened(tools.clone(), TempDir::new().path());
+    type_in(&mut s, "an idea");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(text(&s), "an idea");
+    assert_eq!(tools.calls().len(), 1, "only bd create ran");
+    assert_eq!(
+        line(s.events.last().unwrap()),
+        "Idea not created: bd create gave no id"
+    );
+}
+
+#[test]
 fn a_failed_worktree_says_so_and_saves_no_state() {
     let repo = TempDir::new();
     let mut s = opened(bd("git worktree add"), repo.path());

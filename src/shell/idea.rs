@@ -138,7 +138,8 @@ impl Screen {
             "--silent",
         ];
         let id = match tools.run(&repo, &create) {
-            Ok(id) => id.trim().to_string(),
+            Ok(id) if !id.trim().is_empty() => id.trim().to_string(),
+            Ok(_) => return self.say("Idea not created: bd create gave no id"),
             Err(err) => return self.say(&format!("Idea not created: {err}")),
         };
         self.idea = None;
