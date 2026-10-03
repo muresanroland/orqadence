@@ -21,7 +21,7 @@ Orqadence gives you these:
 - **WAYPOINT**: the Research Waypoint. Orqadence claimed it for you: do not claim another.
 - **RESULT FILE**: the path you write last.
 
-When the orqa-brainstorm-waypoint skill loaded you, MAP and WAYPOINT are its own, and you skip step 6: its session writes the result.
+When the orqa-brainstorm-waypoint skill loaded you, MAP and WAYPOINT are its own, and you skip step 6 below, the RESULT FILE: its session writes the result.
 
 ## Do
 
@@ -78,7 +78,7 @@ When the orqa-brainstorm-waypoint skill loaded you, MAP and WAYPOINT are its own
 
 ## Manual work
 
-Anything that needs a credential or a human action you cannot do, such as an account to read a private API, is Manual work: load the orqa-manual-work skill by name and file it. Never run a command it says never to run (`gh secret`, `gh variable`, `gh workflow run` and the rest): a denied attempt is your sign to file it. Your Run directory is `.orqadence-local/runs/<waypoint>/` in the main checkout, `../../runs/<waypoint>/` from this worktree; create it if it is missing. The item's first line is `Ticket: <waypoint> · Stage: research · Blocks: yes|no`.
+Anything that needs a credential or a human action you cannot do, such as an account to read a private API, is Manual work: load the orqa-manual-work skill by name and file it. Never run a command it says never to run (`gh secret`, `gh variable`, `gh workflow run` and the rest): a denied attempt is your sign to file it. Your Run directory is `.orqadence-local/runs/<waypoint>/` in the main checkout, `../../runs/<waypoint>/` from this worktree; create it if it is missing. The item's first line is `Ticket: <waypoint> · Stage: research · Blocks: yes|no`, with `Stage: waypoint` when the orqa-brainstorm-waypoint skill loaded you.
 
 For Manual work you cannot go on without, write the **RESULT FILE** with `STATUS: manual` as its first line and the item's folder path as its second, and wait: the answer comes into this pane as the prompt `Manual work <n> done: <facts>`. Carry on with those facts, and overwrite the **RESULT FILE** with done or failed when you finish.
 

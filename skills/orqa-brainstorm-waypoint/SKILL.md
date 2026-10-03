@@ -69,7 +69,7 @@ With **WAYPOINT** set, take that one. Otherwise run the frontier query:
 bd ready --parent <MAP> --unassigned --json
 ```
 
-It lists the open, unblocked, unclaimed Waypoints in map order. Take the first one, except: skip `brainstorm:research` when BACKGROUND is on, since Orqadence runs and claims those itself; and never take `brainstorm:epic`, since Orqadence starts the build-Epic Waypoint's own session when it is all that is left. If nothing is left to take, write `STATUS: failed` with that reason and stop.
+It lists the open, unblocked, unclaimed Waypoints in map order, the order Orqadence reads too. Take the first one in that list, except: skip `brainstorm:research` when BACKGROUND is on, since Orqadence runs and claims those itself; and never take `brainstorm:epic`, since Orqadence starts the build-Epic Waypoint's own session when it is all that is left. If nothing is left to take, write `STATUS: failed` with that reason and stop.
 
 Claim it before any work, so concurrent sessions skip it:
 
@@ -77,7 +77,7 @@ Claim it before any work, so concurrent sessions skip it:
 bd update <id> --claim
 ```
 
-If the claim fails because another session holds it, run the frontier query again.
+If the claim fails because another session holds it, run the frontier query again; with **WAYPOINT** set, write `STATUS: failed` with that reason instead.
 
 ### 4. Work it
 
@@ -85,7 +85,7 @@ Read the Waypoint: `bd show <id> --json --include-comments`. Its `## Question` i
 
 - **`brainstorm:grilling`**, and whenever in doubt: load the orqa-brainstorm-grilling skill and the orqa-brainstorm-domain-modeling skill by name, and grill the user until the question is decided.
 - **`brainstorm:task`**: nothing to decide; this work unblocks a decision. Do what you can yourself. The checklist the user must do is Manual work: file it, blocking when the Waypoint cannot resolve without it. The answer records what was done and the facts later Waypoints depend on (where a credential lives, a new URL, a row count; never a secret's value).
-- **`brainstorm:research`**, only when BACKGROUND is off: load the orqa-brainstorm-research skill by name and do the research as it says, here in this session. It posts the resolution comment, closes the Waypoint and creates the Waypoints its findings raise; you then add its Decisions-so-far line (step 6) and write your own result file.
+- **`brainstorm:research`**, only when BACKGROUND is off: load the orqa-brainstorm-research skill by name and do the research as it says, here in this session. It posts the resolution comment, closes the Waypoint and creates the Waypoints its findings raise; you then do only step 6's points 3 and 8 (its Decisions-so-far line, the Map write and your commit) and write your own result file.
 - **`brainstorm:prototype`**: build a prototype, below.
 
 ### 5. Prototype
@@ -126,6 +126,8 @@ A prototype is **throwaway code that answers a question**; the question decides 
    git worktree remove ../<idea>-proto-<name>
    ```
 
+   If it refuses over untracked build output, run it again with `--force`: the branch already holds the commit.
+
 ### 6. Resolve
 
 1. Post the answer as the **resolution comment**: the decision and why, in a few lines, with a pointer to any file or branch that holds the detail.
@@ -157,7 +159,7 @@ A prototype is **throwaway code that answers a question**; the question decides 
    ```
 
    Never create a second `brainstorm:epic` Waypoint.
-5. **Graduate the fog.** Not yet specified holds what is in scope but not sharp enough to be a Waypoint. Ticket when you can state the question precisely now, even if you cannot answer it yet; leave it as fog when you cannot. Each patch the answer has made specifiable becomes its new Waypoints and leaves Not yet specified; add any fog the answer revealed.
+5. **Graduate the fog.** Not yet specified holds what is in scope but not sharp enough to be a Waypoint. Make it a Waypoint when you can state the question precisely now, even if you cannot answer it yet; leave it as fog when you cannot. Each patch the answer has made specifiable becomes its new Waypoints and leaves Not yet specified; add any fog the answer revealed.
 6. **Out of scope.** When the answer shows that a Waypoint, this one or another, sits beyond the Destination, close it, `bd close <id> --reason "Out of scope: <why>"`, and add one line under Out of scope: `- <title> (<id>): <gist and why>`. It stays out of Decisions so far.
 7. When the decision invalidates other open Waypoints, update them (`bd update <id> --body-file -`) or close them with a reason.
 8. Write the Map's description back once with all of it (step 2's command, re-reading first), and commit the files you changed (CONTEXT.md, docs/adr/, notes) with the commit rules above.
