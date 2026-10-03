@@ -299,8 +299,10 @@ fn start_map_saves_the_answer_and_makes_the_map_live() {
 #[test]
 fn start_map_whose_state_is_not_saved_keeps_the_form_open() {
     let (w, mut s) = map_modal();
-    let tmp = w.repo.join(LOCAL).join("brainstorms/hx-7/state.json.tmp");
-    std::fs::create_dir_all(tmp).unwrap();
+    // a state.json no file can be renamed over
+    let file = w.repo.join(LOCAL).join("brainstorms/hx-7/state.json");
+    let _ = std::fs::remove_file(&file);
+    std::fs::create_dir_all(file.join("x")).unwrap();
     let before = s.brainstorms[0].background;
     assert_ne!(s.start_map.as_ref().unwrap().background, before);
 

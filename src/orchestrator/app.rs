@@ -601,11 +601,13 @@ pub(crate) fn stage_row(repo: &Path, st: &Stage, labels: &[String]) -> Result<Ro
 }
 
 /// The key of the config.json row a Stage runs on: its name, but the
-/// Debate's is the Moderator's, and a key takes _ where a name has -.
+/// Debate's is the Moderator's, research's the Brainstorm's, and a key
+/// takes _ where a name has -.
 pub(crate) fn row_key(st: &Stage) -> &'static str {
     match st.name {
         "debate" => "moderator",
         "address-pr-comments" => "address_pr_comments",
+        "research" => BRAINSTORM[2],
         name => name,
     }
 }

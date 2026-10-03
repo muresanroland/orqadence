@@ -24,7 +24,7 @@ use crossterm::event::{
 use ratatui::layout::{Position, Rect};
 use ratatui::DefaultTerminal;
 
-use crate::brainstorm::{self, Brainstorm, Phase};
+use crate::brainstorm::{self, research, Brainstorm, Phase};
 use crate::graphify;
 use crate::on_call::{self, Doorbell, OnCall};
 use crate::orchestrator::app::{self, ADDRESS_PR_COMMENTS_COUNTDOWN, RELEASE_ON};
@@ -35,7 +35,7 @@ use crate::orchestrator::pr::Item;
 use crate::orchestrator::release;
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::{
-    append_log, plural, pr_ref, Answer, Ask, Config, Event, Orchestrator,
+    append_log, log_file, plural, pr_ref, Answer, Ask, Config, Event, Orchestrator,
 };
 use crate::orchestrator::state::{
     acquire_lock, load_state, Lock, Review, State, TicketState, LOCAL, STATUS_MERGED,
@@ -318,6 +318,14 @@ pub(crate) struct Screen {
     /// The drivers' threads, by idea, joined by close() so a result being
     /// acted on is saved before the process exits.
     pub(crate) brainstorm_threads: Vec<(String, JoinHandle<()>)>,
+    /// Each Map's research thread while it runs, its changes applied in
+    /// poll().
+    pub(crate) research: Vec<research::Handle>,
+    research_sender: Sender<research::Update>,
+    research_receiver: Receiver<research::Update>,
+    /// A research close of the live Map's, and its Waypoint: Next Waypoint?
+    /// once no session with you runs.
+    research_closed: Option<(String, String)>,
     /// The suggested command, ghost text in the empty input: Tab fills it
     /// in, running any command clears it.
     pub(crate) suggestion: Option<String>,
@@ -483,6 +491,7 @@ impl Screen {
         let (graphify_sender, graphify_receiver) = mpsc::channel();
         let (docs_sender, docs_receiver) = mpsc::channel();
         let (brainstorm_sender, brainstorm_receiver) = mpsc::channel();
+        let (research_sender, research_receiver) = mpsc::channel();
         Screen {
             folder,
             version: crate::version::version(),
@@ -495,6 +504,10 @@ impl Screen {
             brainstorm_receiver,
             brainstorm_stop: Arc::default(),
             brainstorm_threads: Vec::new(),
+            research: Vec::new(),
+            research_sender,
+            research_receiver,
+            research_closed: None,
             suggestion: None,
             state,
             events: Vec::new(),
@@ -827,6 +840,9 @@ impl Screen {
         for (_, driver) in self.brainstorm_threads.drain(..) {
             let _ = driver.join();
         }
+        for r in self.research.drain(..) {
+            let _ = r.thread.join();
+        }
         // cancelled under the lock the pass records under: it records nothing
         // after, and closes a tab it makes after
         let tab = {
@@ -908,6 +924,7 @@ impl Screen {
                 self.live = None;
             }
         }
+        self.research_poll();
         self.open_charted();
         while let Ok((line, over)) = self.docs_receiver.try_recv() {
             self.say(&line);
@@ -969,9 +986,17 @@ impl Screen {
         self.running = false;
         self.withdraw(&run);
         // never saved: derived again on resume
+        // the Brainstorm's and its research's stay too
+        let researching: Vec<String> = (self.questions.iter())
+            .filter_map(|q| q.ticket.clone())
+            .filter(|id| self.research.iter().any(|r| r.holds(id)))
+            .collect();
+        let kept = |q: &Question| {
+            q.outlives_run() || q.ticket.as_ref().is_some_and(|id| researching.contains(id))
+        };
         // composing is the front Question's: kept with it
-        self.composing &= self.questions.first().is_some_and(Question::outlives_run);
-        self.questions.retain(Question::outlives_run);
+        self.composing &= self.questions.first().is_some_and(kept);
+        self.questions.retain(kept);
         self.first = None;
         if run.o.stopping() {
             // a long usage limit has said it closed the panes
@@ -2290,6 +2315,9 @@ impl Screen {
             ) => "",
             _ => return,
         };
+        if let Some(r) = self.research.iter().find(|r| r.holds(&id)) {
+            return r.o.answer(&id, pane, answer);
+        }
         if let Some(run) = &self.run {
             run.o.answer(&id, pane, answer);
         }
@@ -2324,15 +2352,17 @@ impl Screen {
         }
     }
 
-    /// The drivers' state changes, each Brainstorm's copy replaced. Its
+    /// The drivers' state changes, each Brainstorm's copy replaced but its
+    /// research, the research thread's own: saved again over a driver's. Its
     /// Epics written and its docs PR merged or never opened suggests
     /// /start-epic of the first, once.
     fn brainstorm_updates(&mut self) {
         let built =
             |b: &Brainstorm| b.phase == Phase::Done && !b.epics.is_empty() && !b.docs_waiting();
-        while let Ok(b) = self.brainstorm_receiver.try_recv() {
+        while let Ok(mut b) = self.brainstorm_receiver.try_recv() {
             let saved = self.brainstorms.iter_mut().find(|s| s.idea == b.idea);
             let charting = saved.as_ref().is_some_and(|s| s.phase == Phase::Charting);
+            let mut resave = false;
             if built(&b) && !saved.as_deref().is_some_and(built) {
                 self.suggestion = Some(format!("/start-epic {}", b.epics[0]));
             }
@@ -2340,8 +2370,16 @@ impl Screen {
                 self.live = None;
             }
             match saved {
-                Some(saved) => *saved = b.clone(),
+                Some(saved) => {
+                    let kept = (saved.research_tab.clone(), saved.research.clone());
+                    resave = (&b.research_tab, &b.research) != (&kept.0, &kept.1);
+                    (b.research_tab, b.research) = kept;
+                    *saved = b.clone();
+                }
                 None => self.brainstorms.push(b.clone()),
+            }
+            if let Some(Err(err)) = resave.then(|| b.save(&self.cfg.repo)) {
+                self.tell(Some(b.key()), &format!("Brainstorm state not saved: {err}"));
             }
             // charting's outcome, once; Start Map makes a Map live again
             if charting && b.phase != Phase::Charting && self.live.as_ref() == Some(&b.idea) {
@@ -2756,6 +2794,9 @@ impl Screen {
     /// started on it with WAYPOINT set.
     fn continue_waypoint(&mut self, mut b: Brainstorm, id: &str) {
         let key = b.key().to_string();
+        if b.research.iter().any(|r| r.waypoint == id && r.parked) {
+            return self.continue_research(b, id);
+        }
         if self.switch_asked(&key, &format!("/continue @{id}")) {
             return;
         }
@@ -2777,6 +2818,33 @@ impl Screen {
             *saved = b.clone();
         }
         self.work_map(b, None, Some(id.to_string()));
+    }
+
+    /// /continue @<waypoint> of Parked Research Waypoint `id` of `b`: its
+    /// research thread resumes its session by id in the research tab, the
+    /// Map live or not, and its Question goes first; Away goes off, the
+    /// user being back.
+    fn continue_research(&mut self, mut b: Brainstorm, id: &str) {
+        let queued = (self.research.iter())
+            .find(|r| r.idea == b.idea)
+            .is_some_and(|r| r.resume(id));
+        // no thread: the next takes it up, unparked
+        if !queued {
+            for r in b.research.iter_mut().filter(|r| r.waypoint == id) {
+                r.parked = false;
+            }
+            if let Err(err) = b.save(&self.cfg.repo) {
+                return self.tell(Some(id), &format!("Brainstorm state not saved: {err}"));
+            }
+            if let Some(saved) = self.brainstorms.iter_mut().find(|s| s.idea == b.idea) {
+                *saved = b;
+            }
+        }
+        self.first = Some(id.to_string());
+        if self.cfg.away.swap(false, Ordering::SeqCst) {
+            self.say("away: off");
+        }
+        self.tell(Some(id), "research resumes");
     }
 
     /// "Next Waypoint?" answered for `map`, while it is the live Map: yes
@@ -3142,16 +3210,8 @@ impl Screen {
                 return None;
             }
         };
-        let log: Box<dyn io::Write + Send> = match File::options()
-            .create(true)
-            .append(true)
-            .open(repo.join(LOCAL).join("orchestrator.log"))
-        {
-            Ok(file) => Box::new(file),
-            Err(_) => Box::new(io::sink()),
-        };
         match Orchestrator::new(Config {
-            log: Arc::new(Mutex::new(log)),
+            log: Arc::new(Mutex::new(log_file(repo))),
             events: self.sender.clone(),
             ..self.cfg.clone()
         }) {
@@ -3638,6 +3698,8 @@ mod epic_test;
 mod graphify_test;
 #[cfg(test)]
 mod idea_test;
+#[cfg(test)]
+mod research_test;
 #[cfg(test)]
 mod shell_test;
 #[cfg(test)]

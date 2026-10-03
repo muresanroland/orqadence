@@ -76,6 +76,10 @@ pub(crate) const ADDRESS_PR_COMMENTS: Stage =
 /// The Release: a Stage of the run, not of a Ticket's Pipeline, once every
 /// Ticket of a run carrying orqa:release is merged (release.rs).
 pub(crate) const RELEASE: Stage = stage("release", "orqa-stage-release", 60);
+/// A Brainstorm's Research Waypoint, nobody there: a Stage of the
+/// Brainstorm's own Orchestrator (brainstorm/research.rs), on the
+/// brainstorm_research row.
+pub(crate) const RESEARCH: Stage = stage("research", "orqa-brainstorm-research", 60);
 /// The code-editing Stages: the ones given the Ticket's labels.
 pub(crate) const EDITING: [&Stage; 4] = [&IMPLEMENT, &FIX, &REBASE, &ADDRESS_PR_COMMENTS];
 
@@ -349,6 +353,21 @@ pub(crate) struct Orchestrator {
     /// failure on one fails the test.
     #[cfg(test)]
     pub(crate) threads: Mutex<Vec<thread::JoinHandle<()>>>,
+    /// A Brainstorm's research, when this Orchestrator runs it: none for a
+    /// run's.
+    pub(crate) place: Option<Place>,
+}
+
+/// Where a Brainstorm's research runs: the Brainstorm's worktree, every
+/// session in its one tab research-<map>. Its state is the Brainstorm's,
+/// never the run's state file.
+pub(crate) struct Place {
+    pub(crate) worktree: PathBuf,
+    /// research-<map>, the tab's label.
+    pub(crate) label: String,
+    /// The tab, empty until the first pane makes it; locked while a pane is
+    /// placed, so two sessions starting together share it.
+    pub(crate) tab: Mutex<String>,
 }
 
 impl Orchestrator {
@@ -385,6 +404,20 @@ impl Orchestrator {
             shadows: Mutex::new(BTreeMap::new()),
             #[cfg(test)]
             threads: Mutex::new(Vec::new()),
+            place: None,
+        }
+    }
+
+    /// The Orchestrator of Map `map`'s research, in `worktree`, its tab
+    /// `tab` once made: nothing read, nothing saved.
+    pub(crate) fn research(cfg: Config, worktree: PathBuf, map: &str, tab: String) -> Self {
+        Orchestrator {
+            place: Some(Place {
+                worktree,
+                label: format!("research-{map}"),
+                tab: Mutex::new(tab),
+            }),
+            ..Self::with_state(cfg, State::default())
         }
     }
 
@@ -429,8 +462,12 @@ impl Orchestrator {
         run_dir(&self.cfg.repo, ticket)
     }
 
+    /// The Ticket's worktree, or the Brainstorm's for its research.
     pub(crate) fn worktree(&self, ticket: &str) -> PathBuf {
-        worktree(&self.cfg.repo, ticket)
+        match &self.place {
+            Some(place) => place.worktree.clone(),
+            None => worktree(&self.cfg.repo, ticket),
+        }
     }
 
     /// The one way an event is said: a log line 'YYYY-MM-DD HH:MM:SS <bd id>
@@ -615,10 +652,14 @@ impl Orchestrator {
         });
     }
 
-    /// Changes the state and writes the state file.
+    /// Changes the state and writes the state file; research's is never
+    /// written.
     pub(super) fn change_state(&self, change: impl FnOnce(&mut State)) {
         let mut state = self.state.lock().unwrap();
         change(&mut state);
+        if self.place.is_some() {
+            return;
+        }
         let saved = state.save(&self.cfg.repo);
         drop(state);
         if let Err(err) = saved {
@@ -679,6 +720,19 @@ pub(crate) fn append_log(
     });
     if let Ok(mut log) = log {
         let _ = log.write_all(log_line(time, ticket, text).as_bytes());
+    }
+}
+
+/// orchestrator.log opened to append, for a Config's log; a sink when it
+/// cannot be.
+pub(crate) fn log_file(repo: &Path) -> Box<dyn Write + Send> {
+    let file = fs::File::options()
+        .create(true)
+        .append(true)
+        .open(repo.join(LOCAL).join("orchestrator.log"));
+    match file {
+        Ok(file) => Box::new(file),
+        Err(_) => Box::new(io::sink()),
     }
 }
 
@@ -900,6 +954,17 @@ impl Orchestrator {
                         self.report(ticket, &stuck);
                         self.report(ticket, &format!("judged: {}", judged.said()));
                         Some(Answer::Act(judged.choice))
+                    }
+                    // research has nobody there: under Away it parks, as a
+                    // Stage's question does, and /continue @<waypoint> asks
+                    _ if st.name == RESEARCH.name && self.cfg.away.load(Ordering::SeqCst) => {
+                        let lead = format!(
+                            "{label} needed you while you were away and needs a manual resume: \
+                             /continue @{ticket} in the Orqadence Shell resumes its session and \
+                             asks you."
+                        );
+                        self.comment_away(ticket, &lead, &stuck, &[]);
+                        return Err(StageError::Parked(AWAY.to_string()));
                     }
                     judged => {
                         // of the nudges, the one the Judgment scored higher
@@ -1904,7 +1969,15 @@ impl Orchestrator {
             placement.extend(["--env", env.as_str()]);
         }
 
-        let (tab, pane) = self.place_pane(&ts.tab, ticket, &placement, "")?;
+        let (tab, pane) = match &self.place {
+            Some(place) => {
+                let mut tab = place.tab.lock().unwrap();
+                let placed = self.place_pane(&tab, &place.label, &placement, "")?;
+                *tab = placed.0.clone();
+                placed
+            }
+            None => self.place_pane(&ts.tab, ticket, &placement, "")?,
+        };
         self.update(ticket, |ts| {
             ts.tab = tab;
             ts.panes.insert(st.name.to_string(), pane.clone());

@@ -139,6 +139,26 @@ pub(crate) fn docs_pr(cfg: &Config, b: Brainstorm, saved: &Sender<Brainstorm>, s
     Driver::new(cfg, saved, stop, b, stage).track_docs();
 }
 
+/// Research Waypoint `id` of the live Map of `b` closed with no session
+/// with the user running: "Next Waypoint?" when the frontier gives one, as
+/// after a Waypoint of theirs.
+pub(crate) fn research_closed(
+    cfg: &Config,
+    b: Brainstorm,
+    saved: &Sender<Brainstorm>,
+    stop: &AtomicBool,
+    id: &str,
+) {
+    let d = Driver::new(cfg, saved, stop, b, WAYPOINT);
+    match bd_list(&cfg.repo, &*cfg.tools) {
+        Ok(issues) => match issues.iter().find(|i| i.id == id) {
+            Some(w) => d.ask_next(w, &issues),
+            None => d.say(&format!("Next Waypoint not asked: {id} is not in bd")),
+        },
+        Err(err) => d.say(&format!("Next Waypoint not asked: bd list failed: {err}")),
+    }
+}
+
 impl<'a> Driver<'a> {
     /// The driver of `b`'s `stage` session, nothing set aside.
     fn new(
@@ -824,8 +844,17 @@ impl Driver<'_> {
         self.b.result.clear();
         self.save();
         self.tell(&w.id, "closed; its pane closes");
+        self.ask_next(&w, &issues);
+        true
+    }
+
+    /// "Next Waypoint?" after `w` closed, when the frontier gives a
+    /// Waypoint for the user or the build-Epic one; else the line saying
+    /// what it waits on.
+    fn ask_next(&self, w: &BdIssue, issues: &[BdIssue]) {
+        let map = self.b.map.clone();
         let asked = format!("{} {} closed. Next Waypoint?", suffix(&w.id), w.title);
-        match self.frontier(&issues) {
+        match self.frontier(issues) {
             Ok(Next::Take(n) | Next::Epic(n)) => {
                 let options = vec![
                     format!("yes: the next on the Map, {} {}", suffix(&n.id), n.title),
@@ -842,7 +871,6 @@ impl Driver<'_> {
             Ok(Next::Wait(line)) => self.say(&line),
             Err(why) => self.say(&format!("Next Waypoint not asked: {why}")),
         }
-        true
     }
 
     /// brainstorm-epic's result read: its EPICS open epics in bd close the

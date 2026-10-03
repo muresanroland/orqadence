@@ -94,6 +94,17 @@ pub(super) fn started(w: &Arc<World>) -> Screen {
     s
 }
 
+/// Polls the Shell until charting's driver has ended: Start Map refuses
+/// while it runs.
+pub(super) fn charted(s: &mut Screen) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while s.brainstorm_threads.iter().any(|(_, t)| !t.is_finished()) {
+        assert!(std::time::Instant::now() < deadline, "charting never ended");
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
 /// A charting session that writes `result` and goes idle.
 pub(super) fn writes(result: &'static str) -> impl Fn(&Prompt) -> (String, String) + Send + Sync {
     move |p: &Prompt| match p.stage.as_str() {
