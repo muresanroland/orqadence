@@ -18,6 +18,12 @@ pub(crate) struct StageResult {
     pub(crate) unreviewed: String,
     /// The Release's new version, as its VERSION: line wrote it: v1.5.0.
     pub(crate) version: String,
+    /// A charting result's Map, as its MAP: line names it.
+    pub(crate) map: String,
+    /// A charting result's Tickets, as its TICKETS: line lists them.
+    pub(crate) tickets: Vec<String>,
+    /// Each LABEL: line's text: a label the session proposes.
+    pub(crate) labels: Vec<String>,
 }
 
 /// The Pipeline context needed to accept a result. The default requires only
@@ -90,6 +96,18 @@ pub(crate) fn read_stage_result(path: &Path, want: ResultRequirements) -> (Stage
             .filter(|_| result.version.is_empty())
         {
             result.version = version.trim().to_string();
+        }
+        if let Some(map) = line.strip_prefix("MAP:").filter(|_| result.map.is_empty()) {
+            result.map = map.trim().to_string();
+        }
+        if let Some(ids) = line
+            .strip_prefix("TICKETS:")
+            .filter(|_| result.tickets.is_empty())
+        {
+            result.tickets = ids.split_whitespace().map(String::from).collect();
+        }
+        if let Some(label) = line.strip_prefix("LABEL:") {
+            result.labels.push(label.trim().to_string());
         }
         // As ^PR:\s*(\S+): the whitespace may cross blank lines.
         if let Some(rest) = line.strip_prefix("PR:").filter(|_| result.pr.is_empty()) {

@@ -1,19 +1,20 @@
 //! /brainstorm's idea modal: the text typed, pasted or written in the
 //! user's editor with Ctrl+G, and Start, which creates the Idea in bd, its
-//! worktree on brainstorm/<idea> and the Brainstorm's state file. The
-//! charting session that follows is harness-1n3.8's.
+//! worktree on brainstorm/<idea> and the Brainstorm's state file, then the
+//! charting session on its driver's thread.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{Screen, NOTICE_WINDOW};
-use crate::brainstorm::{Brainstorm, IDEA};
+use crate::brainstorm::{driver, Brainstorm, IDEA};
 use crate::graphify;
 use crate::orchestrator::pipeline::origin_head;
-use crate::orchestrator::stage::worktree;
+use crate::orchestrator::stage::{worktree, Config};
 use crate::tools;
 
 /// The idea modal's text and focus: 0 the input, 1 Start, 2 Cancel.
@@ -168,10 +169,30 @@ impl Screen {
         if let Err(err) = b.save(&repo) {
             return tell(self, format!("Brainstorm state not saved: {err}"));
         }
-        self.brainstorms.push(b);
+        self.brainstorms.push(b.clone());
         tell(
             self,
             format!("Idea created from your text; worktree on {branch}"),
         );
+        self.chart(b);
+    }
+
+    /// The charting session for `b`, on a driver thread of its own: never
+    /// outside herdr, with no Shell's pane to split.
+    fn chart(&mut self, b: Brainstorm) {
+        if self.shell_pane.is_empty() {
+            let text = "charting not started: the Shell is not in a herdr pane (HERDR_PANE_ID)";
+            return self.tell(Some(&b.idea), text);
+        }
+        let cfg = Config {
+            events: self.sender.clone(),
+            ..self.cfg.clone()
+        };
+        let (shell, saved, stop) = (
+            self.shell_pane.clone(),
+            self.brainstorm_sender.clone(),
+            self.brainstorm_stop.clone(),
+        );
+        thread::spawn(move || driver::chart(&cfg, &shell, b, &saved, &stop));
     }
 }

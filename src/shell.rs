@@ -11,7 +11,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -34,10 +34,10 @@ use crate::orchestrator::pr::Item;
 use crate::orchestrator::release;
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::{
-    log_line, plural, pr_ref, Answer, Ask, Config, Event, Orchestrator,
+    append_log, plural, pr_ref, Answer, Ask, Config, Event, Orchestrator,
 };
 use crate::orchestrator::state::{
-    acquire_lock, load_state, local_dir, Lock, Review, State, TicketState, LOCAL, STATUS_MERGED,
+    acquire_lock, load_state, Lock, Review, State, TicketState, LOCAL, STATUS_MERGED,
     STATUS_PARKED, STATUS_PR_OPEN, STATUS_RUNNING,
 };
 use crate::setup;
@@ -281,8 +281,17 @@ pub(crate) struct Screen {
     pub(crate) epics: Vec<Epic>,
     /// The Brainstorms' Maps, Waypoints and Ideas, kept off the tree.
     brainstorm_issues: Vec<BdIssue>,
-    /// The saved Brainstorms, loaded at open.
+    /// The saved Brainstorms, loaded at open; a driver's thread sends each
+    /// one it changes back through brainstorm_sender.
     pub(crate) brainstorms: Vec<Brainstorm>,
+    /// The Shell's own herdr pane, HERDR_PANE_ID at open: the charting
+    /// pane splits it.
+    pub(crate) shell_pane: String,
+    /// The Brainstorm drivers' state changes, applied in poll().
+    brainstorm_sender: Sender<Brainstorm>,
+    brainstorm_receiver: Receiver<Brainstorm>,
+    /// Set by close(): a driver's thread leaves, its pane running in herdr.
+    brainstorm_stop: Arc<AtomicBool>,
     /// The suggested command, ghost text in the empty input: Tab fills it
     /// in, running any command clears it.
     pub(crate) suggestion: Option<String>,
@@ -436,6 +445,7 @@ impl Screen {
         let (ring_sender, ring_receiver) = mpsc::channel();
         let (graphify_sender, graphify_receiver) = mpsc::channel();
         let (docs_sender, docs_receiver) = mpsc::channel();
+        let (brainstorm_sender, brainstorm_receiver) = mpsc::channel();
         Screen {
             folder,
             version: crate::version::version(),
@@ -443,6 +453,10 @@ impl Screen {
             epics,
             brainstorm_issues: Vec::new(),
             brainstorms: Vec::new(),
+            shell_pane: String::new(),
+            brainstorm_sender,
+            brainstorm_receiver,
+            brainstorm_stop: Arc::default(),
             suggestion: None,
             state,
             events: Vec::new(),
@@ -547,6 +561,7 @@ impl Screen {
         };
         let mut screen = Screen::new(cfg, folder, truecolor, Vec::new(), state);
         screen.missing = missing;
+        screen.shell_pane = env("HERDR_PANE_ID");
         let history = repo.join(LOCAL).join("history");
         screen.history = fs::read_to_string(&history)
             .unwrap_or_default()
@@ -763,6 +778,8 @@ impl Screen {
     /// its tab closes, its session with it, and nothing is recorded, so the
     /// next check asks again.
     pub(crate) fn close(&mut self) {
+        // a live charting pane stays running in herdr
+        self.brainstorm_stop.store(true, Ordering::SeqCst);
         // cancelled under the lock the pass records under: it records nothing
         // after, and closes a tab it makes after
         let tab = {
@@ -831,6 +848,12 @@ impl Screen {
             }
             if let Some(tag) = tag {
                 self.ask_docs_pass(tag);
+            }
+        }
+        while let Ok(b) = self.brainstorm_receiver.try_recv() {
+            match self.brainstorms.iter_mut().find(|s| s.idea == b.idea) {
+                Some(saved) => *saved = b,
+                None => self.brainstorms.push(b),
             }
         }
         while let Ok((line, over)) = self.docs_receiver.try_recv() {
@@ -1266,18 +1289,8 @@ impl Screen {
     /// Orchestrator's are, but for the demo's; None is a run-level line.
     fn tell(&mut self, ticket: Option<&str>, text: &str) {
         let time = chrono::Local::now();
-        let log = match self.demo {
-            Some(_) => Err(io::ErrorKind::Unsupported.into()),
-            None => local_dir(&self.cfg.repo).and_then(|dir| {
-                File::options()
-                    .create(true)
-                    .append(true)
-                    .open(dir.join("orchestrator.log"))
-            }),
-        };
-        if let Ok(mut log) = log {
-            // one write: Ticket threads append to the same file
-            let _ = log.write_all(log_line(time, ticket.unwrap_or(""), text).as_bytes());
+        if self.demo.is_none() {
+            append_log(&self.cfg.repo, time, ticket.unwrap_or(""), text);
         }
         self.show(Event {
             time,
@@ -3000,7 +3013,7 @@ fn unfinished(epics: &[Epic], kept_out: &[BdIssue], id: &str) -> bool {
 
 /// Every issue, Epics and closed ones too, from one bd list call: --limit 0,
 /// as bd's default 50 would cut off a Waypoint's Map.
-fn bd_list(repo: &Path, tools: &dyn Tools) -> Result<Vec<BdIssue>, String> {
+pub(crate) fn bd_list(repo: &Path, tools: &dyn Tools) -> Result<Vec<BdIssue>, String> {
     let out = tools
         .run(
             repo,
@@ -3168,6 +3181,8 @@ fn edit(terminal: &mut DefaultTerminal, screen: &mut Screen) -> io::Result<()> {
 
 #[cfg(test)]
 mod approval_test;
+#[cfg(test)]
+mod brainstorm_test;
 #[cfg(test)]
 mod config_test;
 #[cfg(test)]
