@@ -2733,7 +2733,10 @@ impl Screen {
         if self.driving(&b.idea) {
             return self.refuse(&format!("refused: a Waypoint session of {key} is running"));
         }
-        let issues = self.reload_issues().unwrap_or_default();
+        // a failed bd list is said, never read as a Waypoint to take
+        let Some(issues) = self.reload_issues() else {
+            return;
+        };
         if let Some(text) = brainstorm::waypoint_refusal(&issues, &b, id) {
             return self.refuse(&text);
         }

@@ -776,8 +776,11 @@ impl Driver<'_> {
                     stage: WAYPOINT.to_string(),
                     item,
                 };
-                // keyed by its folder: the line is the same for every item
-                let key = folder.display().to_string();
+                // keyed by its folder and the result's time: the line is
+                // the same for every item, and Done's deleted folder can
+                // come back as the next item's before a tick sees no result
+                let written = fs::metadata(result).and_then(|m| m.modified()).ok();
+                let key = format!("{} {written:?}", folder.display());
                 if *said != key {
                     let text = format!("manual work in Waypoint {at}");
                     self.send(&id, &text, true, Some(ask));

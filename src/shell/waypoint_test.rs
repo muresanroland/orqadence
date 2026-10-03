@@ -310,6 +310,20 @@ fn continue_a_waypoint_that_cannot_be_taken_says_why() {
 }
 
 #[test]
+fn continue_a_waypoint_when_bd_list_fails_starts_nothing() {
+    let (w, mut s) = stopped();
+    let starts = w.called("herdr agent start").len();
+    w.fail_once("bd list", "boom");
+
+    s.command("/continue @hx-m.1");
+
+    assert!(notice(&s).starts_with("bd list failed"), "{}", notice(&s));
+    assert_eq!(w.called("herdr agent start").len(), starts);
+    assert_eq!(s.live, None);
+    s.close();
+}
+
+#[test]
 fn an_interrupted_session_resumes_by_its_id() {
     let (w, mut s, pane) = working();
     s.close();
@@ -595,6 +609,34 @@ fn manual_work_filed_anew_before_a_tick_sees_no_result_is_asked_too() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while manual_asked(&s) < 2 {
         assert!(std::time::Instant::now() < deadline, "item 2 never asked");
+        s.poll();
+    }
+    s.close();
+}
+
+#[test]
+fn manual_work_filed_again_in_the_folder_done_deleted_is_asked_too() {
+    let (w, mut s, _) = working();
+    file_manual(&w, 1);
+    await_line(&mut s, "hx-m.1 asking you: manual work in Waypoint");
+    let asked = manual_asked(&s);
+
+    // Done deletes manual-work/1; the next item takes its number again
+    // before a tick sees no result or no folder
+    let folder = w.repo.join(LOCAL).join("runs/hx-m.1/manual-work/1");
+    let next = folder.with_extension("new");
+    std::fs::create_dir_all(&next).unwrap();
+    std::fs::copy(folder.join("manual-work.md"), next.join("manual-work.md")).unwrap();
+    std::fs::remove_dir_all(&folder).unwrap();
+    std::fs::rename(&next, &folder).unwrap();
+    file_manual(&w, 1);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while manual_asked(&s) == asked {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the new item 1 never asked"
+        );
         s.poll();
     }
     s.close();
