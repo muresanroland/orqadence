@@ -76,7 +76,7 @@ pub(crate) const ADDRESS_PR_COMMENTS: Stage =
 /// The Release: a Stage of the run, not of a Ticket's Pipeline, once every
 /// Ticket of a run carrying orqa:release is merged (release.rs).
 pub(crate) const RELEASE: Stage = stage("release", "orqa-stage-release", 60);
-/// A Brainstorm's Research Waypoint, nobody there: a Stage of the
+/// A Brainstorm's Research Waypoint, needing no user: a Stage of the
 /// Brainstorm's own Orchestrator (brainstorm/research.rs), on the
 /// brainstorm_research row.
 pub(crate) const RESEARCH: Stage = stage("research", "orqa-brainstorm-research", 60);

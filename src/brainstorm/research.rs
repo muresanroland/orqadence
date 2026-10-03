@@ -95,6 +95,7 @@ pub(crate) fn spawn(
                 research: b.research.clone(),
                 running: Vec::new(),
                 kept: Vec::new(),
+                resuming: Vec::new(),
                 waiting: BTreeSet::new(),
                 refused: BTreeSet::new(),
                 sent: (b.research_tab, b.research),
@@ -125,6 +126,8 @@ struct Runner {
     /// Its result written with its Waypoint still open in bd: its pane and
     /// its slot kept until bd shows it closed.
     kept: Vec<String>,
+    /// Parked ones /continue @<waypoint> resumed, waiting for a slot.
+    resuming: Vec<String>,
     /// Said to wait for a slot, until it starts.
     waiting: BTreeSet<String>,
     /// Its claim failed, said once.
@@ -165,22 +168,46 @@ impl Runner {
             for id in resumed {
                 if let Some(r) = self.research.iter_mut().find(|r| r.waypoint == id) {
                     r.parked = false;
-                    self.take(&id);
+                    self.resuming.push(id);
                 }
             }
+            self.resume_waiting();
             if live.load(Ordering::SeqCst) {
                 self.start_ready();
             }
             self.sync(None);
             {
                 let mut queue = resume.lock().unwrap();
-                let idle = self.running.is_empty() && self.kept.is_empty();
+                let idle =
+                    self.running.is_empty() && self.kept.is_empty() && self.resuming.is_empty();
                 if !live.load(Ordering::SeqCst) && idle && queue.as_ref().unwrap().is_empty() {
                     *queue = None;
                     return;
                 }
             }
             thread::sleep(self.o.cfg.tick);
+        }
+    }
+
+    /// The resumed ones taken up first, in the order asked, while a slot is
+    /// free; the rest said to wait.
+    fn resume_waiting(&mut self) {
+        let max = app::count(&self.o.cfg.repo, &MAX_RESEARCH);
+        while !self.resuming.is_empty() {
+            let busy = self.running.len() + self.kept.len();
+            if busy < max {
+                let id = self.resuming.remove(0);
+                self.waiting.remove(&id);
+                self.take(&id);
+                continue;
+            }
+            for id in &self.resuming {
+                if self.waiting.insert(id.clone()) {
+                    let text = format!("waits for a research slot, {busy} of {max} running");
+                    self.o.report(id, &text);
+                }
+            }
+            return;
         }
     }
 

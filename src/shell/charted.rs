@@ -180,6 +180,9 @@ impl Screen {
     /// after a research close, with no session with you running, Next
     /// Waypoint? asked when the frontier gives one.
     pub(super) fn research_poll(&mut self) {
+        // the ended ones first: what they sent before they ended is read
+        // below, so none is started again over a stale list
+        self.research.retain(|r| !r.thread.is_finished());
         while let Ok(u) = self.research_receiver.try_recv() {
             if let Some(b) = self.brainstorms.iter_mut().find(|b| b.idea == u.idea) {
                 (b.research_tab, b.research) = (u.tab, u.research);
@@ -201,7 +204,6 @@ impl Screen {
             r.live
                 .store(b.is_some_and(|b| live(self, b)), Ordering::SeqCst);
         }
-        self.research.retain(|r| !r.thread.is_finished());
         let wanted: Vec<Brainstorm> = (self.brainstorms.iter())
             .filter(|b| b.phase == Phase::Map && !self.research.iter().any(|r| r.idea == b.idea))
             .filter(|b| live(self, b) || b.research.iter().any(|r| !r.parked))

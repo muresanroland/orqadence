@@ -247,6 +247,8 @@ fn under_away_the_wake_parks_it_closes_its_pane_and_starts_the_next() {
 #[test]
 fn continue_at_a_parked_research_waypoint_resumes_it_by_id_and_puts_its_question() {
     let (w, mut s, _) = parked();
+    // the one slot free again: hx-m.2 parked as well
+    await_line(&mut s, "hx-m.2 parked");
     let id = saved(&w).research[0].session.id.clone();
     let before = w.calls().len();
 
@@ -360,5 +362,34 @@ fn a_research_close_that_frees_a_waypoint_for_you_asks_next_waypoint() {
     assert_eq!(q.text, "1 Ticket hx-m.1 closed. Next Waypoint?");
     assert!(matches!(&q.about, About::Asked(Ask::NextWaypoint { map, .. }) if map == "hx-m"));
     assert_eq!(s.options()[0], "yes: the next on the Map, 2 Ticket hx-m.2");
+    s.close();
+}
+
+#[test]
+fn a_resumed_research_waypoint_waits_for_a_slot() {
+    // hx-m.1 idles with no result, hx-m.2 works on
+    let w = world(research(2), |p: &Prompt| match p.ticket.as_str() {
+        "hx-m.1" => idles(p),
+        _ => session(p),
+    });
+    w.lock().integration = true;
+    max_research(&w, 1);
+    let mut s = started(&w);
+    await_line(&mut s, "hx-7 charting done: Map hx-m");
+    charted(&mut s);
+    s.cfg.away.store(true, Ordering::SeqCst);
+    s.key(key(KeyCode::Enter));
+    await_line(
+        &mut s,
+        "hx-m.1 parked: its session asked while you were Away",
+    );
+    await_line(&mut s, "hx-m.2 research started");
+
+    s.command("/continue @hx-m.1");
+
+    await_line(&mut s, "hx-m.1 waits for a research slot, 1 of 1 running");
+    assert!(w.called("herdr agent start h-hx-m-1-research").len() == 1);
+    finish(&w, "hx-m.2", true);
+    await_line(&mut s, "hx-m.1 research resumed: claude");
     s.close();
 }
