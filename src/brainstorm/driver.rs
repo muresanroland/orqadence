@@ -955,6 +955,17 @@ impl Driver<'_> {
                 .and_then(|v| v["state"].as_str().map(String::from));
             match state.as_deref() {
                 Some("MERGED") => {
+                    // the label modal answers on the Shell's thread: its
+                    // lines as saved, never this copy's from the result
+                    // ponytail: an answer saved between this read and the
+                    // save below is lost; a lock per Brainstorm if seen
+                    let file = brainstorms(repo).join(&self.b.idea).join("state.json");
+                    let on_disk = fs::read(file)
+                        .ok()
+                        .and_then(|raw| serde_json::from_slice::<Brainstorm>(&raw).ok());
+                    if let Some(on_disk) = on_disk {
+                        self.b.label_lines = on_disk.label_lines;
+                    }
                     self.b.docs_merged = true;
                     self.save();
                     return self.say(&format!("docs {number} merged{next}"));

@@ -1355,32 +1355,6 @@ impl Settings {
         items
     }
 
-    /// A label name as typed, as bd takes a label: not empty, no whitespace,
-    /// no comma (bd's list separator), not a built-in's (orqa:human-merge,
-    /// orqa:no-review), and not one config.json has.
-    fn valid_label(&self, typed: &str) -> Result<String, String> {
-        let name = label_name(typed);
-        if name.is_empty() {
-            return Err("Refused: no name after orqa:. Nothing changed.".to_string());
-        }
-        if name.chars().any(|c| c.is_whitespace() || c == ',') {
-            return Err(format!(
-                "Refused: '{name}' is not a bd label: no spaces or commas. Nothing changed."
-            ));
-        }
-        if name == app::HUMAN_MERGE || name == app::NO_REVIEW {
-            return Err(format!(
-                "Refused: orqa:{name} is built in. Nothing changed."
-            ));
-        }
-        if self.doc["labels"].get(name).is_some() {
-            return Err(format!(
-                "Refused: orqa:{name} is there already. Nothing changed."
-            ));
-        }
-        Ok(name.to_string())
-    }
-
     /// The open label's Extra review skill list: none, then each skill
     /// installed but the Stage skills. Filtered as entries are.
     fn extra_skill_entries(&self, pick: &Pick) -> Vec<Entry> {
@@ -1509,6 +1483,32 @@ impl Settings {
         });
         out
     }
+}
+
+/// A label name as typed, as bd takes a label: not empty, no whitespace,
+/// no comma (bd's list separator), not a built-in's (orqa:human-merge,
+/// orqa:no-review), and not one config.json `doc` has.
+pub(crate) fn valid_label(doc: &Value, typed: &str) -> Result<String, String> {
+    let name = label_name(typed);
+    if name.is_empty() {
+        return Err("Refused: no name after orqa:. Nothing changed.".to_string());
+    }
+    if name.chars().any(|c| c.is_whitespace() || c == ',') {
+        return Err(format!(
+            "Refused: '{name}' is not a bd label: no spaces or commas. Nothing changed."
+        ));
+    }
+    if name == app::HUMAN_MERGE || name == app::NO_REVIEW {
+        return Err(format!(
+            "Refused: orqa:{name} is built in. Nothing changed."
+        ));
+    }
+    if doc["labels"].get(name).is_some() {
+        return Err(format!(
+            "Refused: orqa:{name} is there already. Nothing changed."
+        ));
+    }
+    Ok(name.to_string())
 }
 
 /// A label name as typed: trimmed, a typed orqa: dropped.
@@ -2908,7 +2908,7 @@ impl Screen {
     /// opens.
     fn add_label(&mut self, typed: String) {
         let st = self.settings.as_mut().unwrap();
-        let name = match st.valid_label(&typed) {
+        let name = match valid_label(&st.doc, &typed) {
             Ok(name) => name,
             Err(err) => {
                 st.note = Some((err, RED));
@@ -2965,7 +2965,7 @@ impl Screen {
             st.note = Some(("Same name: nothing changed.".to_string(), MUTED));
             return;
         }
-        let name = match st.valid_label(&typed) {
+        let name = match valid_label(&st.doc, &typed) {
             Ok(name) => name,
             Err(err) => {
                 st.note = Some((err, RED));

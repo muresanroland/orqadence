@@ -3,7 +3,7 @@
 //! styled; under 110 columns it folds to a box over the dimmed Shell. A Wake
 //! and a Stage's own question dock in the same frame (harness-crk), and so
 //! do the approval modal, /manual-work, /brainstorm's idea modal and the
-//! Tickets and start-Map modals charting opens.
+//! proposed-label, Tickets and start-Map modals charting opens.
 
 use std::cell::Cell;
 use std::fs;
@@ -22,6 +22,7 @@ use crate::orchestrator::judgment::{Action, WAITS};
 use crate::orchestrator::manual;
 use crate::orchestrator::stage::{plural, Ask};
 use crate::shell::brand::{lerp, BLUE, BORDER, CYAN, GREEN, INK, MUTED, ORANGE, PURPLE, RED, TEXT};
+use crate::shell::labels::Choice;
 use crate::shell::{About, NoticeKind, Question, Screen};
 
 /// Under this many columns the dock folds over the Shell.
@@ -1091,6 +1092,71 @@ fn check(on: bool, focused: bool) -> Line<'static> {
         Span::styled(mark, bold(PURPLE)),
         Span::styled(boxed, bold(c)),
     ])
+}
+
+/// The proposed-label modal in the dock: a row per LABEL line, its answer
+/// in the picker's brackets, its guidance, skills and Tickets under it,
+/// then Apply and Cancel. Unwrapped, scrolled to keep the focused row or
+/// the buttons in view.
+pub(super) fn labels(f: &mut Frame, s: &Screen) {
+    let Some(l) = &s.labels else {
+        return;
+    };
+    let (rect, block) = dock(f, s);
+    let n = l.rows.len();
+    let title = format!(" PROPOSED LABELS · {} from {} ", n, l.key);
+    let foot = " ↑↓ move · ←→ picks · Tab the buttons · Enter · Esc later ";
+    let block = block
+        .title(Span::styled(title, bold(PURPLE)))
+        .title_bottom(Span::styled(foot, fg(MUTED)));
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let muted = |t: String| Line::from(Span::styled(t, fg(MUTED)));
+    let mut lines = vec![
+        Line::default(),
+        Line::from(Span::styled(
+            "No configured label covers these Tickets. Pick one answer for each:",
+            fg(TEXT),
+        )),
+        muted("accept writes it to .orqadence/config.json, an existing label goes on instead, none leaves them.".to_string()),
+        Line::default(),
+    ];
+    let mut at = 0; // the last line to keep in view: the focused row's last
+    for (i, r) in l.rows.iter().enumerate() {
+        let focused = l.focus == i;
+        let choice = match &r.choice {
+            Choice::Accept => "accept".to_string(),
+            Choice::Existing(name) => format!("orqa:{name}"),
+            Choice::Skip => "none".to_string(),
+        };
+        let mark = if focused { "› " } else { "  " };
+        let c = if focused { PURPLE } else { TEXT };
+        lines.push(Line::from(vec![
+            Span::styled(mark, bold(PURPLE)),
+            Span::styled(format!("orqa:{}  ", r.name), bold(BLUE)),
+            Span::styled(format!("‹ {choice} ›"), bold(c)),
+        ]));
+        lines.push(muted(format!("    {}", r.guidance)));
+        let skills = match r.skills.is_empty() {
+            true => "no skills".to_string(),
+            false => format!("skills: {}", r.skills.join(", ")),
+        };
+        lines.push(muted(format!(
+            "    {skills} · for {}",
+            r.tickets.join(", ")
+        )));
+        if focused {
+            at = lines.len() - 1;
+        }
+    }
+    lines.push(Line::default());
+    let focus = l.focus.checked_sub(n);
+    lines.push(buttons_line("Apply", true, focus));
+    if focus.is_some() {
+        at = lines.len() - 1;
+    }
+    let top = (at + 1).saturating_sub(inner.height as usize);
+    f.render_widget(Paragraph::new(lines).scroll((top as u16, 0)), inner);
 }
 
 /// The Tickets modal in the dock: what charting came out as, a checkbox
