@@ -1587,6 +1587,118 @@ fn the_shell_lists_the_saved_brainstorms_at_open() {
     assert_eq!(ideas, ["hx-i"]);
 }
 
+/// A Shell opened over two saved Brainstorms, a charting hx-c changed at
+/// `charting` and hx-i, Map hx-m, at `mapped` (seconds after the epoch),
+/// or over none.
+fn suggesting(saved: Option<(u64, u64)>) -> Screen {
+    let repo = TempDir::new();
+    if let Some((charting, mapped)) = saved {
+        for (idea, map, at) in [("hx-c", "", charting), ("hx-i", "hx-m", mapped)] {
+            crate::brainstorm::Brainstorm {
+                idea: idea.to_string(),
+                map: map.to_string(),
+                ..Default::default()
+            }
+            .save(repo.path())
+            .unwrap();
+            let file = repo
+                .path()
+                .join(".orqadence-local/brainstorms")
+                .join(idea)
+                .join("state.json");
+            let file = std::fs::File::options().write(true).open(file).unwrap();
+            file.set_modified(std::time::UNIX_EPOCH + Duration::from_secs(at))
+                .unwrap();
+        }
+    }
+    let fake = Fake::new(|_, _| Ok(String::new()));
+    let env = |name: &str| {
+        if name == "COLORTERM" {
+            "truecolor".to_string()
+        } else {
+            String::new()
+        }
+    };
+    Screen::open(repo.path(), fake, &env)
+}
+
+/// Nothing live and two Brainstorms saved: the empty input suggests
+/// /continue @ the more recent, the Map once it has one.
+#[test]
+fn an_idle_shell_suggests_continuing_the_more_recent_brainstorm() {
+    assert_eq!(
+        suggesting(Some((2_000, 1_000))).suggestion.as_deref(),
+        Some("/continue @hx-c")
+    );
+    assert_eq!(
+        suggesting(Some((1_000, 2_000))).suggestion.as_deref(),
+        Some("/continue @hx-m")
+    );
+}
+
+/// With no Brainstorm saved there is no suggestion: the placeholder shows.
+#[test]
+fn with_no_brainstorm_saved_nothing_is_suggested() {
+    let s = suggesting(None);
+    assert_eq!(s.suggestion, None);
+    assert!(find(&render(&s, 120, 40), "/ for a command").is_some());
+}
+
+/// The suggestion is muted italic ghost text in the empty input, with
+/// nothing after it.
+#[test]
+fn the_suggestion_is_muted_italic_ghost_text_with_nothing_after_it() {
+    let s = suggesting(Some((1_000, 2_000)));
+    let buf = render(&s, 120, 40);
+    let (x, y) = find(&buf, "/continue @hx-m").unwrap();
+    let line = row(&buf, y);
+    assert!(line.trim_end().ends_with("/continue @hx-m"), "{line:?}");
+    for dx in 0..15 {
+        let cell = &buf[(x + dx, y)];
+        assert_eq!(cell.fg, crate::shell::brand::MUTED);
+        assert!(cell.modifier.contains(Modifier::ITALIC));
+    }
+}
+
+/// Tab on the empty input fills it with the suggestion and runs nothing;
+/// a typed character hides it; a command run clears it.
+#[test]
+fn tab_fills_the_suggestion_typing_hides_it_and_a_command_clears_it() {
+    let mut s = suggesting(Some((1_000, 2_000)));
+    let events = s.events.len();
+    s.key(key(KeyCode::Tab));
+    assert_eq!(s.input, "/continue @hx-m");
+    assert!(s.run.is_none());
+    assert_eq!(s.events.len(), events);
+    assert!(s.suggestion.is_some(), "Tab keeps it");
+
+    s.input.clear();
+    s.key(key(KeyCode::Char('x')));
+    assert!(find(&render(&s, 120, 40), "/continue @hx-m").is_none());
+    assert!(s.suggestion.is_some(), "typing only hides it");
+
+    s.input.clear();
+    type_line(&mut s, "/questions");
+    assert_eq!(s.suggestion, None);
+}
+
+/// While a Question shows or the user composes a prompt, the suggestion
+/// neither draws nor fills: Tab is the Question's, or does nothing.
+#[test]
+fn a_question_or_a_prompt_being_composed_hides_the_suggestion() {
+    let mut s = suggesting(Some((1_000, 2_000)));
+    s.composing = true;
+    s.key(key(KeyCode::Tab));
+    assert_eq!(s.input, "");
+    assert!(find(&render(&s, 120, 40), "/continue @hx-m").is_none());
+
+    s.composing = false;
+    s.confirm("exit?", Pending::Exit);
+    s.key(key(KeyCode::Tab));
+    assert_eq!(s.input, "");
+    assert!(find(&render(&s, 120, 40), "/continue @hx-m").is_none());
+}
+
 /// The row where `text` first appears, right-trimmed.
 fn row_of(buf: &Buffer, text: &str) -> String {
     let (_, y) = find(buf, text).unwrap_or_else(|| panic!("no {text:?} in {:#?}", rows(buf)));
