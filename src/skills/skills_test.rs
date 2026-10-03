@@ -734,7 +734,7 @@ fn the_brainstorm_waypoint_and_research_skills_ship_with_their_rules() {
         "skip `brainstorm:research` when BACKGROUND is on",
         "never take `brainstorm:epic`",
         "`.orqadence-local/worktrees/<idea>-proto-<name>`",
-        "`prototype/<name>`",
+        "`prototype/<idea>-<name>`",
         "--no-inherit-labels",
         "load the orqa-brainstorm-research skill by name",
         "[LOGIC.md](LOGIC.md)",

@@ -93,10 +93,10 @@ Read the Waypoint: `bd show <id> --json --include-comments`. Its `## Question` i
 A prototype is **throwaway code that answers a question**; the question decides its shape. It is the one place a Brainstorm writes code.
 
 1. Name it: `<name>`, a short kebab-case name for the question. `<idea>` is this worktree's folder name.
-2. Give it a worktree of its own, `.orqadence-local/worktrees/<idea>-proto-<name>`, on a new branch `prototype/<name>` from the Brainstorm branch. Never switch branch in the Brainstorm's worktree: research sessions work in it.
+2. Give it a worktree of its own, `.orqadence-local/worktrees/<idea>-proto-<name>`, on a new branch `prototype/<idea>-<name>` from the Brainstorm branch. Never switch branch in the Brainstorm's worktree: research sessions work in it.
 
    ```
-   git worktree add ../<idea>-proto-<name> -b prototype/<name> brainstorm/<idea>
+   git worktree add ../<idea>-proto-<name> -b prototype/<idea>-<name> brainstorm/<idea>
    ```
 
    Write the prototype only in there.
@@ -115,7 +115,7 @@ A prototype is **throwaway code that answers a question**; the question decides 
 
    ```
    bd comments add <id> -f - <<'EOF'
-   Prototype: branch prototype/<name>, run with <command>. See it with git show prototype/<name>:<path>.
+   Prototype: branch prototype/<idea>-<name>, run with <command>. See it with git show prototype/<idea>-<name>:<path>.
    EOF
    ```
 
