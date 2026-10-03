@@ -141,6 +141,16 @@ pub(super) fn await_line(s: &mut Screen, want: &str) {
     );
 }
 
+/// Polls `s` until `done`, failing with `what` after 5s.
+pub(super) fn await_until(s: &mut Screen, what: &str, done: impl Fn(&Screen) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !done(s) {
+        assert!(Instant::now() < deadline, "{what}");
+        s.poll();
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
 pub(super) fn line(e: &Event) -> String {
     match &e.ticket {
         Some(id) => format!("{id} {}", e.text),

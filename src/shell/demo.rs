@@ -9,7 +9,7 @@ use std::cell::Cell;
 use std::path::PathBuf;
 
 use super::summary::{Summary, Ticket};
-use super::{About, Epic, Screen};
+use super::{About, Epic, Question, Screen};
 use crate::orchestrator::cost::{Cost, Span};
 use crate::orchestrator::judgment::{Action, Judged, PlanJudged};
 use crate::orchestrator::limit::until;
@@ -327,8 +327,7 @@ pub(super) fn stop(s: &mut Screen) {
     s.epics = demo.epics;
     s.state = demo.state;
     s.events = demo.events;
-    s.questions
-        .retain(|q| q.ticket.is_none() || q.brainstorms());
+    s.questions.retain(Question::outlives_run);
     if s.composing {
         s.composing = false;
         s.input.clear();

@@ -24,6 +24,9 @@ pub(crate) struct StageResult {
     pub(crate) waypoint: String,
     /// A charting result's Tickets, as its TICKETS: line lists them.
     pub(crate) tickets: Vec<String>,
+    /// A brainstorm-epic result's Epics, in build order, as its EPICS: line
+    /// lists them.
+    pub(crate) epics: Vec<String>,
     /// Each LABEL: line's text: a label the session proposes.
     pub(crate) labels: Vec<String>,
 }
@@ -113,6 +116,12 @@ pub(crate) fn read_stage_result(path: &Path, want: ResultRequirements) -> (Stage
             .filter(|_| result.tickets.is_empty())
         {
             result.tickets = ids.split_whitespace().map(String::from).collect();
+        }
+        if let Some(ids) = line
+            .strip_prefix("EPICS:")
+            .filter(|_| result.epics.is_empty())
+        {
+            result.epics = ids.split_whitespace().map(String::from).collect();
         }
         if let Some(label) = line.strip_prefix("LABEL:") {
             result.labels.push(label.trim().to_string());

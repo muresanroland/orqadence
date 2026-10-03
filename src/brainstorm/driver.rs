@@ -13,14 +13,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::{brainstorms, is_map, labelled, Brainstorm, Phase, EPIC, MAP, RESEARCH};
-use crate::orchestrator::app::{self, BRAINSTORM};
+use crate::orchestrator::app::{self, BRAINSTORM, RELEASE_ON};
 use crate::orchestrator::herdr::{self, agent_name, herdr, locate, place_beside_shell};
 use crate::orchestrator::manual;
 use crate::orchestrator::result::{
     read_manual, read_stage_result, stage_prompt, ResultRequirements, StageResult, MANUAL,
 };
 use crate::orchestrator::scheduler::BdIssue;
-use crate::orchestrator::stage::{append_log, plural, run_dir, Ask, Config, Event};
+use crate::orchestrator::stage::{append_log, plural, pr_ref, run_dir, Ask, Config, Event};
 use crate::orchestrator::state::Session;
 use crate::orchestrator::trust::await_trust;
 use crate::shell::{bd_list, suffix};
@@ -33,6 +33,8 @@ const CHART: &str = "chart";
 /// A session with the user on a Waypoint of the Map, its Manual work's
 /// stage.
 pub(crate) const WAYPOINT: &str = "waypoint";
+/// brainstorm-epic's session on the Map's build-Epic Waypoint.
+const EPIC_SESSION: &str = "epic";
 
 /// What a live Map's frontier gives next.
 enum Next {
@@ -58,7 +60,7 @@ struct Driver<'a> {
     /// kept off the saved Brainstorm meanwhile, so the Shell sees its pane
     /// still opening and refuses to switch.
     previous: String,
-    /// CHART or WAYPOINT.
+    /// CHART, WAYPOINT or EPIC_SESSION.
     stage: &'static str,
 }
 
@@ -80,6 +82,7 @@ pub(crate) fn chart(
     if let Some(result) = d.take_up(shell, |d| d.start(shell).map(Some)) {
         d.watch(&result);
     }
+    d.track_docs();
 }
 
 /// A session with the user on the live Map of `b`: brainstorm-waypoint, on
@@ -89,7 +92,9 @@ pub(crate) fn chart(
 /// saved session is taken up as charting's is, and a fresh one takes the
 /// Map's in-progress Waypoint that is not research, else the frontier's
 /// first for the user. Its result naming its Waypoint closed in bd closes
-/// the pane and asks "Next Waypoint?".
+/// the pane and asks "Next Waypoint?". The build-Epic Waypoint, once every
+/// other is closed, runs brainstorm-epic instead, its saved session known
+/// by its result file, epic.md.
 pub(crate) fn waypoint(
     cfg: &Config,
     shell: &str,
@@ -99,7 +104,14 @@ pub(crate) fn waypoint(
     prompt: Option<String>,
     pick: Option<String>,
 ) {
-    let mut d = Driver::new(cfg, saved, stop, b, WAYPOINT);
+    let epics = Path::new(&b.result)
+        .file_name()
+        .is_some_and(|n| n == "epic.md");
+    let stage = if epics { EPIC_SESSION } else { WAYPOINT };
+    let mut d = Driver::new(cfg, saved, stop, b, stage);
+    // with epic.md saved only the build-Epic Waypoint is left: its saved
+    // session is taken up, never orphaned by a fresh one
+    let pick = pick.filter(|_| !epics);
     let prompt = prompt.unwrap_or_else(|| "none".to_string());
     // a session saved is an interrupted one: a closed Waypoint clears it
     let interrupted = d.b.session.is_some();
@@ -113,6 +125,18 @@ pub(crate) fn waypoint(
     if let Some(result) = result {
         d.watch(&result);
     }
+    d.track_docs();
+}
+
+/// The docs PR of done Brainstorm `b` polled until it merges, as the
+/// Shell opens.
+pub(crate) fn docs_pr(cfg: &Config, b: Brainstorm, saved: &Sender<Brainstorm>, stop: &AtomicBool) {
+    let stage = if b.map.is_empty() {
+        CHART
+    } else {
+        EPIC_SESSION
+    };
+    Driver::new(cfg, saved, stop, b, stage).track_docs();
 }
 
 impl<'a> Driver<'a> {
@@ -146,6 +170,7 @@ impl<'a> Driver<'a> {
     fn row(&self) -> Result<app::Row, String> {
         let name = match self.stage {
             CHART => BRAINSTORM[0],
+            EPIC_SESSION => BRAINSTORM[3],
             _ => BRAINSTORM[1],
         };
         app::row(&self.cfg.repo, name, &[])
@@ -255,10 +280,10 @@ impl<'a> Driver<'a> {
         }
     }
 
-    /// `text` under `id` with `ask`, unless it is the line said last.
-    fn once(&self, said: &mut String, id: &str, text: &str, ask: Option<Ask>) {
+    /// `text` under `id`, unless it is the line said last.
+    fn once(&self, said: &mut String, id: &str, text: &str) {
         if said != text {
-            self.send(id, text, true, ask);
+            self.send(id, text, true, None);
             *said = text.to_string();
         }
     }
@@ -269,6 +294,49 @@ impl<'a> Driver<'a> {
             self.say(&format!("Brainstorm state not saved: {err}"));
         }
         let _ = self.saved.send(self.b.clone());
+    }
+
+    /// The Brainstorm saved, then `id`, its `what`, closed in bd with
+    /// `reason`: saved first, as load drops a Brainstorm whose Idea or Map
+    /// is closed in a phase it left. Either failing puts `before` back.
+    fn close_saved(
+        &mut self,
+        before: Brainstorm,
+        id: &str,
+        reason: &str,
+        what: &str,
+    ) -> Result<(), String> {
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
+        let closed = self
+            .b
+            .save(repo)
+            .map_err(|err| format!("Brainstorm state not saved: {err}"))
+            .and_then(|_| {
+                tools
+                    .run(repo, &["bd", "close", id, "--reason", reason])
+                    .map_err(|err| format!("{what} not closed: {err}"))
+            });
+        if closed.is_err() {
+            self.b = before;
+            self.save();
+        }
+        closed.map(|_| ())
+    }
+
+    /// The worktree removed, its branch kept; why not said. Whether it was.
+    fn remove_worktree(&mut self) -> bool {
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
+        let remove = ["git", "worktree", "remove", "--force", &self.b.worktree];
+        match tools.run(repo, &remove) {
+            Ok(_) => {
+                self.b.worktree.clear();
+                true
+            }
+            Err(err) => {
+                self.say(&format!("worktree not removed: {err}"));
+                false
+            }
+        }
     }
 
     /// Its pane closed by the user: the Brainstorm stopped, saved.
@@ -284,10 +352,15 @@ impl<'a> Driver<'a> {
         self.say(&format!("{} stopped: {why}; Brainstorm saved", self.noun()));
     }
 
-    /// One tick. False once the Shell is closing, which it checks every
-    /// 50ms so close() joins this thread promptly.
+    /// One tick. False once the Shell is closing.
     fn sleep(&self) -> bool {
-        let end = Instant::now() + self.cfg.tick;
+        self.sleep_for(self.cfg.tick)
+    }
+
+    /// `wait` slept, false once the Shell is closing, which it checks
+    /// every 50ms so close() joins this thread promptly.
+    fn sleep_for(&self, wait: Duration) -> bool {
+        let end = Instant::now() + wait;
         while !self.stop.load(Ordering::SeqCst) {
             let left = end.saturating_duration_since(Instant::now());
             if left.is_zero() {
@@ -489,15 +562,16 @@ impl<'a> Driver<'a> {
                         .map_err(|why| {
                             let idea = self.b.idea.clone();
                             let text = format!("charting result not taken: {why}");
-                            self.once(&mut said, &idea, &text, None);
+                            self.once(&mut said, &idea, &text);
                         })
                         .is_ok(),
+                    EPIC_SESSION => self.epics_done(result, &mut said),
                     _ => self.waypoint_done(result, &mut said),
                 };
                 if taken {
                     return;
                 }
-            } else if self.stage == WAYPOINT {
+            } else if self.stage != CHART {
                 said.clear(); // Manual work answered: a new item is asked afresh
             }
             // None is also a failed agent get: only a gone pane, or a pane
@@ -528,36 +602,35 @@ impl<'a> Driver<'a> {
         let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         let issues = bd_list(repo, tools).map_err(|err| format!("bd list failed: {err}"))?;
         let reason = outcome(&issues, &r)?;
-        tools
-            .run(repo, &["bd", "close", &self.b.idea, "--reason", &reason])
-            .map_err(|err| format!("Idea not closed: {err}"))?;
-        // Only a closed or already gone pane is forgotten; another
-        // failure keeps its id so the pane stays tracked.
-        match herdr(tools, repo, &["pane", "close", &self.b.pane]) {
-            Err(err) if !herdr::pane_gone(&err) => {
-                self.say(&format!("charting pane not closed: {err}"));
-            }
-            _ => self.b.pane.clear(),
-        }
+        // what came out saved before the Idea closes: load drops a
+        // Charting-phase Brainstorm whose Idea is closed, and its docs PR
+        // with it
+        let before = self.b.clone();
+        let tickets = r.map.is_empty();
         self.b.label_lines = r.labels;
-        let line = if r.map.is_empty() {
-            let remove = ["git", "worktree", "remove", "--force", &self.b.worktree];
-            match tools.run(repo, &remove) {
-                Ok(_) => self.b.worktree.clear(),
-                Err(err) => self.say(&format!("worktree not removed: {err}")),
-            }
+        if tickets {
             self.b.phase = Phase::Done;
             self.b.tickets = r.tickets;
-            let pr = match r.pr.as_str() {
+            self.b.docs_pr = r.pr;
+        } else {
+            self.b.session = None; // charting's: no Waypoint session resumes it
+            self.b.phase = Phase::Map;
+            self.b.map = r.map;
+        }
+        let idea = self.b.idea.clone();
+        self.close_saved(before, &idea, &reason, "Idea")?;
+        if let Err(err) = self.close_pane() {
+            self.say(&format!("charting pane not closed: {err}"));
+        }
+        let line = if tickets {
+            self.remove_worktree();
+            let pr = match self.b.docs_pr.as_str() {
                 "" => String::new(),
                 pr => format!("; docs PR {pr}"),
             };
             format!("charting done: {reason}; Idea closed{pr}")
         } else {
-            let waypoints = issues.iter().filter(|i| i.parent == r.map).count();
-            self.b.session = None; // charting's: no Waypoint session resumes it
-            self.b.phase = Phase::Map;
-            self.b.map = r.map;
+            let waypoints = issues.iter().filter(|i| i.parent == self.b.map).count();
             format!(
                 "charting done: {reason}, {}; Idea closed",
                 plural(waypoints, "Waypoint")
@@ -603,21 +676,20 @@ impl Driver<'_> {
             },
             None => self.frontier(&issues)?,
         };
-        let line = match w {
-            Next::Take(w) => return self.start_waypoint(shell, &w.id, set, prompt).map(Some),
-            Next::Epic(e) => format!("only the build-Epic Waypoint is left: {}", suffix(&e.id)),
-            Next::Wait(line) => line,
-        };
-        self.idle(&line);
-        Ok(None)
-    }
-
-    /// No session runs, said: the Brainstorm stays live with none saved.
-    fn idle(&mut self, line: &str) {
-        self.b.session = None;
-        self.b.result.clear();
-        self.save();
-        self.say(line);
+        match w {
+            Next::Take(w) => self.start_waypoint(shell, &w.id, set, prompt).map(Some),
+            Next::Epic(e) => {
+                self.stage = EPIC_SESSION;
+                self.start_epics(shell, &e.id).map(Some)
+            }
+            Next::Wait(line) => {
+                self.b.session = None;
+                self.b.result.clear();
+                self.save();
+                self.say(&line);
+                Ok(None)
+            }
+        }
     }
 
     /// What the Map's frontier gives next, read from bd in map order.
@@ -644,12 +716,55 @@ impl Driver<'_> {
         set: bool,
         prompt: &str,
     ) -> Result<PathBuf, String> {
-        let row = self.row()?;
-        let skill = self.skill(&row, "waypoint")?;
         let dir = brainstorms(&self.cfg.repo).join(&self.b.idea);
-        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
         let file = |n: usize| dir.join(format!("waypoint-{n}.md"));
         let result = (1..).map(file).find(|f| !f.exists()).unwrap();
+        let background = if self.b.background { "on" } else { "off" };
+        let mut inputs = vec![
+            ("MAP", self.b.map.clone()),
+            ("BACKGROUND", background.to_string()),
+            ("PROMPT", prompt.to_string()),
+        ];
+        if set {
+            inputs.push(("WAYPOINT", id.to_string()));
+        }
+        self.begin(shell, id, "waypoint", result, inputs)
+    }
+
+    /// brainstorm-epic started on the build-Epic Waypoint `id`: its result
+    /// file, epic.md, saved for a resume. Why not, or empty once stopped.
+    fn start_epics(&mut self, shell: &str, id: &str) -> Result<PathBuf, String> {
+        let repo = &self.cfg.repo;
+        let releases = if app::switch(repo, &RELEASE_ON) {
+            "on"
+        } else {
+            "off"
+        };
+        let inputs = vec![
+            ("MAP", self.b.map.clone()),
+            ("WAYPOINT", id.to_string()),
+            ("TICKET LABELS", ticket_labels(repo)?),
+            ("RELEASES", releases.to_string()),
+        ];
+        let result = brainstorms(repo).join(&self.b.idea).join("epic.md");
+        self.begin(shell, id, "epic", result, inputs)
+    }
+
+    /// The skill orqa-brainstorm-<name> started on Waypoint `id` in a fresh
+    /// pane with `inputs` and RESULT FILE `result`, saved for a resume, an
+    /// earlier one removed. Why not, or empty once stopped.
+    fn begin(
+        &mut self,
+        shell: &str,
+        id: &str,
+        name: &str,
+        result: PathBuf,
+        mut inputs: Vec<(&str, String)>,
+    ) -> Result<PathBuf, String> {
+        let row = self.row()?;
+        let skill = self.skill(&row, name)?;
+        fs::create_dir_all(result.parent().unwrap()).map_err(|err| err.to_string())?;
+        let _ = fs::remove_file(&result);
         self.b.result = result.display().to_string();
         let session = Session {
             app: row.app.name.to_string(),
@@ -658,17 +773,8 @@ impl Driver<'_> {
         let args = self.args(&row);
         let at = self.launch(shell, &row, session, &args)?;
         self.tell(id, &format!("Waypoint started: {} {at}", row.said()));
-        let background = if self.b.background { "on" } else { "off" };
-        let shown = self.b.result.clone();
-        let mut inputs = vec![
-            ("MAP", self.b.map.as_str()),
-            ("BACKGROUND", background),
-            ("PROMPT", prompt),
-            ("RESULT FILE", &shown),
-        ];
-        if set {
-            inputs.push(("WAYPOINT", id));
-        }
+        inputs.push(("RESULT FILE", self.b.result.clone()));
+        let inputs: Vec<(&str, &str)> = inputs.iter().map(|(k, v)| (*k, v.as_str())).collect();
         let prompt = stage_prompt(&skill, &inputs);
         let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         herdr(tools, repo, &["agent", "prompt", &self.b.pane, &prompt])
@@ -682,17 +788,7 @@ impl Driver<'_> {
     /// Whether it ended the session; each line not taken said once.
     fn waypoint_done(&mut self, result: &Path, said: &mut String) -> bool {
         let map = self.b.map.clone();
-        let (r, why) = read_stage_result(result, ResultRequirements::default());
-        if why == MANUAL {
-            self.manual(result, said);
-            return false;
-        }
-        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
-        let issues = match why.is_empty() {
-            true => bd_list(repo, tools).map_err(|err| format!("bd list failed: {err}")),
-            false => Err(why),
-        };
-        let found = issues.and_then(|issues| {
+        let found = self.read(result, said).and_then(|(r, issues)| {
             let w = issues
                 .iter()
                 .find(|i| i.id == r.waypoint && i.parent == map);
@@ -704,16 +800,13 @@ impl Driver<'_> {
         });
         let (w, issues) = match found {
             Ok(found) => found,
+            Err(why) if why.is_empty() => return false,
             Err(why) => {
-                self.once(
-                    said,
-                    &map,
-                    &format!("Waypoint result not taken: {why}"),
-                    None,
-                );
+                self.once(said, &map, &format!("Waypoint result not taken: {why}"));
                 return false;
             }
         };
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         if w.status != "closed" {
             let at = locate(tools, repo, &self.cfg.workspace, &self.b.pane);
             let at = at.trim_start_matches('(').trim_end_matches(')');
@@ -721,15 +814,11 @@ impl Driver<'_> {
                 "result written, but {} is still open in bd: {at} kept",
                 suffix(&w.id)
             );
-            self.once(said, &w.id, &text, None);
+            self.once(said, &w.id, &text);
             return false;
         }
-        // Only a closed or already gone pane is forgotten.
-        match herdr(tools, repo, &["pane", "close", &self.b.pane]) {
-            Err(err) if !herdr::pane_gone(&err) => {
-                self.tell(&w.id, &format!("Waypoint pane not closed: {err}"));
-            }
-            _ => self.b.pane.clear(),
+        if let Err(err) = self.close_pane() {
+            self.tell(&w.id, &format!("Waypoint pane not closed: {err}"));
         }
         self.b.session = None;
         self.b.result.clear();
@@ -754,6 +843,141 @@ impl Driver<'_> {
             Err(why) => self.say(&format!("Next Waypoint not asked: {why}")),
         }
         true
+    }
+
+    /// brainstorm-epic's result read: its EPICS open epics in bd close the
+    /// Map with a reason naming them, close the pane and remove the
+    /// worktree, its branch kept, and the Brainstorm is done, its docs PR
+    /// kept to track. One that does not check out keeps the pane, said
+    /// once. Manual work is put to the user once. Whether it ended the
+    /// session.
+    fn epics_done(&mut self, result: &Path, said: &mut String) -> bool {
+        let map = self.b.map.clone();
+        let checked = self
+            .read(result, said)
+            .and_then(|(r, issues)| open_epics(&issues, &r.epics).map(|_| (r, issues)));
+        let (r, issues) = match checked {
+            Ok(checked) => checked,
+            Err(why) if why.is_empty() => return false,
+            Err(why) => {
+                self.once(said, &map, &format!("Epics result not taken: {why}"));
+                return false;
+            }
+        };
+        // done saved before the Map closes: load drops a Map-phase
+        // Brainstorm whose Map is closed, and its docs PR with it
+        let before = self.b.clone();
+        self.b.phase = Phase::Done;
+        self.b.session = None;
+        self.b.result.clear();
+        self.b.label_lines = r.labels;
+        self.b.docs_pr = r.pr;
+        self.b.epics = r.epics;
+        let wrote = self.b.epics.join(", ");
+        let (_, reason) = self.b.closing().unwrap_or_default();
+        if let Err(why) = self.close_saved(before, &map, &reason, "Map") {
+            self.once(said, &map, &format!("Epics result not taken: {why}"));
+            return false;
+        }
+        if let Err(err) = self.close_pane() {
+            self.say(&format!("Waypoint pane not closed: {err}"));
+        }
+        let removed = match self.remove_worktree() {
+            true => ", worktree removed",
+            false => "",
+        };
+        self.save();
+        let waypoint = issues.iter().find(|i| i.parent == map && labelled(i, EPIC));
+        let waypoint = waypoint.map_or(map.as_str(), |w| w.id.as_str());
+        self.tell(waypoint, &format!("closed: wrote Epics {wrote}"));
+        let first = &self.b.epics[0];
+        let next = match self.b.docs_pr.as_str() {
+            "" => format!("/start-epic {first} is next"),
+            pr => {
+                let number = pr_ref(pr);
+                self.say(&format!("docs {number} opened: {pr}"));
+                format!("/start-epic {first} once {number} merges")
+            }
+        };
+        self.say(&format!("Map closed{removed}; {next}"));
+        true
+    }
+
+    /// A done Brainstorm's docs PR polled with gh at the Shell's PR poll
+    /// interval until it merges, said and saved. Closed unmerged is said
+    /// once and still polled, kept until a reopen merges; a gh failure
+    /// keeps polling. Nothing once the Shell is closing.
+    fn track_docs(&mut self) {
+        if !self.b.docs_waiting() {
+            return;
+        }
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
+        let url = self.b.docs_pr.clone();
+        let number = pr_ref(&url);
+        let next = match self.b.epics.first() {
+            Some(epic) => format!(": /start-epic {epic} is next"),
+            None => String::new(),
+        };
+        let mut closed = false;
+        loop {
+            let viewed = tools.run(repo, &["gh", "pr", "view", &url, "--json", "state"]);
+            let state = viewed
+                .ok()
+                .and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok())
+                .and_then(|v| v["state"].as_str().map(String::from));
+            match state.as_deref() {
+                Some("MERGED") => {
+                    self.b.docs_merged = true;
+                    self.save();
+                    return self.say(&format!("docs {number} merged{next}"));
+                }
+                Some("CLOSED") if !closed => {
+                    closed = true;
+                    self.say(&format!("docs {number} closed unmerged"));
+                }
+                Some("OPEN") => closed = false,
+                _ => {}
+            }
+            if !self.sleep_for(self.cfg.poll_prs) {
+                return;
+            }
+        }
+    }
+
+    /// The result read, with bd's issues; Manual work put to the user
+    /// gives an empty why.
+    fn read(
+        &mut self,
+        result: &Path,
+        said: &mut String,
+    ) -> Result<(StageResult, Vec<BdIssue>), String> {
+        let (r, why) = read_stage_result(result, ResultRequirements::default());
+        if why == MANUAL {
+            self.manual(result, said);
+            return Err(String::new());
+        }
+        if !why.is_empty() {
+            return Err(why);
+        }
+        let issues = bd_list(&self.cfg.repo, &*self.cfg.tools)
+            .map_err(|err| format!("bd list failed: {err}"))?;
+        Ok((r, issues))
+    }
+
+    /// Its pane closed. Only a closed or already gone pane is forgotten;
+    /// another failure keeps its id so the pane stays tracked.
+    fn close_pane(&mut self) -> Result<(), RunError> {
+        match herdr(
+            &*self.cfg.tools,
+            &self.cfg.repo,
+            &["pane", "close", &self.b.pane],
+        ) {
+            Err(err) if !herdr::pane_gone(&err) => Err(err),
+            _ => {
+                self.b.pane.clear();
+                Ok(())
+            }
+        }
     }
 
     /// STATUS: manual: the item, in the Run directory of the Waypoint its
@@ -790,7 +1014,7 @@ impl Driver<'_> {
             Err(err) => {
                 let text = format!("Waypoint result not taken: its Manual work: {err}");
                 let map = self.b.map.clone();
-                self.once(said, &map, &text, None);
+                self.once(said, &map, &text);
             }
         }
     }
@@ -862,6 +1086,23 @@ fn outcome(issues: &[BdIssue], r: &StageResult) -> Result<String, String> {
         return Err(format!("{id} is not an open issue"));
     }
     Ok(format!("Tickets {}", r.tickets.join(", ")))
+}
+
+/// Whether `ids`, a brainstorm-epic result's EPICS, are open epics in
+/// `issues`; why not otherwise.
+fn open_epics(issues: &[BdIssue], ids: &[String]) -> Result<(), String> {
+    if ids.is_empty() {
+        return Err("it names no EPICS".to_string());
+    }
+    let open = |id: &str| {
+        issues
+            .iter()
+            .any(|i| i.id == id && i.status != "closed" && i.issue_type == "epic")
+    };
+    match ids.iter().find(|id| !open(id)) {
+        Some(id) => Err(format!("{id} is not an open epic")),
+        None => Ok(()),
+    }
 }
 
 /// Whether herdr still has `pane`: only pane_not_found says it is gone.
