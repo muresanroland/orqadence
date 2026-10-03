@@ -561,3 +561,104 @@ fn parking_manual_work_stops_the_brainstorm_and_continue_asks_it_again() {
     }
     s.close();
 }
+
+/// Manual work item `n` of hx-m.1, filed as its session files it, and the
+/// result naming it written whole, as a rename writes it.
+fn file_manual(w: &World, n: usize) {
+    let folder = w
+        .repo
+        .join(LOCAL)
+        .join(format!("runs/hx-m.1/manual-work/{n}"));
+    std::fs::create_dir_all(&folder).unwrap();
+    let item = "Ticket: hx-m.1 · Stage: waypoint · Blocks: yes\n\n## What\nSet the token.\n";
+    std::fs::write(folder.join("manual-work.md"), item).unwrap();
+    let file = saved(w).result;
+    let tmp = format!("{file}.tmp");
+    std::fs::write(&tmp, format!("STATUS: manual\n{}\n", folder.display())).unwrap();
+    std::fs::rename(tmp, file).unwrap();
+}
+
+fn manual_asked(s: &Screen) -> usize {
+    let manual =
+        |e: &&crate::orchestrator::stage::Event| line(e).contains("manual work in Waypoint");
+    s.events.iter().filter(manual).count()
+}
+
+#[test]
+fn manual_work_filed_anew_before_a_tick_sees_no_result_is_asked_too() {
+    let (w, mut s, _) = working();
+    file_manual(&w, 1);
+    await_line(&mut s, "hx-m.1 manual work in Waypoint");
+
+    file_manual(&w, 2);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while manual_asked(&s) < 2 {
+        assert!(std::time::Instant::now() < deadline, "item 2 never asked");
+        s.poll();
+    }
+    s.close();
+}
+
+#[test]
+fn manual_work_whose_park_or_done_fails_is_asked_still() {
+    let (w, mut s, _) = working();
+    file_manual(&w, 1);
+    await_line(&mut s, "hx-m.1 manual work in Waypoint");
+    let file = saved(&w).result;
+    let asked = |s: &Screen| {
+        matches!(
+            s.questions[0].about,
+            super::About::Asked(Ask::Manual { .. })
+        )
+    };
+
+    w.fail_once("herdr pane close", "herdr is busy");
+    s.key(key(KeyCode::Down));
+    s.key(key(KeyCode::Down));
+    s.key(key(KeyCode::Enter)); // park
+    await_line(&mut s, "not stopped: its pane did not close");
+    assert!(asked(&s), "the Question went with the park that failed");
+    assert_eq!(s.live.as_deref(), Some("hx-7"));
+
+    w.fail_once("herdr agent prompt", "herdr is busy");
+    s.key(key(KeyCode::Up));
+    s.key(key(KeyCode::Up));
+    s.key(key(KeyCode::Enter)); // done
+    await_line(&mut s, "hx-m.1 never took your answer");
+    assert!(asked(&s), "the Question went with the answer never sent");
+    assert!(std::path::Path::new(&file).exists(), "its result put back");
+    s.close();
+}
+
+#[test]
+fn a_run_ending_keeps_the_prompt_composed_for_next_waypoint() {
+    let mut issues = map(1);
+    issues.push(BdTicket::new("hx-1"));
+    let (w, mut s) = live(issues);
+    await_line(&mut s, "hx-m.1 Waypoint started");
+    close(&w, "hx-m.1");
+    result(&w, "hx-m.1");
+    while s.questions.is_empty() {
+        s.poll();
+    }
+    s.command("/start-ticket hx-1");
+    await_line(&mut s, "hx-1 implement started");
+    s.key(key(KeyCode::Down));
+    s.key(key(KeyCode::Down));
+    s.key(key(KeyCode::Enter)); // a prompt of your own
+    assert!(s.composing);
+
+    s.command("/stop-work");
+    super::shell_test::await_end(&mut s);
+
+    assert!(
+        s.composing,
+        "the prompt was for Next Waypoint?, which stays"
+    );
+    assert!(matches!(
+        s.questions[0].about,
+        super::About::Asked(Ask::NextWaypoint { .. })
+    ));
+    s.close();
+}

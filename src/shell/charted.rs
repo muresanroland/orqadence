@@ -5,13 +5,11 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use std::thread;
-
 use super::{About, Screen};
 use crate::brainstorm::{driver, labelled, Brainstorm, Phase, EPIC, RESEARCH};
 use crate::orchestrator::app::{self, MAX_RESEARCH};
 use crate::orchestrator::scheduler::BdIssue;
-use crate::orchestrator::stage::{plural, Ask, Config};
+use crate::orchestrator::stage::{plural, Ask};
 
 /// One Ticket of the Tickets modal.
 pub(crate) struct Row {
@@ -168,28 +166,11 @@ impl Screen {
     /// Next Waypoint? still waiting goes; never outside herdr, with no
     /// Shell's pane to split.
     pub(super) fn work_map(&mut self, b: Brainstorm, prompt: Option<String>, pick: Option<String>) {
-        let next = |about: &About| matches!(about, About::Asked(Ask::NextWaypoint { .. }));
-        self.questions.retain(|q| !next(&q.about));
-        if self.shell_pane.is_empty() {
-            let text = "Waypoint not started: the Shell is not in a herdr pane (HERDR_PANE_ID)";
-            return self.tell(Some(&b.map), text);
-        }
-        let cfg = Config {
-            events: self.sender.clone(),
-            ..self.cfg.clone()
-        };
-        let (shell, saved, stop) = (
-            self.shell_pane.clone(),
-            self.brainstorm_sender.clone(),
-            self.brainstorm_stop.clone(),
-        );
-        let idea = b.idea.clone();
-        let driver = thread::spawn(move || {
-            driver::waypoint(&cfg, &shell, b, &saved, &stop, prompt, pick);
+        self.questions
+            .retain(|q| !matches!(q.about, About::Asked(Ask::NextWaypoint { .. })));
+        self.drive(b, "Waypoint", move |cfg, shell, b, saved, stop| {
+            driver::waypoint(cfg, shell, b, saved, stop, prompt, pick);
         });
-        self.brainstorm_threads.retain(|(_, t)| !t.is_finished());
-        self.brainstorm_threads.push((idea.clone(), driver));
-        self.live = Some(idea);
     }
 
     /// Cancel keeps the Map; the start form leaves /continue @<map> as the

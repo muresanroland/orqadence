@@ -603,18 +603,13 @@ impl Driver<'_> {
             },
             None => self.frontier(&issues)?,
         };
-        match w {
-            Next::Take(w) => self.start_waypoint(shell, &w.id, set, prompt).map(Some),
-            Next::Epic(e) => {
-                let line = format!("only the build-Epic Waypoint is left: {}", suffix(&e.id));
-                self.idle(&line);
-                Ok(None)
-            }
-            Next::Wait(line) => {
-                self.idle(&line);
-                Ok(None)
-            }
-        }
+        let line = match w {
+            Next::Take(w) => return self.start_waypoint(shell, &w.id, set, prompt).map(Some),
+            Next::Epic(e) => format!("only the build-Epic Waypoint is left: {}", suffix(&e.id)),
+            Next::Wait(line) => line,
+        };
+        self.idle(&line);
+        Ok(None)
     }
 
     /// No session runs, said: the Brainstorm stays live with none saved.
@@ -693,10 +688,9 @@ impl Driver<'_> {
             return false;
         }
         let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
-        let issues = match (why.is_empty(), bd_list(repo, tools)) {
-            (false, _) => Err(why),
-            (true, Err(err)) => Err(format!("bd list failed: {err}")),
-            (true, Ok(issues)) => Ok(issues),
+        let issues = match why.is_empty() {
+            true => bd_list(repo, tools).map_err(|err| format!("bd list failed: {err}")),
+            false => Err(why),
         };
         let found = issues.and_then(|issues| {
             let w = issues
@@ -782,12 +776,13 @@ impl Driver<'_> {
                     stage: WAYPOINT.to_string(),
                     item,
                 };
-                self.once(
-                    said,
-                    &id,
-                    &format!("manual work in Waypoint {at}"),
-                    Some(ask),
-                );
+                // keyed by its folder: the line is the same for every item
+                let key = folder.display().to_string();
+                if *said != key {
+                    let text = format!("manual work in Waypoint {at}");
+                    self.send(&id, &text, true, Some(ask));
+                    *said = key;
+                }
             }
             Err(err) => {
                 let text = format!("Waypoint result not taken: its Manual work: {err}");
