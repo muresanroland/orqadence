@@ -173,66 +173,6 @@ impl Orchestrator {
         Ok((tab.to_string(), reply.result.pane.pane_id))
     }
 
-    /// Gives a Brainstorm pane in the Shell's own tab. `shell` is the Shell's
-    /// pane (HERDR_PANE_ID); its tab is read live, since the pane can have
-    /// moved. `previous`, the last Brainstorm pane, is replaced when it is
-    /// still in that tab: split, then closed. Otherwise the Shell's pane is
-    /// split, once. The panes the user opened there are never split.
-    #[allow(dead_code)] // the Brainstorm's charting pane calls it (harness-1n3.8)
-    pub(crate) fn place_beside_shell(
-        &self,
-        shell: &str,
-        previous: &str,
-        placement: &[&str],
-    ) -> Result<String, RunError> {
-        let tab = self.herdr(&["pane", "get", shell])?.result.pane.tab_id;
-        // Only pane_not_found means the previous pane is gone; another
-        // failed lookup must not split the Shell a second time.
-        let beside = !previous.is_empty()
-            && previous != shell
-            && match self.herdr(&["pane", "get", previous]) {
-                Ok(r) => r.result.pane.tab_id == tab,
-                Err(err) if err.to_string().contains("pane_not_found") => false,
-                Err(err) => return Err(err),
-            };
-        if beside {
-            let mut argv = vec!["pane", "split", previous, "--direction", "right"];
-            argv.extend_from_slice(placement);
-            let pane = self.herdr(&argv)?.result.pane.pane_id;
-            // A previous pane left open would be untracked: take the new
-            // one back so the caller still holds a valid `previous`.
-            match self.herdr(&["pane", "close", previous]) {
-                Err(err) if !err.to_string().contains("pane_not_found") => {
-                    let _ = self.herdr(&["pane", "close", &pane]);
-                    return Err(err);
-                }
-                _ => return Ok(pane),
-            }
-        }
-        let direction = self
-            .herdr(&["pane", "layout", "--pane", shell])
-            .ok()
-            .and_then(|r| {
-                r.result
-                    .layout
-                    .panes
-                    .into_iter()
-                    .find(|p| p.pane_id == shell)
-            })
-            .map_or("right", |p| cut(&p.rect));
-        let mut argv = vec![
-            "pane",
-            "split",
-            shell,
-            "--direction",
-            direction,
-            "--ratio",
-            SHELL_RATIO,
-        ];
-        argv.extend_from_slice(placement);
-        Ok(self.herdr(&argv)?.result.pane.pane_id)
-    }
-
     /// The herdr lifecycle state of the agent in a pane; None when no agent
     /// lives there any more.
     pub(crate) fn agent_status(&self, pane_id: &str) -> Option<String> {
@@ -289,11 +229,6 @@ pub(crate) fn locate(tools: &dyn Tools, dir: &Path, workspace: &str, pane_id: &s
     };
     format!("(pane {at})")
 }
-
-/// The share of its pane the Shell keeps when a Brainstorm pane is split out
-/// of it.
-#[allow(dead_code)] // with place_beside_shell
-const SHELL_RATIO: &str = "0.6";
 
 /// A terminal cell is about twice as tall as it is wide, so a pane of equal
 /// rows and columns is a tall sliver on screen, not a square.

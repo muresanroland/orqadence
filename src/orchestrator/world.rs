@@ -364,12 +364,6 @@ impl World {
         if cmd.starts_with("herdr pane list") {
             return reply(json!({ "panes": w.panes }));
         }
-        if cmd.starts_with("herdr pane get") {
-            return match w.panes.iter().find(|p| p.pane_id == argv[3]) {
-                Some(pane) => reply(json!({ "pane": pane })),
-                None => Err(r#"{"error":{"code":"pane_not_found"}}"#.to_string()),
-            };
-        }
         if cmd.starts_with("herdr pane layout") {
             let layout = w.layout(flag_value(argv, "--pane"));
             return reply(json!({ "layout": { "panes": layout } }));

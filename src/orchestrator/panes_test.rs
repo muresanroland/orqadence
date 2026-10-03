@@ -1,10 +1,8 @@
-use super::herdr::{split_target, PaneInfo, PaneRect, Rect};
-use super::stage::Orchestrator;
+use super::herdr::{split_target, PaneRect, Rect};
 use super::state::STATUS_PR_OPEN;
-use super::world::{new_world, BdTicket, World};
+use super::world::{new_world, BdTicket};
 use super::write_file;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -224,124 +222,4 @@ fn the_excluded_pane_is_never_split_even_when_the_layout_cannot_be_read() {
             "{name}: the excluded pane was split: {split:?}"
         );
     }
-}
-
-/// A world whose Shell runs in pane w1:shell of tab w1:t0, beside a pane the
-/// user opened there.
-fn shell_world() -> (Arc<World>, Orchestrator) {
-    let (w, o) = new_world(Vec::new());
-    {
-        let mut inner = w.lock();
-        inner.tabs.push("w1:t0".to_string());
-        for id in ["w1:shell", "w1:mine"] {
-            inner.panes.push(PaneInfo {
-                pane_id: id.to_string(),
-                tab_id: "w1:t0".to_string(),
-            });
-        }
-    }
-    (w, o)
-}
-
-#[test]
-fn the_first_brainstorm_pane_splits_the_shells_pane_once_with_a_ratio() {
-    let (w, o) = shell_world();
-
-    let pane = o
-        .place_beside_shell("w1:shell", "", &["--no-focus"])
-        .unwrap();
-
-    assert_eq!(
-        w.called("herdr pane get w1:shell").len(),
-        1,
-        "the tab was not read live"
-    );
-    let split = w.called("herdr pane split");
-    assert_eq!(split.len(), 1, "{split:?}");
-    assert!(
-        split[0].starts_with("herdr pane split w1:shell ") && split[0].contains(" --ratio "),
-        "{split:?}"
-    );
-    let got = w.lock().panes.iter().find(|p| p.pane_id == pane).cloned();
-    assert_eq!(got.map(|p| p.tab_id).as_deref(), Some("w1:t0"));
-}
-
-#[test]
-fn a_later_brainstorm_pane_replaces_the_previous_one() {
-    let (w, o) = shell_world();
-    let first = o
-        .place_beside_shell("w1:shell", "", &["--no-focus"])
-        .unwrap();
-    let before = w.calls().len();
-
-    let second = o
-        .place_beside_shell("w1:shell", &first, &["--no-focus"])
-        .unwrap();
-
-    assert_eq!(
-        w.since(before, "herdr pane split"),
-        [format!(
-            "herdr pane split {first} --direction right --no-focus"
-        )],
-        "only the previous Brainstorm pane may be split"
-    );
-    assert_eq!(
-        w.since(before, "herdr pane close"),
-        [format!("herdr pane close {first}")]
-    );
-    let panes: Vec<String> = w.lock().panes.iter().map(|p| p.pane_id.clone()).collect();
-    assert_eq!(panes, ["w1:shell", "w1:mine", second.as_str()]);
-}
-
-#[test]
-fn a_failed_close_of_the_previous_brainstorm_pane_takes_the_new_one_back() {
-    let (w, o) = shell_world();
-    let first = o
-        .place_beside_shell("w1:shell", "", &["--no-focus"])
-        .unwrap();
-    w.fail_once(
-        &format!("herdr pane close {first}"),
-        r#"{"error":{"code":"internal_error"}}"#,
-    );
-
-    assert!(o
-        .place_beside_shell("w1:shell", &first, &["--no-focus"])
-        .is_err());
-
-    let panes: Vec<String> = w.lock().panes.iter().map(|p| p.pane_id.clone()).collect();
-    assert_eq!(panes, ["w1:shell", "w1:mine", first.as_str()]);
-}
-
-#[test]
-fn a_failed_lookup_of_the_previous_brainstorm_pane_does_not_split_the_shell_again() {
-    let (w, o) = shell_world();
-    let first = o
-        .place_beside_shell("w1:shell", "", &["--no-focus"])
-        .unwrap();
-    let before = w.calls().len();
-    w.fail_once(
-        &format!("herdr pane get {first}"),
-        r#"{"error":{"code":"internal_error"}}"#,
-    );
-
-    assert!(o
-        .place_beside_shell("w1:shell", &first, &["--no-focus"])
-        .is_err());
-
-    assert!(w.since(before, "herdr pane split").is_empty());
-}
-
-#[test]
-fn a_previous_brainstorm_pane_that_is_gone_gives_way_to_a_shell_split() {
-    let (w, o) = shell_world();
-    let before = w.calls().len();
-
-    o.place_beside_shell("w1:shell", "w1:gone", &["--no-focus"])
-        .unwrap();
-
-    let split = w.since(before, "herdr pane split");
-    assert!(
-        split.len() == 1 && split[0].starts_with("herdr pane split w1:shell "),
-        "{split:?}"
-    );
 }

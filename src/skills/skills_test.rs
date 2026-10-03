@@ -654,3 +654,79 @@ fn the_brainstorm_grilling_and_domain_modeling_skills_ship_with_their_rules() {
         assert!(!body.contains("{{"), "{file} carries a job line");
     }
 }
+
+/// brainstorm-chart and brainstorm-epic name their Inputs, the brainstorm:*
+/// labels and the keys of their result files, and commit only their own
+/// paths.
+#[test]
+fn the_brainstorm_chart_and_epic_skills_name_their_inputs_labels_and_results() {
+    let chart = skill("orqa-brainstorm-chart");
+    for text in [
+        "name: orqa-brainstorm-chart",
+        "**IDEA**",
+        "**TICKET LABELS**",
+        "**RESULT FILE**",
+        "--no-inherit-labels",
+        "brainstorm:map",
+        "brainstorm:epic",
+        "STATUS: done",
+        "MAP: <id>",
+        "TICKETS: <id> <id>",
+        "PR: <url>",
+        "LABEL: <name> | <guidance> | skills: <a>, <b> | tickets: <ids>",
+    ] {
+        assert!(chart.contains(text), "brainstorm-chart lacks {text:?}");
+    }
+    let epic = skill("orqa-brainstorm-epic");
+    for text in [
+        "name: orqa-brainstorm-epic",
+        "**MAP**",
+        "**WAYPOINT**",
+        "**TICKET LABELS**",
+        "**RELEASES**",
+        "**RESULT FILE**",
+        "which Epics carry `orqa:release`",
+        "--no-inherit-labels",
+        "STATUS: done",
+        "EPICS: <id> <id>",
+        "--status=closed --limit 0",
+        "PR: <url>",
+        "LABEL: <name> | <guidance> | skills: <a>, <b> | tickets: <ids>",
+    ] {
+        assert!(epic.contains(text), "brainstorm-epic lacks {text:?}");
+    }
+    for (name, body) in [("chart", chart), ("epic", epic)] {
+        for text in [
+            "orqa-brainstorm-grilling",
+            "orqa-brainstorm-domain-modeling",
+        ] {
+            assert!(
+                body.contains(text),
+                "brainstorm-{name} does not load {text}"
+            );
+        }
+        assert!(
+            !body.contains("git add -A"),
+            "brainstorm-{name} stages every path"
+        );
+    }
+}
+
+/// brainstorm-chart and brainstorm-epic each carry the {{prose}} line, which
+/// fill_jobs fills with the job's pick as it does a Stage skill's.
+#[test]
+fn the_brainstorm_chart_and_epic_skills_fill_the_prose_line() {
+    let have = ["orqa-caveman".to_string()];
+    for name in ["orqa-brainstorm-chart", "orqa-brainstorm-epic"] {
+        let body = skill(name);
+        assert_eq!(body.matches("{{prose}}").count(), 1, "{name}");
+        let (filled, lacking) =
+            crate::skills::manifest::Manifest::default().fill_jobs(body, &have, &[], "");
+        assert!(lacking.is_empty(), "{name}: {lacking:?}");
+        assert!(!filled.contains("{{"), "{name} keeps a placeholder");
+        assert!(
+            filled.contains("Use the orqa-caveman skill for your commits"),
+            "{name}"
+        );
+    }
+}
