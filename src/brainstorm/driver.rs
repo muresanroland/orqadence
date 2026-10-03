@@ -36,6 +36,10 @@ struct Driver<'a> {
     stop: &'a AtomicBool,
     /// The Brainstorm charted, as last saved.
     b: Brainstorm,
+    /// A dead session's pane still open, which the next pane replaces:
+    /// kept off the saved Brainstorm meanwhile, so the Shell sees its pane
+    /// still opening and refuses to switch.
+    previous: String,
 }
 
 /// Charts the Idea of `b`: brainstorm-chart, on the brainstorm_chart row,
@@ -57,9 +61,15 @@ pub(crate) fn chart(
         saved,
         stop,
         b,
+        previous: String::new(),
     };
     let session = d.b.session.clone().filter(|s| !s.id.is_empty());
-    let started = match (d.watched_again(), session) {
+    let watched = d.watched_again();
+    if matches!(watched, Ok(false)) && !d.b.pane.is_empty() {
+        d.previous = std::mem::take(&mut d.b.pane);
+        d.save();
+    }
+    let started = match (watched, session) {
         (Err(err), _) => {
             let text = format!("charting not resumed: herdr did not answer, try again: {err}");
             return d.say(&text);
@@ -74,6 +84,11 @@ pub(crate) fn chart(
         },
         (Ok(false), None) => d.start(shell),
     };
+    // no new pane took its place: the old one is the Brainstorm's again
+    if !d.previous.is_empty() {
+        d.b.pane = std::mem::take(&mut d.previous);
+        d.save();
+    }
     match started {
         Ok(result) => d.watch(&result),
         Err(why) if why.is_empty() => {} // stopped
@@ -175,8 +190,13 @@ impl Driver<'_> {
         let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         let worktree = PathBuf::from(&self.b.worktree);
         let tree = worktree.display().to_string();
-        let pane = place_beside_shell(tools, repo, shell, &self.b.pane, &["--cwd", &tree])
+        let previous = match self.b.pane.is_empty() {
+            true => &self.previous,
+            false => &self.b.pane,
+        };
+        let pane = place_beside_shell(tools, repo, shell, previous, &["--cwd", &tree])
             .map_err(|err| format!("got no pane: {err}"))?;
+        self.previous.clear();
         self.b.pane = pane.clone();
         self.b.session = Some(session);
         self.save();

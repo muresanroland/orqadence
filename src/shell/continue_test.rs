@@ -390,3 +390,52 @@ fn switching_while_the_charting_pane_is_still_opening_is_refused() {
     await_line(&mut s, "hx-7 charting started");
     s.close();
 }
+
+#[test]
+fn switching_while_a_resume_replaces_the_dead_sessions_pane_is_refused() {
+    let w = world(map(1), idle);
+    stopped_shell(&w);
+    let mut b = saved(&w);
+    let pane = b.pane.clone();
+    w.lock().names.clear(); // its pane open, no agent in it
+    b.session = Some(Session {
+        app: "claude".to_string(),
+        id: "s-old".to_string(),
+        ..Default::default()
+    });
+    b.save(&w.repo).unwrap();
+    saved_map(&w);
+    // the driver held before its new pane: the Shell's pane read blocks
+    let (opening, reached) = (
+        Arc::new(AtomicBool::new(true)),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let (held, at) = (opening.clone(), reached.clone());
+    w.hook(move |_, argv| {
+        while argv == ["herdr", "pane", "get", "w1:shell"] && held.load(Ordering::SeqCst) {
+            at.store(true, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(1));
+        }
+        None
+    });
+    let mut s = reopened(&w);
+    s.command("/continue @hx-7");
+    while !reached.load(Ordering::SeqCst) {
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    s.command("/continue @hx-m");
+    s.command("y");
+
+    assert_eq!(
+        notice(&s),
+        "refused: hx-7's pane is still opening, try again"
+    );
+    assert!(pane_alive(&w, &pane));
+    assert!(s.start_map.is_none());
+    assert_eq!(s.live.as_deref(), Some("hx-7"));
+    opening.store(false, Ordering::SeqCst);
+    await_line(&mut s, "hx-7 charting resumed: claude");
+    assert_ne!(saved(&w).pane, pane);
+    s.close();
+}
