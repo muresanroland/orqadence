@@ -41,11 +41,6 @@ fn last_left(epic: &'static str) -> Arc<World> {
     w
 }
 
-/// The prompt the brainstorm-epic session took.
-fn epic_prompt(w: &World) -> String {
-    await_prompt(w, "# Brainstorm Epics")
-}
-
 #[test]
 fn the_build_epic_waypoint_never_starts_while_another_is_open() {
     // hx-m.1 claimed elsewhere: the frontier holds only the unblocked
@@ -75,7 +70,7 @@ fn every_other_waypoint_closed_starts_brainstorm_epic_with_its_inputs() {
     await_line(&mut s, "hx-m.e1 Waypoint started");
 
     let result = w.repo.join(LOCAL).join("brainstorms/hx-7/epic.md");
-    let prompt = epic_prompt(&w);
+    let prompt = await_prompt(&w, "# Brainstorm Epics");
     for want in [
         "- MAP: hx-m\n",
         "- WAYPOINT: hx-m.e1\n",
@@ -96,7 +91,7 @@ fn releases_is_off_with_the_release_switch_off() {
 
     await_line(&mut s, "hx-m.e1 Waypoint started");
 
-    assert!(epic_prompt(&w).contains("- RELEASES: off\n"));
+    assert!(await_prompt(&w, "# Brainstorm Epics").contains("- RELEASES: off\n"));
     s.close();
 }
 

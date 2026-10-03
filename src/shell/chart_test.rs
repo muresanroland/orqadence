@@ -326,6 +326,25 @@ fn tickets_close_the_idea_and_remove_the_worktree_keeping_its_branch() {
 }
 
 #[test]
+fn the_idea_not_closing_keeps_the_brainstorm_charting_and_tries_again() {
+    let w = world(
+        vec![BdTicket::new("hx-1")],
+        writes("STATUS: done\nTICKETS: hx-1\nPR: https://example.test/pr/4\n"),
+    );
+    w.fail_once("bd close hx-7 ", "dolt is busy");
+    let mut s = started(&w);
+
+    await_line(&mut s, "hx-7 charting result not taken: Idea not closed");
+    await_line(&mut s, "hx-7 charting done: Tickets hx-1; Idea closed");
+
+    assert_eq!(w.called("bd close hx-7 ").len(), 2);
+    let b = saved(&w);
+    assert_eq!(b.phase, Phase::Done);
+    assert_eq!(b.docs_pr, "https://example.test/pr/4");
+    s.close();
+}
+
+#[test]
 fn the_sessions_app_and_id_are_in_the_brainstorms_state_never_in_state_json() {
     let w = world(Vec::new(), idle);
     w.lock().integration = true;

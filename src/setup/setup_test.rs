@@ -1496,7 +1496,10 @@ fn add_lines_adds_each_missing_line_once() {
     assert!(!add_lines(&path, &lines).unwrap());
     write_file(&path, "  graphify-out/");
     assert!(add_lines(&path, &lines).unwrap());
-    assert_eq!(read(repo.path(), ".gitignore"), "  graphify-out/\ngraphify-out/\n");
+    assert_eq!(
+        read(repo.path(), ".gitignore"),
+        "  graphify-out/\ngraphify-out/\n"
+    );
     write_file(&path, "/target");
     assert!(add_lines(&path, &lines).unwrap());
     assert_eq!(read(repo.path(), ".gitignore"), "/target\ngraphify-out/\n");

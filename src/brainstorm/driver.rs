@@ -559,32 +559,52 @@ impl<'a> Driver<'a> {
         let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         let issues = bd_list(repo, tools).map_err(|err| format!("bd list failed: {err}"))?;
         let reason = outcome(&issues, &r)?;
-        tools
-            .run(repo, &["bd", "close", &self.b.idea, "--reason", &reason])
-            .map_err(|err| format!("Idea not closed: {err}"))?;
+        // what came out saved before the Idea closes: load drops a
+        // Charting-phase Brainstorm whose Idea is closed, and its docs PR
+        // with it
+        let before = self.b.clone();
+        let tickets = r.map.is_empty();
+        self.b.label_lines = r.labels;
+        if tickets {
+            self.b.phase = Phase::Done;
+            self.b.tickets = r.tickets;
+            self.b.docs_pr = r.pr;
+        } else {
+            self.b.session = None; // charting's: no Waypoint session resumes it
+            self.b.phase = Phase::Map;
+            self.b.map = r.map;
+        }
+        let closed = self
+            .b
+            .save(repo)
+            .map_err(|err| format!("Brainstorm state not saved: {err}"))
+            .and_then(|_| {
+                tools
+                    .run(repo, &["bd", "close", &self.b.idea, "--reason", &reason])
+                    .map_err(|err| format!("Idea not closed: {err}"))
+            });
+        if let Err(why) = closed {
+            self.b = before;
+            self.save();
+            return Err(why);
+        }
         if let Err(err) = self.close_pane() {
             self.say(&format!("charting pane not closed: {err}"));
         }
-        self.b.label_lines = r.labels;
-        let line = if r.map.is_empty() {
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
+        let line = if tickets {
             let remove = ["git", "worktree", "remove", "--force", &self.b.worktree];
             match tools.run(repo, &remove) {
                 Ok(_) => self.b.worktree.clear(),
                 Err(err) => self.say(&format!("worktree not removed: {err}")),
             }
-            self.b.phase = Phase::Done;
-            self.b.tickets = r.tickets;
-            self.b.docs_pr = r.pr.clone();
-            let pr = match r.pr.as_str() {
+            let pr = match self.b.docs_pr.as_str() {
                 "" => String::new(),
                 pr => format!("; docs PR {pr}"),
             };
             format!("charting done: {reason}; Idea closed{pr}")
         } else {
-            let waypoints = issues.iter().filter(|i| i.parent == r.map).count();
-            self.b.session = None; // charting's: no Waypoint session resumes it
-            self.b.phase = Phase::Map;
-            self.b.map = r.map;
+            let waypoints = issues.iter().filter(|i| i.parent == self.b.map).count();
             format!(
                 "charting done: {reason}, {}; Idea closed",
                 plural(waypoints, "Waypoint")
@@ -637,18 +657,13 @@ impl Driver<'_> {
                 self.start_epics(shell, &e.id).map(Some)
             }
             Next::Wait(line) => {
-                self.idle(&line);
+                self.b.session = None;
+                self.b.result.clear();
+                self.save();
+                self.say(&line);
                 Ok(None)
             }
         }
-    }
-
-    /// No session runs, said: the Brainstorm stays live with none saved.
-    fn idle(&mut self, line: &str) {
-        self.b.session = None;
-        self.b.result.clear();
-        self.save();
-        self.say(line);
     }
 
     /// What the Map's frontier gives next, read from bd in map order.
@@ -837,7 +852,8 @@ impl Driver<'_> {
         self.b.label_lines = r.labels;
         self.b.docs_pr = r.pr;
         self.b.epics = r.epics;
-        let reason = format!("Epics {}", self.b.epics.join(", "));
+        let wrote = self.b.epics.join(", ");
+        let reason = format!("Epics {wrote}");
         let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         let closed = self
             .b
@@ -872,7 +888,6 @@ impl Driver<'_> {
         self.save();
         let waypoint = issues.iter().find(|i| i.parent == map && labelled(i, EPIC));
         let waypoint = waypoint.map_or(map.as_str(), |w| w.id.as_str());
-        let wrote = self.b.epics.join(", ");
         self.tell(waypoint, &format!("closed: wrote Epics {wrote}"));
         let first = &self.b.epics[0];
         let next = match self.b.docs_pr.as_str() {

@@ -310,7 +310,10 @@ fn start_map_whose_state_is_not_saved_keeps_the_form_open() {
     assert!(s.live.is_none());
     assert_eq!(s.brainstorms[0].background, before, "the old answer stays");
     let last = line(s.events.last().unwrap());
-    assert!(last.starts_with("hx-m Brainstorm state not saved:"), "{last}");
+    assert!(
+        last.starts_with("hx-m Brainstorm state not saved:"),
+        "{last}"
+    );
     s.close();
 }
 

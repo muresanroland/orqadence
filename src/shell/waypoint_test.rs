@@ -122,9 +122,7 @@ fn closed() -> (Arc<World>, Screen, String) {
     close(&w, "hx-m.1");
     result(&w, "hx-m.1");
     await_line(&mut s, "hx-m.1 closed; its pane closes");
-    while s.questions.is_empty() {
-        s.poll();
-    }
+    await_until(&mut s, "never asked", |s| !s.questions.is_empty());
     (w, s, pane)
 }
 
@@ -504,9 +502,7 @@ fn a_waypoint_pane_that_did_not_close_is_replaced_by_the_next_session() {
     close(&w, "hx-m.1");
     result(&w, "hx-m.1");
     await_line(&mut s, "hx-m.1 Waypoint pane not closed");
-    while s.questions.is_empty() {
-        s.poll();
-    }
+    await_until(&mut s, "never asked", |s| !s.questions.is_empty());
     assert_eq!(saved(&w).pane, pane);
 
     s.key(key(KeyCode::Enter)); // yes
@@ -644,9 +640,7 @@ fn a_run_ending_keeps_the_prompt_composed_for_next_waypoint() {
     await_line(&mut s, "hx-m.1 Waypoint started");
     close(&w, "hx-m.1");
     result(&w, "hx-m.1");
-    while s.questions.is_empty() {
-        s.poll();
-    }
+    await_until(&mut s, "never asked", |s| !s.questions.is_empty());
     s.command("/start-ticket hx-1");
     await_line(&mut s, "hx-1 implement started");
     s.key(key(KeyCode::Down));
