@@ -216,6 +216,10 @@ pub(crate) enum Ask {
     /// its Map, then no, then yes with a prompt of your own; the Shell
     /// answers it, no run being needed, for the Map that asked.
     NextWaypoint { options: Vec<String>, map: String },
+    /// Rebasing a Brainstorm's branch on /continue conflicted (shell.rs):
+    /// resolve it yourself, the Brainstorm stopped, or carry on from the
+    /// old base, `line` run again without the rebase; the Shell answers it.
+    BrainstormRebase { options: Vec<String>, line: String },
 }
 
 /// The user's answer to a Question, for the session (pane) it was about.

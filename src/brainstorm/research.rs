@@ -38,6 +38,9 @@ pub(crate) struct Handle {
     pub(crate) live: Arc<AtomicBool>,
     /// Parked Research Waypoints to resume; None once the thread has ended.
     resume: Arc<Mutex<Option<Vec<String>>>>,
+    /// Held by the Shell rebasing the Brainstorm's worktree: no session
+    /// starts while it is.
+    pub(crate) gate: Arc<Mutex<()>>,
     pub(crate) thread: JoinHandle<()>,
 }
 
@@ -84,9 +87,10 @@ pub(crate) fn spawn(
     ));
     let live = Arc::new(AtomicBool::new(live));
     let resume = Arc::new(Mutex::new(Some(Vec::new())));
+    let gate = Arc::new(Mutex::new(()));
     let idea = b.idea.clone();
     let thread = {
-        let (o, live, resume) = (o.clone(), live.clone(), resume.clone());
+        let (o, live, resume, gate) = (o.clone(), live.clone(), resume.clone(), gate.clone());
         thread::spawn(move || {
             let mut r = Runner {
                 o,
@@ -101,7 +105,7 @@ pub(crate) fn spawn(
                 sent: (b.research_tab, b.research),
                 sender,
             };
-            r.run(&live, &stop, &resume);
+            r.run(&live, &stop, &resume, &gate);
         })
     };
     Handle {
@@ -109,6 +113,7 @@ pub(crate) fn spawn(
         o,
         live,
         resume,
+        gate,
         thread,
     }
 }
@@ -138,7 +143,13 @@ struct Runner {
 impl Runner {
     /// Each tick until the Shell closes, or its Map is no longer live and
     /// nothing of its runs, waits on bd or is to be resumed.
-    fn run(&mut self, live: &AtomicBool, stop: &AtomicBool, resume: &Mutex<Option<Vec<String>>>) {
+    fn run(
+        &mut self,
+        live: &AtomicBool,
+        stop: &AtomicBool,
+        resume: &Mutex<Option<Vec<String>>>,
+        gate: &Mutex<()>,
+    ) {
         // the ones in a pane watched again; the rest, a resume that waited
         // for a slot or one never placed, wait for one again
         for r in self.research.clone().into_iter().filter(|r| !r.parked) {
@@ -162,19 +173,25 @@ impl Runner {
                     self.close(&id);
                 }
             }
-            let resumed = std::mem::take(resume.lock().unwrap().as_mut().unwrap());
-            for id in resumed {
-                // a repeat finds it no longer Parked
-                if let Some(r) = (self.research.iter_mut()).find(|r| r.waypoint == id && r.parked) {
-                    r.parked = false;
-                    self.resuming.push(id);
+            // the Shell rebasing: nothing starts this tick; what starts is
+            // sent before the gate is let go, for the Shell to see running
+            if let Ok(_gate) = gate.try_lock() {
+                let resumed = std::mem::take(resume.lock().unwrap().as_mut().unwrap());
+                for id in resumed {
+                    // a repeat finds it no longer Parked
+                    if let Some(r) =
+                        (self.research.iter_mut()).find(|r| r.waypoint == id && r.parked)
+                    {
+                        r.parked = false;
+                        self.resuming.push(id);
+                    }
                 }
+                self.resume_waiting();
+                if live.load(Ordering::SeqCst) {
+                    self.start_ready();
+                }
+                self.sync(None);
             }
-            self.resume_waiting();
-            if live.load(Ordering::SeqCst) {
-                self.start_ready();
-            }
-            self.sync(None);
             {
                 let mut queue = resume.lock().unwrap();
                 let idle =
