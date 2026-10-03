@@ -18,6 +18,7 @@ You chart one Brainstorm with the user, in a fresh session inside the Brainstorm
 - **Refer by title.** Wherever the user reads an issue (your questions, the Map, a description), name it by its title, never by a bare id. The id may ride beside the title, never in its place.
 - **Never fire research.** Never start a session or background agent to resolve a Waypoint, and never resolve one yourself: charting resolves nothing. Your App's built-in subagents may look up facts for your own questions.
 - The bd commands are written out below; use them as they are. Never `bd edit`.
+- Write each issue body to a file with your file-writing tool, never through the shell, so no line of it can end a heredoc or run as a command: take a fresh path from `mktemp`, outside the worktree so it is never committed, and pass it as `--body-file=<file>`.
 - Other sessions may share this worktree: commit only the paths you changed, as orqa-brainstorm-domain-modeling's "Where you write, and committing" says.
 
 ## 1. Name the Destination
@@ -35,23 +36,40 @@ Then decide between Tickets and a Map with the **fog-or-ticket test**: can you s
 
 ## 3. No fog: Tickets
 
-1. Write the Tickets. Each Ticket is one pull request's worth of work, sized for one session. Each Ticket has a description, acceptance criteria, and at most one Area label from **TICKET LABELS** (an `area` kind), by its configured name such as `orqa:fe`. Add a `modifier` label only when its guidance says it fits. Leave `--labels` out when no label fits. Never add `orqa:release`. Write the title and acceptance criteria inside single quotes, a `'` in them as `'\''`, and the description in the quoted heredoc, so the shell never expands any of them.
+1. Write the Tickets. Each Ticket is one pull request's worth of work, sized for one session. Each Ticket has a description, acceptance criteria, and at most one Area label from **TICKET LABELS** (an `area` kind), by its configured name such as `orqa:fe`. Add a `modifier` label only when its guidance says it fits. Leave `--labels` out when no label fits. Never add `orqa:release`. Write the title and acceptance criteria inside single quotes, a `'` in them as `'\''`, so the shell never expands them.
 
    ```
-   bd create --type=task --priority=2 --title='<title>' --acceptance='<criteria>' --labels=<area label> --body-file=- <<'EOF'
+   bd create --type=task --priority=2 --title='<title>' --acceptance='<criteria>' --labels=<area label> --body-file=<file>
+   ```
+
+   with `<file>` holding:
+
+   ```
    <description>
-   EOF
    ```
 
 2. Work that spans areas (a screen and the API behind it, say) is an Epic with one Ticket per area. The Epic's description holds the contract each side expects of the other; Orqadence hands it to each Ticket's sessions as Epic context. Create the Epic first, then its Tickets as its children:
 
    ```
-   bd create --type=epic --priority=2 --title='<title>' --body-file=- <<'EOF'
+   bd create --type=epic --priority=2 --title='<title>' --body-file=<file>
+   ```
+
+   with `<file>` holding:
+
+   ```
    <what it builds, and the contract between its Tickets>
-   EOF
-   bd create --parent <epic> --no-inherit-labels --type=task --priority=2 --title='<title>' --acceptance='<criteria>' --labels=<area label> --body-file=- <<'EOF'
+   ```
+
+   Then each Ticket:
+
+   ```
+   bd create --parent <epic> --no-inherit-labels --type=task --priority=2 --title='<title>' --acceptance='<criteria>' --labels=<area label> --body-file=<file>
+   ```
+
+   with `<file>` holding:
+
+   ```
    <description>
-   EOF
    ```
 
 3. Wire the blocking edges in a second pass, once every Ticket has its id: `bd dep add <ticket> <the ticket it waits for>`.
@@ -63,7 +81,12 @@ Then decide between Tickets and a Map with the **fog-or-ticket test**: can you s
 1. Create the Map, its title and every Waypoint's quoted as in section 3. Its body holds five sections:
 
    ```
-   bd create --type=epic --priority=2 --title='<title>' --labels=brainstorm:map --body-file=- <<'EOF'
+   bd create --type=epic --priority=2 --title='<title>' --labels=brainstorm:map --body-file=<file>
+   ```
+
+   with `<file>` holding:
+
+   ```
    ## Destination
 
    <what reaching the end of this Map looks like, in one or two lines>
@@ -83,7 +106,6 @@ Then decide between Tickets and a Map with the **fog-or-ticket test**: can you s
    ## Out of scope
 
    <work ruled beyond the Destination, one line each with why>
-   EOF
    ```
 
    Not yet specified is in scope, just not sharp enough to be a Waypoint. Do not pre-slice it into Waypoint-sized pieces. Out of scope is what the Destination rules out, and it never comes back as a Waypoint.
@@ -95,11 +117,15 @@ Then decide between Tickets and a Map with the **fog-or-ticket test**: can you s
    - `brainstorm:research`: a fact that a decision waits on, found in docs, third-party APIs or the codebase, with no user needed.
 
    ```
-   bd create --parent <map> --no-inherit-labels --type=task --priority=2 --title='<title>' --labels=brainstorm:<type> --body-file=- <<'EOF'
+   bd create --parent <map> --no-inherit-labels --type=task --priority=2 --title='<title>' --labels=brainstorm:<type> --body-file=<file>
+   ```
+
+   with `<file>` holding:
+
+   ```
    ## Question
 
    <the decision or investigation this Waypoint resolves>
-   EOF
    ```
 
    `--no-inherit-labels` is required: without it bd copies `brainstorm:map` onto the Waypoint.
@@ -107,11 +133,15 @@ Then decide between Tickets and a Map with the **fog-or-ticket test**: can you s
 3. Create exactly one build-Epic Waypoint, which a later session works last:
 
    ```
-   bd create --parent <map> --no-inherit-labels --type=task --priority=2 --title="Write the Epics that build what this Map decided" --labels=brainstorm:epic --body-file=- <<'EOF'
+   bd create --parent <map> --no-inherit-labels --type=task --priority=2 --title="Write the Epics that build what this Map decided" --labels=brainstorm:epic --body-file=<file>
+   ```
+
+   with `<file>` holding:
+
+   ```
    ## Question
 
    Which Epics, with which Tickets, build what this Map decided?
-   EOF
    ```
 
 4. Wire the blocking edges in a second pass, once every Waypoint has its id:

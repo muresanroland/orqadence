@@ -16,6 +16,7 @@ You work a Map's last Waypoint with the user, in a fresh session inside the Brai
 - Read the repo's `CLAUDE.md` (or `AGENTS.md`), `CONTEXT.md` and `docs/adr/` if present. Use the repo's vocabulary.
 - **Refer by title.** Wherever the user reads an issue (your questions, the Map, a description), name it by its title, never by a bare id. The id may ride beside the title, never in its place.
 - The bd commands are written out below; use them as they are. Never `bd edit`.
+- Write each issue body to a file with your file-writing tool, never through the shell, so no line of it can end a heredoc or run as a command: take a fresh path from `mktemp`, outside the worktree so it is never committed, and pass it as `--body-file=<file>`.
 - Other sessions may share this worktree: commit only the paths you changed, as orqa-brainstorm-domain-modeling's "Where you write, and committing" says.
 
 ## 1. Claim and read
@@ -23,26 +24,34 @@ You work a Map's last Waypoint with the user, in a fresh session inside the Brai
 1. Claim the WAYPOINT before anything else: `bd update <WAYPOINT> --claim`.
 2. Read the Map: `bd show <MAP>`. Its Destination, Notes and Decisions so far are the low-resolution view.
 3. List its closed Waypoints with `bd list --parent <MAP> --status=closed --limit 0 --json`. Read each one's resolution with `bd show <id> --json --include-comments`: its comments and close reason hold the decision. Zoom into the ones the Epics depend on. Prototype branches and research notes they link can be read with `git show`.
-4. Add to Decisions so far any closed Waypoint missing from it, from its close reason: one line each, its title and the gist of its answer. Rewrite the Map's description with `bd update <MAP> --body-file=-` and the whole new body on stdin, changing only those lines.
+4. Add to Decisions so far any closed Waypoint missing from it, from its close reason: one line each, its title and the gist of its answer. Rewrite the Map's description with `bd update <MAP> --body-file=<file>`, the whole new body in `<file>`, changing only those lines.
 
 ## 2. Write the Epics
 
 Write the build Epics in build order, one per area: an Epic builds one area's part, and the Epics that come later assume the earlier ones are merged. Grill the user only on what the closed Waypoints leave open.
 
-1. Create each Epic, with no `--parent`: it is not a child of the Map. Its description says what it builds, the decisions it rests on (by Waypoint title), the contract between its Tickets, and which earlier Epics it assumes are merged. Write the title (and a Ticket's acceptance criteria) inside single quotes, a `'` in them as `'\''`, and the description in the quoted heredoc, so the shell never expands any of them.
+1. Create each Epic, with no `--parent`: it is not a child of the Map. Its description says what it builds, the decisions it rests on (by Waypoint title), the contract between its Tickets, and which earlier Epics it assumes are merged. Write the title (and a Ticket's acceptance criteria) inside single quotes, a `'` in them as `'\''`, so the shell never expands them.
 
    ```
-   bd create --type=epic --priority=2 --title='<title>' --body-file=- <<'EOF'
+   bd create --type=epic --priority=2 --title='<title>' --body-file=<file>
+   ```
+
+   with `<file>` holding:
+
+   ```
    <description>
-   EOF
    ```
 
 2. Create its Tickets as its children, each sized for one pull request, so /start-epic can run them. Each Ticket has a description, acceptance criteria, and at most one Area label from **TICKET LABELS** (an `area` kind), by its configured name such as `orqa:fe`. Add a `modifier` label only when its guidance says it fits. Leave `--labels` out when no label fits.
 
    ```
-   bd create --parent <epic> --no-inherit-labels --type=task --priority=2 --title='<title>' --acceptance='<criteria>' --labels=<area label> --body-file=- <<'EOF'
+   bd create --parent <epic> --no-inherit-labels --type=task --priority=2 --title='<title>' --acceptance='<criteria>' --labels=<area label> --body-file=<file>
+   ```
+
+   with `<file>` holding:
+
+   ```
    <description>
-   EOF
    ```
 
 3. Wire the blocking edges between Tickets in a second pass, once every Ticket has its id: `bd dep add <ticket> <the ticket it waits for>`.
