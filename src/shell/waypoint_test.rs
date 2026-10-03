@@ -146,15 +146,16 @@ fn a_result_whose_waypoint_is_closed_closes_the_pane_and_asks_next_waypoint() {
     assert!(!pane_alive(&w, &pane));
     let q = &s.questions[0];
     assert_eq!(q.ticket.as_deref(), Some("hx-m.1"));
-    assert_eq!(q.text, "m.1 Ticket hx-m.1 closed. Next Waypoint?");
+    assert_eq!(q.text, "1 Ticket hx-m.1 closed. Next Waypoint?");
     assert!(matches!(
-        q.about,
-        super::About::Asked(Ask::NextWaypoint { .. })
+        &q.about,
+        super::About::Asked(Ask::NextWaypoint { map, .. }) if map == "hx-m"
     ));
+    assert!(q.brainstorms(), "no run's end drops it");
     assert_eq!(
         s.options(),
         [
-            "yes: the next on the Map, m.2 Ticket hx-m.2",
+            "yes: the next on the Map, 2 Ticket hx-m.2",
             "no: the Brainstorm stops, /continue @hx-m picks it up",
             "yes, with a prompt of your own in place of the default",
         ]
@@ -228,7 +229,7 @@ fn a_result_whose_waypoint_is_still_open_keeps_the_pane() {
 
     await_line(
         &mut s,
-        "hx-m.1 result written, but m.1 is still open in bd: pane 1-2 kept",
+        "hx-m.1 result written, but 1 is still open in bd: pane 1-2 kept",
     );
     assert!(pane_alive(&w, &pane));
     assert!(s.questions.is_empty());
@@ -289,15 +290,15 @@ fn continue_a_waypoint_that_cannot_be_taken_says_why() {
     let starts = w.called("herdr agent start").len();
 
     for (id, why) in [
-        ("hx-m.1", "refused: m.1 is closed"),
-        ("hx-m.4", "refused: m.4 is blocked on m.3"),
+        ("hx-m.1", "refused: 1 is closed"),
+        ("hx-m.4", "refused: 4 is blocked on 3"),
         (
             "hx-m.e1",
-            "refused: m.e1 writes the Epic, and 4 other Waypoints are open",
+            "refused: e1 writes the Epic, and 4 other Waypoints are open",
         ),
         (
             "hx-m.5",
-            "refused: m.5 is a Research Waypoint a background session is running",
+            "refused: 5 is a Research Waypoint a background session is running",
         ),
     ] {
         s.command(&format!("/continue @{id}"));
@@ -362,6 +363,7 @@ fn manual_work_its_session_waits_on_is_asked_once_and_done_goes_into_its_pane() 
         s.questions[0].about,
         super::About::Asked(Ask::Manual { .. })
     ));
+    assert!(s.questions[0].brainstorms(), "no run's end drops it");
 
     s.key(key(KeyCode::Enter)); // done
 
@@ -449,5 +451,113 @@ fn an_interrupted_session_whose_resume_fails_takes_its_claimed_waypoint() {
     }
     let prompt = fresh().unwrap();
     assert!(prompt.contains("- WAYPOINT: hx-m.1\n"), "{prompt}");
+    s.close();
+}
+
+#[test]
+fn continue_the_map_while_its_session_runs_is_refused() {
+    let (w, mut s, _) = working();
+    let starts = w.called("herdr agent start").len();
+
+    s.command("/continue @hx-m");
+
+    assert_eq!(notice(&s), "refused: a Waypoint session of hx-m is running");
+    assert!(s.start_map.is_none());
+    // a Continue form opened before the session started cannot start another
+    let b = s.brainstorms[0].clone();
+    s.open_start_map(&b, true);
+    s.key(key(KeyCode::Enter));
+    assert_eq!(notice(&s), "refused: a Waypoint session of hx-m is running");
+    assert_eq!(w.called("herdr agent start").len(), starts);
+    s.close();
+}
+
+#[test]
+fn stopping_the_live_map_drops_its_next_waypoint_question() {
+    let (_w, mut s, _) = closed();
+
+    s.command("/brainstorm");
+    s.command("y");
+
+    assert!(!s.questions.iter().any(|q| q.brainstorms()));
+    assert_eq!(s.live, None);
+    s.close();
+}
+
+#[test]
+fn next_waypoint_answered_once_its_map_is_not_live_starts_nothing() {
+    let (w, mut s, _) = closed();
+    let starts = w.called("herdr agent start").len();
+    s.live = None;
+
+    s.key(key(KeyCode::Enter));
+
+    await_line(&mut s, "hx-m not acted on: the Map is no longer live");
+    assert_eq!(w.called("herdr agent start").len(), starts);
+    s.close();
+}
+
+#[test]
+fn a_waypoint_pane_that_did_not_close_is_replaced_by_the_next_session() {
+    let (w, mut s, pane) = working();
+    w.fail_once("herdr pane close", "herdr is busy");
+    close(&w, "hx-m.1");
+    result(&w, "hx-m.1");
+    await_line(&mut s, "hx-m.1 Waypoint pane not closed");
+    while s.questions.is_empty() {
+        s.poll();
+    }
+    assert_eq!(saved(&w).pane, pane);
+
+    s.key(key(KeyCode::Enter)); // yes
+
+    await_line(&mut s, "hx-m.2 Waypoint started");
+    assert_ne!(saved(&w).pane, pane);
+    s.close();
+}
+
+#[test]
+fn parking_manual_work_stops_the_brainstorm_and_continue_asks_it_again() {
+    let w = world(map(1), session);
+    w.lock().integration = true;
+    let (w, mut s) = live_in(w);
+    await_line(&mut s, "hx-m.1 Waypoint started");
+    let folder = w.repo.join(LOCAL).join("runs/hx-m.1/manual-work/1");
+    std::fs::create_dir_all(&folder).unwrap();
+    let item = "Ticket: hx-m.1 · Stage: waypoint · Blocks: yes\n\n## What\nSet the token.\n";
+    std::fs::write(folder.join("manual-work.md"), item).unwrap();
+    let file = saved(&w).result;
+    std::fs::write(&file, format!("STATUS: manual\n{}\n", folder.display())).unwrap();
+    await_line(&mut s, "hx-m.1 manual work in Waypoint");
+
+    s.key(key(KeyCode::Down));
+    s.key(key(KeyCode::Down));
+    s.key(key(KeyCode::Enter)); // park
+
+    await_line(
+        &mut s,
+        "hx-m.1 parked: Brainstorm stopped, /continue @hx-m asks again",
+    );
+    await_line(&mut s, "hx-m Waypoint stopped: its pane is gone");
+    assert_eq!(s.live, None);
+    assert_eq!(s.suggestion.as_deref(), Some("/continue @hx-m"));
+    while s.driving("hx-7") {
+        s.poll();
+    }
+
+    s.command("/continue @hx-m");
+    s.key(key(KeyCode::Enter));
+
+    await_line(&mut s, "hx-m Waypoint resumed");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let asked = |s: &Screen| {
+        let manual =
+            |e: &&crate::orchestrator::stage::Event| line(e).contains("manual work in Waypoint");
+        s.events.iter().filter(manual).count()
+    };
+    while asked(&s) < 2 {
+        assert!(std::time::Instant::now() < deadline, "not asked again");
+        s.poll();
+    }
     s.close();
 }

@@ -5,6 +5,7 @@
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::plural;
 use crate::orchestrator::state::{local_dir, Session, LOCAL};
+use crate::shell::suffix;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -121,9 +122,9 @@ impl Brainstorm {
     }
 }
 
-/// A Waypoint's name in a line: its id after the first '-', bsg.4.
-pub(crate) fn short(id: &str) -> &str {
-    id.split_once('-').map_or(id, |(_, s)| s)
+/// Whether `i` carries bd label `label`.
+pub(crate) fn labelled(i: &BdIssue, label: &str) -> bool {
+    i.labels.iter().any(|l| l == label)
 }
 
 /// The saved Brainstorm whose state.json changed last, a done one never.
@@ -170,7 +171,7 @@ pub(crate) enum Kind {
 }
 
 fn is_map(issue: &BdIssue) -> bool {
-    issue.issue_type == "epic" && issue.labels.iter().any(|l| l == MAP)
+    issue.issue_type == "epic" && labelled(issue, MAP)
 }
 
 /// The issue's Brainstorm kind among `issues`, None for every other issue:
@@ -180,7 +181,7 @@ pub(crate) fn kind(issues: &[BdIssue], issue: &BdIssue) -> Option<Kind> {
         Some(Kind::Map)
     } else if !issue.parent.is_empty() && issues.iter().any(|p| p.id == issue.parent && is_map(p)) {
         Some(Kind::Waypoint)
-    } else if issue.labels.iter().any(|l| l == IDEA) {
+    } else if labelled(issue, IDEA) {
         Some(Kind::Idea)
     } else {
         None
@@ -204,7 +205,7 @@ pub(crate) fn refusal(issues: &[BdIssue], id: &str) -> Option<String> {
 pub(crate) fn waypoint_refusal(issues: &[BdIssue], b: &Brainstorm, id: &str) -> Option<String> {
     let w = issues.iter().find(|i| i.id == id)?;
     let open = |id: &str| issues.iter().any(|i| i.id == id && i.status != "closed");
-    let name = short(id);
+    let name = suffix(id);
     if w.status == "closed" {
         return Some(format!("refused: {name} is closed"));
     }
@@ -217,14 +218,14 @@ pub(crate) fn waypoint_refusal(issues: &[BdIssue], b: &Brainstorm, id: &str) -> 
         .iter()
         .filter(|i| i.parent == b.map && i.id != id && i.status != "closed")
         .count();
-    if w.labels.iter().any(|l| l == EPIC) && others > 0 {
+    if labelled(w, EPIC) && others > 0 {
         let are = if others == 1 { "is" } else { "are" };
         let others = plural(others, "other Waypoint");
         return Some(format!(
             "refused: {name} writes the Epic, and {others} {are} open"
         ));
     }
-    let on: Vec<&str> = w.blockers().filter(|b| open(b)).map(short).collect();
+    let on: Vec<&str> = w.blockers().filter(|b| open(b)).map(suffix).collect();
     (!on.is_empty()).then(|| format!("refused: {name} is blocked on {}", on.join(", ")))
 }
 

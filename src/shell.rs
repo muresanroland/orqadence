@@ -224,6 +224,18 @@ pub(crate) struct Question {
     pub(crate) opened: OnceCell<chrono::DateTime<chrono::Local>>,
 }
 
+impl Question {
+    /// The Brainstorm's own, which no run's end drops: Next Waypoint?, or
+    /// a Waypoint session's Manual work.
+    pub(crate) fn brainstorms(&self) -> bool {
+        match &self.about {
+            About::Asked(Ask::NextWaypoint { .. }) => true,
+            About::Asked(Ask::Manual { stage, .. }) => stage == brainstorm::driver::WAYPOINT,
+            _ => false,
+        }
+    }
+}
+
 /// A Notice modal's kind: red and titled ERROR, or green and titled NOTICE.
 pub(crate) enum NoticeKind {
     Error,
@@ -952,7 +964,9 @@ impl Screen {
         }
         self.running = false;
         self.withdraw(&run);
-        self.questions.retain(|q| q.ticket.is_none()); // never saved: derived again on resume
+        // never saved: derived again on resume
+        self.questions
+            .retain(|q| q.ticket.is_none() || q.brainstorms());
         self.composing = false;
         self.first = None;
         if run.o.stopping() {
@@ -1472,7 +1486,7 @@ impl Screen {
                 | Ask::Tag { options, .. }
                 | Ask::ReleaseAgain { options }
                 | Ask::Merge { options, .. }
-                | Ask::NextWaypoint { options },
+                | Ask::NextWaypoint { options, .. },
             ) => options.clone(),
             About::Confirm(_) => ["yes", "no"].map(str::to_string).to_vec(),
             About::Continue { rows } => rows
@@ -1617,7 +1631,7 @@ impl Screen {
                     }
                 } else if !blockers.is_empty() {
                     Some(format!("blocked on {}", blockers.join(", ")))
-                } else if w.labels.iter().any(|l| l == brainstorm::EPIC) && left > 1 {
+                } else if brainstorm::labelled(w, brainstorm::EPIC) && left > 1 {
                     Some(format!("last, {} others open", left - 1))
                 } else {
                     None // ready to take
@@ -2241,8 +2255,8 @@ impl Screen {
         let id = q.ticket.unwrap_or_default();
         self.tell(Some(&id), &format!("you answered: {word}"));
         // the Brainstorm's: no run to answer them
-        if let About::Asked(Ask::NextWaypoint { .. }) = q.about {
-            return self.next_waypoint(answer);
+        if let About::Asked(Ask::NextWaypoint { map, .. }) = &q.about {
+            return self.next_waypoint(map, answer);
         }
         if let About::Asked(Ask::Manual { pane, item, .. }) = &q.about {
             let live = self.live_brainstorm().filter(|b| &b.pane == pane).cloned();
@@ -2365,6 +2379,7 @@ impl Screen {
         self.brainstorm_updates();
         let Some(b) = self.live_brainstorm().cloned() else {
             self.live = None;
+            self.questions.retain(|q| !q.brainstorms());
             return true;
         };
         // its driver between charting and its pane: that pane would open
@@ -2390,6 +2405,8 @@ impl Screen {
             }
         }
         self.live = None;
+        // its Questions go: /continue @<map> asks them again
+        self.questions.retain(|q| !q.brainstorms());
         true
     }
 
@@ -2691,8 +2708,11 @@ impl Screen {
             return;
         }
         match b.phase {
-            Phase::Map => self.open_start_map(&b, true),
             // a driver still running, live or stopping, owns its pane
+            Phase::Map if self.driving(&b.idea) => {
+                self.refuse(&format!("refused: a Waypoint session of {key} is running"))
+            }
+            Phase::Map => self.open_start_map(&b, true),
             _ if self.driving(&b.idea) => {
                 self.refuse(&format!("refused: {key} is already charting"))
             }
@@ -2726,12 +2746,17 @@ impl Screen {
         self.work_map(b, None, Some(id.to_string()));
     }
 
-    /// "Next Waypoint?" answered for the live Map: yes (Approve) starts a
-    /// fresh session, with your prompt as its PROMPT when you typed one; no
-    /// stops the Brainstorm, saved, for /continue @<map>.
-    fn next_waypoint(&mut self, answer: Answer) {
-        let Some(b) = self.live_brainstorm().cloned() else {
-            return;
+    /// "Next Waypoint?" answered for `map`, while it is the live Map: yes
+    /// (Approve) starts a fresh session, with your prompt as its PROMPT
+    /// when you typed one; no stops the Brainstorm, saved, for /continue
+    /// @<map>.
+    fn next_waypoint(&mut self, map: &str, answer: Answer) {
+        let live = self.live_brainstorm();
+        let Some(b) = live
+            .filter(|b| b.map == map && b.phase == Phase::Map)
+            .cloned()
+        else {
+            return self.tell(Some(map), "not acted on: the Map is no longer live");
         };
         match answer {
             Answer::Approve => self.work_map(b, None, None),
@@ -2747,11 +2772,19 @@ impl Screen {
 
     /// A Waypoint session's Manual work answered: done, with your facts or
     /// none, goes into its pane as Manual work <n> done: <facts>, its
-    /// result removed first, and the item is marked done; park leaves the
-    /// session waiting in its pane.
+    /// result removed first, and the item is marked done; park stops the
+    /// Brainstorm, saved, so /continue @<map> asks it again.
     fn brainstorm_manual(&mut self, id: &str, b: &Brainstorm, item: &manual::Item, answer: Answer) {
         let Answer::Prompt(facts) = answer else {
-            return self.tell(Some(id), "left to you: its session waits in its pane");
+            if self.stop_live() {
+                let next = format!("/continue @{}", b.map);
+                self.tell(
+                    Some(id),
+                    &format!("parked: Brainstorm stopped, {next} asks again"),
+                );
+                self.suggestion = Some(next);
+            }
+            return;
         };
         let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         let kept = fs::read(&b.result);

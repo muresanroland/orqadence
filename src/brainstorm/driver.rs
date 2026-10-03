@@ -12,7 +12,7 @@ use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{brainstorms, is_map, short, Brainstorm, Phase, EPIC, MAP, RESEARCH};
+use super::{brainstorms, is_map, labelled, Brainstorm, Phase, EPIC, MAP, RESEARCH};
 use crate::orchestrator::app::{self, BRAINSTORM};
 use crate::orchestrator::herdr::{self, agent_name, herdr, locate, place_beside_shell};
 use crate::orchestrator::manual;
@@ -30,8 +30,9 @@ use crate::tools::{RunError, Tools};
 
 /// The session charting an Idea, its agent's stage name.
 const CHART: &str = "chart";
-/// A session with the user on a Waypoint of the Map.
-const WAYPOINT: &str = "waypoint";
+/// A session with the user on a Waypoint of the Map, its Manual work's
+/// stage.
+pub(crate) const WAYPOINT: &str = "waypoint";
 
 /// What a live Map's frontier gives next.
 enum Next {
@@ -167,18 +168,21 @@ impl<'a> Driver<'a> {
             self.previous = std::mem::take(&mut self.b.pane);
             self.save();
         }
-        let watched = self.watched_again();
+        // a Waypoint's pane kept with no result to watch is replaced
+        let watched = self
+            .watched_again()
+            .map(|alive| alive && (self.stage == CHART || !self.b.result.is_empty()));
+        if !matches!(watched, Ok(false)) {
+            self.b.pane = std::mem::take(&mut self.previous);
+            self.save();
+        }
         let started = match (watched, session) {
             (Err(err), _) => {
-                self.b.pane = std::mem::take(&mut self.previous);
-                self.save();
                 let text = format!("{noun} not resumed: herdr did not answer, try again: {err}");
                 self.say(&text);
                 return None;
             }
             (Ok(true), _) => {
-                self.b.pane = std::mem::take(&mut self.previous);
-                self.save();
                 let at = locate(tools, repo, &self.cfg.workspace, &self.b.pane);
                 self.say(&format!("{noun} watched again {at}"));
                 Ok(Some(self.result_file()))
@@ -270,23 +274,14 @@ impl<'a> Driver<'a> {
     /// Its pane closed by the user: the Brainstorm stopped, saved.
     fn gone(&mut self) {
         self.b.pane.clear();
-        self.save();
-        let text = format!(
-            "{} stopped: its pane is gone; Brainstorm saved",
-            self.noun()
-        );
-        self.say(&text);
+        self.stopped("its pane is gone");
     }
 
-    /// Its session dead in a pane still open: the Brainstorm stopped,
-    /// saved, its pane kept so a resume replaces it.
-    fn died(&self) {
+    /// The Brainstorm stopped, saved, `why` said; a pane still open is kept
+    /// so a resume replaces it.
+    fn stopped(&self, why: &str) {
         self.save();
-        let text = format!(
-            "{} stopped: its session is gone; Brainstorm saved",
-            self.noun()
-        );
-        self.say(&text);
+        self.say(&format!("{} stopped: {why}; Brainstorm saved", self.noun()));
     }
 
     /// One tick. False once the Shell is closing, which it checks every
@@ -489,14 +484,17 @@ impl<'a> Driver<'a> {
             }
             if result.exists() {
                 let taken = match self.stage {
-                    CHART => self.done(result).map_err(|why| {
-                        let idea = self.b.idea.clone();
-                        let text = format!("charting result not taken: {why}");
-                        self.once(&mut said, &idea, &text, None);
-                    }),
+                    CHART => self
+                        .done(result)
+                        .map_err(|why| {
+                            let idea = self.b.idea.clone();
+                            let text = format!("charting result not taken: {why}");
+                            self.once(&mut said, &idea, &text, None);
+                        })
+                        .is_ok(),
                     _ => self.waypoint_done(result, &mut said),
                 };
-                if taken.is_ok() {
+                if taken {
                     return;
                 }
             } else if self.stage == WAYPOINT {
@@ -509,7 +507,7 @@ impl<'a> Driver<'a> {
                     return self.gone();
                 }
                 if agent_dead(tools, repo, &self.b.pane) {
-                    return self.died();
+                    return self.stopped("its session is gone");
                 }
             }
             if !self.sleep() {
@@ -608,7 +606,7 @@ impl Driver<'_> {
         match w {
             Next::Take(w) => self.start_waypoint(shell, &w.id, set, prompt).map(Some),
             Next::Epic(e) => {
-                let line = format!("only the build-Epic Waypoint is left: {}", short(&e.id));
+                let line = format!("only the build-Epic Waypoint is left: {}", suffix(&e.id));
                 self.idle(&line);
                 Ok(None)
             }
@@ -687,12 +685,12 @@ impl Driver<'_> {
     /// and asks "Next Waypoint?", or says the frontier waits on research;
     /// still open, the pane is kept. Manual work is put to the user once.
     /// Whether it ended the session; each line not taken said once.
-    fn waypoint_done(&mut self, result: &Path, said: &mut String) -> Result<(), ()> {
+    fn waypoint_done(&mut self, result: &Path, said: &mut String) -> bool {
         let map = self.b.map.clone();
         let (r, why) = read_stage_result(result, ResultRequirements::default());
         if why == MANUAL {
             self.manual(result, said);
-            return Err(());
+            return false;
         }
         let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         let issues = match (why.is_empty(), bd_list(repo, tools)) {
@@ -719,7 +717,7 @@ impl Driver<'_> {
                     &format!("Waypoint result not taken: {why}"),
                     None,
                 );
-                return Err(());
+                return false;
             }
         };
         if w.status != "closed" {
@@ -727,10 +725,10 @@ impl Driver<'_> {
             let at = at.trim_start_matches('(').trim_end_matches(')');
             let text = format!(
                 "result written, but {} is still open in bd: {at} kept",
-                short(&w.id)
+                suffix(&w.id)
             );
             self.once(said, &w.id, &text, None);
-            return Err(());
+            return false;
         }
         // Only a closed or already gone pane is forgotten.
         match herdr(tools, repo, &["pane", "close", &self.b.pane]) {
@@ -743,20 +741,25 @@ impl Driver<'_> {
         self.b.result.clear();
         self.save();
         self.tell(&w.id, "closed; its pane closes");
-        let asked = format!("{} {} closed. Next Waypoint?", short(&w.id), w.title);
+        let asked = format!("{} {} closed. Next Waypoint?", suffix(&w.id), w.title);
         match self.frontier(&issues) {
             Ok(Next::Take(n) | Next::Epic(n)) => {
                 let options = vec![
-                    format!("yes: the next on the Map, {} {}", short(&n.id), n.title),
+                    format!("yes: the next on the Map, {} {}", suffix(&n.id), n.title),
                     format!("no: the Brainstorm stops, /continue @{map} picks it up"),
                     "yes, with a prompt of your own in place of the default".to_string(),
                 ];
-                self.send(&w.id, &asked, false, Some(Ask::NextWaypoint { options }));
+                self.send(
+                    &w.id,
+                    &asked,
+                    false,
+                    Some(Ask::NextWaypoint { options, map }),
+                );
             }
             Ok(Next::Wait(line)) => self.say(&line),
             Err(why) => self.say(&format!("Next Waypoint not asked: {why}")),
         }
-        Ok(())
+        true
     }
 
     /// STATUS: manual: the item, in the Run directory of the Waypoint its
@@ -793,11 +796,6 @@ impl Driver<'_> {
             }
         }
     }
-}
-
-/// Whether `i` carries bd label `label`.
-fn labelled(i: &BdIssue, label: &str) -> bool {
-    i.labels.iter().any(|l| l == label)
 }
 
 /// What `ready`, the Map's frontier in map order, gives next among

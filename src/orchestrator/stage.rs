@@ -210,8 +210,8 @@ pub(crate) enum Ask {
     Merge { open: String, options: Vec<String> },
     /// A Brainstorm's Waypoint closed (driver.rs): yes names the next on
     /// its Map, then no, then yes with a prompt of your own; the Shell
-    /// answers it, no run being needed.
-    NextWaypoint { options: Vec<String> },
+    /// answers it, no run being needed, for the Map that asked.
+    NextWaypoint { options: Vec<String>, map: String },
 }
 
 /// The user's answer to a Question, for the session (pane) it was about.

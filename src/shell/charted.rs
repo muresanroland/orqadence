@@ -8,7 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use std::thread;
 
 use super::{About, Screen};
-use crate::brainstorm::{driver, Brainstorm, Phase, EPIC, RESEARCH};
+use crate::brainstorm::{driver, labelled, Brainstorm, Phase, EPIC, RESEARCH};
 use crate::orchestrator::app::{self, MAX_RESEARCH};
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::{plural, Ask, Config};
@@ -137,6 +137,11 @@ impl Screen {
         let Some(m) = self.start_map.take() else {
             return;
         };
+        // its driver still running owns its pane, result file and state
+        if self.driving(&m.idea) {
+            let text = format!("refused: a Waypoint session of {} is running", m.map);
+            return self.refuse(&text);
+        }
         let Some(b) = self.brainstorms.iter_mut().find(|b| b.idea == m.idea) else {
             return;
         };
@@ -265,7 +270,6 @@ impl Screen {
         let map = self.shown(&[&b.map]).into_iter().next().unwrap_or_default();
         let issues = self.reload_issues().unwrap_or_default();
         let waypoints: Vec<&BdIssue> = issues.iter().filter(|i| i.parent == b.map).collect();
-        let labelled = |i: &BdIssue, label: &str| i.labels.iter().any(|l| l == label);
         let open = |i: &&&BdIssue| i.status != "closed";
         let research = waypoints.iter().filter(|i| labelled(i, RESEARCH));
         let epic = waypoints.iter().filter(|i| labelled(i, EPIC)).count();
