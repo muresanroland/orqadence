@@ -15,7 +15,7 @@ use super::app::{
     self, check, debate_inputs, extra_review, extra_row, fallback_row, stage_row, ticket_labels,
     App, Row,
 };
-use super::herdr::{self, agent_name, split_target};
+use super::herdr::{self, agent_name};
 use super::judgment::{offered, Action, Judged, PlanJudged, TypeSafe, WAKE_FLOOR};
 use super::limit::{codex_review, until, Limit, LAST_LINES};
 use super::manual;
@@ -1915,47 +1915,7 @@ impl Orchestrator {
             placement.extend(["--env", env.as_str()]);
         }
 
-        let mut in_tab = Vec::new();
-        if !ts.tab.is_empty() {
-            if let Ok(panes) = self.herdr(&["pane", "list", "--workspace", &self.cfg.workspace]) {
-                in_tab.extend(
-                    panes
-                        .result
-                        .panes
-                        .into_iter()
-                        .filter(|p| p.tab_id == ts.tab)
-                        .map(|p| p.pane_id),
-                );
-            }
-        }
-        let (tab, pane) = match in_tab.last() {
-            None => {
-                let mut argv = vec![
-                    "tab",
-                    "create",
-                    "--workspace",
-                    &self.cfg.workspace,
-                    "--label",
-                    ticket,
-                ];
-                argv.extend_from_slice(&placement);
-                let reply = self.herdr(&argv)?;
-                (reply.result.tab.tab_id, reply.result.root_pane.pane_id)
-            }
-            Some(last) => {
-                let (mut target, mut direction) = (last.clone(), "right".to_string());
-                if let Ok(layout) = self.herdr(&["pane", "layout", "--pane", &in_tab[0]]) {
-                    let (p, d) = split_target(&layout.result.layout.panes);
-                    if !p.is_empty() {
-                        (target, direction) = (p, d);
-                    }
-                }
-                let mut argv = vec!["pane", "split", &target, "--direction", &direction];
-                argv.extend_from_slice(&placement);
-                let reply = self.herdr(&argv)?;
-                (ts.tab.clone(), reply.result.pane.pane_id)
-            }
-        };
+        let (tab, pane) = self.place_pane(&ts.tab, ticket, &placement, "")?;
         self.update(ticket, |ts| {
             ts.tab = tab;
             ts.panes.insert(st.name.to_string(), pane.clone());
