@@ -5,7 +5,7 @@ use super::app::{
     app, canonical, checks, clash, count, count_in, debate_inputs, extra_review, fallback_row,
     floor_in, graphify, human_merge, labels, review_bots_in, row, runs_on, set_switch, switch,
     Clash, ExtraReview, Floor, Label, ADDRESS_PR_COMMENTS_AUTO, ADDRESS_PR_COMMENTS_COUNTDOWN,
-    ADDRESS_PR_COMMENTS_RUNS, AGENT_MERGE, BOT_WAIT, DOCS_PASS, GRAPHIFY, IF_LIMITED,
+    ADDRESS_PR_COMMENTS_RUNS, AGENT_MERGE, BOT_WAIT, BRAINSTORM, DOCS_PASS, GRAPHIFY, IF_LIMITED,
     MAX_PR_SESSIONS, MAX_TICKETS, REBASE_AUTO, RELEASE_ON,
 };
 use super::stage::{Answer, Ask, Orchestrator, AWAY};
@@ -1115,6 +1115,20 @@ fn the_docs_pass_row_is_claude_by_default_and_runs_on_claude_or_codex_only() {
         labels(&doc)["fast"],
         Err("labels fast rows has no row docs_pass".to_string())
     );
+}
+
+/// No label overrides a Brainstorm row: a Brainstorm session has no
+/// Ticket.
+#[test]
+fn a_label_overriding_a_brainstorm_row_is_refused() {
+    for key in BRAINSTORM {
+        let doc = json!({"labels": {"fast": {"kind": "modifier",
+            "rows": {key: {"effort": "low"}}}}});
+        assert_eq!(
+            labels(&doc)["fast"],
+            Err(format!("labels fast rows has no row {key}"))
+        );
+    }
 }
 
 /// hx-1 with the bd labels given.

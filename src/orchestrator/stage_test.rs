@@ -108,6 +108,19 @@ fn state_that_cannot_be_saved_is_said_on_the_panel() {
     );
 }
 
+/// A Brainstorm row is checked as its session starts, never as a run
+/// does: unset, or on an App no table has, the Orchestrator still starts.
+#[test]
+fn orchestrator_new_starts_whatever_the_brainstorm_rows_say() {
+    let home = TempDir::new();
+    for body in ["{}", r#"{"brainstorm_research": {"app": "nope"}}"#] {
+        let repo = TempDir::new();
+        crate::orchestrator::write_file(&repo.path().join(".orqadence/config.json"), body);
+        let cfg = Config::for_tests(Fake::quiet(), repo.path(), home.path());
+        assert!(Orchestrator::new(cfg).is_ok(), "{body}");
+    }
+}
+
 #[test]
 fn update_saves_the_state_file_and_ticket_snapshots_it() {
     let repo = TempDir::new();

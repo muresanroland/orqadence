@@ -3,8 +3,9 @@
 
 use super::brand::{PURPLE, RED};
 use super::config::{
-    put, Field, LabelItem, ADDRESS_PR_COMMENTS_PAGE, APPS_PAGE, GRAPHIFY_PAGE, LABELS_PAGE,
-    ON_CALL_PAGE, REBASE_PAGE, RELEASE_PAGE, RUN_PAGE, SKILLS_PAGE, TYPESAFE_PAGE,
+    put, Field, LabelItem, ADDRESS_PR_COMMENTS_PAGE, APPS_PAGE, BRAINSTORM_PAGE, GRAPHIFY_PAGE,
+    LABELS_PAGE, ON_CALL_PAGE, REBASE_PAGE, RELEASE_PAGE, ROWS, RUN_PAGE, SKILLS_PAGE,
+    TYPESAFE_PAGE,
 };
 use super::shell_test::{
     asking, await_line, cols, find, key, logged, notice_modal, render, row, rows, screen_at, shell,
@@ -3549,4 +3550,131 @@ fn a_labels_page_renders_its_extra_review_and_rows() {
         rows(&buf)
     );
     assert!(find(&buf, "repo's row").is_some(), "{:#?}", rows(&buf));
+}
+
+/// The Brainstorm page: chart, waypoint, research and epic, each its App,
+/// model and effort, then max_research.
+#[test]
+fn the_brainstorm_page_lists_its_four_rows_and_max_research() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, BRAINSTORM_PAGE);
+    let st = s.settings.as_ref().unwrap();
+    let got: Vec<(&str, &str)> = st
+        .items()
+        .into_iter()
+        .map(|(row, field)| (ROWS[row].key, field.key()))
+        .collect();
+    let mut want = Vec::new();
+    for row in [
+        "brainstorm_chart",
+        "brainstorm_waypoint",
+        "brainstorm_research",
+        "brainstorm_epic",
+    ] {
+        want.extend([(row, "app"), (row, "model"), (row, "effort")]);
+    }
+    want.push(("brainstorm_chart", "max_research"));
+    assert_eq!(got, want);
+    assert_eq!(
+        st.note_of(st.items()[3].0, Field::App),
+        "Works a Waypoint with you: grilling, prototype or task. Changing the App leads into its model list; the pair saves together."
+    );
+}
+
+/// A model picked on the waypoint row is probed, then saved as
+/// brainstorm_waypoint beside the Stage rows, and app::row reads it back.
+#[test]
+fn picking_a_model_on_the_waypoint_row_saves_brainstorm_waypoint() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, BRAINSTORM_PAGE);
+    keys(&mut s, &[KeyCode::Down; 4]);
+    // default, fable, opus
+    keys(&mut s, &[KeyCode::Enter, KeyCode::Down, KeyCode::Down]);
+    s.key(key(KeyCode::Enter));
+    await_probe(&mut s);
+    assert_eq!(
+        config_json(repo.path()),
+        json!({"brainstorm_waypoint": {"model": "opus"}})
+    );
+    assert_eq!(
+        note(&s),
+        "saved: Brainstorm waypoint claude opus, uncommitted in .orqadence/config.json"
+    );
+    let row = crate::orchestrator::app::row(repo.path(), "brainstorm_waypoint", &[]).unwrap();
+    assert_eq!((row.app.name, row.model.as_str()), ("claude", "opus"));
+}
+
+/// codex, which keeps Git metadata read-only, is refused on a Brainstorm
+/// row as on Fix's.
+#[test]
+fn codex_on_the_waypoint_row_is_refused_as_on_a_stage_page() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, BRAINSTORM_PAGE);
+    keys(&mut s, &[KeyCode::Down; 3]);
+    // claude, codex
+    keys(&mut s, &[KeyCode::Enter, KeyCode::Down, KeyCode::Enter]);
+    assert_eq!(
+        note(&s),
+        "Refused: brainstorm_waypoint does not run on codex. Nothing changed."
+    );
+    assert!(!repo.path().join(".orqadence/config.json").exists());
+}
+
+/// max_research refuses 0 and text; nothing typed puts its default 2 back.
+#[test]
+fn max_research_refuses_0_and_text_and_empty_restores_2() {
+    let repo = TempDir::new();
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, BRAINSTORM_PAGE);
+    keys(&mut s, &[KeyCode::Down; 12]);
+    for typed in ["0", "x"] {
+        s.key(key(KeyCode::Enter));
+        type_in(&mut s, typed);
+        s.key(key(KeyCode::Enter));
+        assert_eq!(
+            note(&s),
+            format!("Refused: {typed} is not a whole number of at least 1. Nothing changed.")
+        );
+        s.key(key(KeyCode::Esc));
+    }
+    assert!(!repo.path().join(".orqadence/config.json").exists());
+    s.key(key(KeyCode::Enter));
+    type_in(&mut s, "4");
+    s.key(key(KeyCode::Enter));
+    assert_eq!(config_json(repo.path()), json!({"max_research": 4}));
+    keys(&mut s, &[KeyCode::Enter, KeyCode::Enter]);
+    assert_eq!(config_json(repo.path()), json!({}));
+    assert_eq!(
+        note(&s),
+        "research at once: 2, its default, saved uncommitted in .orqadence/config.json"
+    );
+}
+
+/// The Brainstorm page with a row and max_research set, and its line on
+/// the left.
+#[test]
+fn the_brainstorm_page_renders_its_rows_and_max_research() {
+    let repo = TempDir::new();
+    write_file(
+        &repo.path().join(".orqadence/config.json"),
+        r#"{"max_research": 3, "brainstorm_research": {"app": "pi", "model": "sonnet"}}"#,
+    );
+    let mut s = screen_at(apps(""), repo.path());
+    pr_page(&mut s, BRAINSTORM_PAGE);
+    let buf = render(&s, 160, 45);
+    for line in [
+        "Brainstorm  claude, pi",
+        "▸ chart app             claude",
+        "  waypoint model        default",
+        "  research app          pi",
+        "  research model        sonnet  Anthropic",
+        "  epics effort          default",
+        "  research at once      3",
+        "▸ Brainstorm claude+pi",
+    ] {
+        assert!(find(&buf, line).is_some(), "{line:?}: {:#?}", rows(&buf));
+    }
 }

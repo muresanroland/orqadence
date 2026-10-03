@@ -10,7 +10,8 @@
 //! Rebase and Address PR comments' switches, countdown and cap, the
 //! Release's switch, On call's Moshi token, minutes and test push, the
 //! Ticket labels: each entry of config.json's labels, area or modifier,
-//! with its skills and guidance, and graphify's switch and Docs pass row.
+//! with its skills and guidance, graphify's switch and Docs pass row, and
+//! the Brainstorm's four rows and max_research.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -27,8 +28,8 @@ use crate::on_call::{self, OnCall, DEFAULT_MINUTES};
 use crate::orchestrator::app::{
     self, app, App, Check, Count, Floor, Label, Model, Row, Switch, ADDRESS_PR_COMMENTS_AUTO,
     ADDRESS_PR_COMMENTS_COUNTDOWN, ADDRESS_PR_COMMENTS_RUNS, AGENT_MERGE, APPS, BOT_WAIT,
-    DOCS_PASS, GRAPHIFY, IF_LIMITED, MAX_PR_SESSIONS, MAX_TICKETS, REBASE_AUTO, RELEASE,
-    RELEASE_ON, REVIEW_BOTS, REVIEW_BOTS_KEY, UNLABELLED,
+    BRAINSTORM, DOCS_PASS, GRAPHIFY, IF_LIMITED, MAX_PR_SESSIONS, MAX_RESEARCH, MAX_TICKETS,
+    REBASE_AUTO, RELEASE, RELEASE_ON, REVIEW_BOTS, REVIEW_BOTS_KEY, UNLABELLED,
 };
 use crate::orchestrator::judgment::{PLAN_FLOOR, WAKE_FLOOR};
 use crate::orchestrator::pipeline;
@@ -46,7 +47,8 @@ const SKILL: &str = "; saved uncommitted: Tickets take the change once it is mer
 
 /// One row of config.json: its key, its name, the lead of its settings'
 /// labels on a section's page ("" for the section's own row), the section
-/// it sits in (GRAPHIFY_PAGE for the Docs pass), and what it runs.
+/// it sits in (GRAPHIFY_PAGE for the Docs pass, BRAINSTORM_PAGE for the
+/// Brainstorm's), and what it runs.
 pub(crate) struct ConfigRow {
     pub(crate) key: &'static str,
     pub(crate) name: &'static str,
@@ -55,7 +57,7 @@ pub(crate) struct ConfigRow {
     pub(crate) note: &'static str,
 }
 
-pub(crate) const ROWS: [ConfigRow; 11] = [
+pub(crate) const ROWS: [ConfigRow; 15] = [
     ConfigRow {
         key: "implement",
         name: "Implement",
@@ -133,6 +135,34 @@ pub(crate) const ROWS: [ConfigRow; 11] = [
         section: GRAPHIFY_PAGE,
         note: "graphify's LLM pass over the docs and images, on claude or codex: graphify installs its skill for those two.",
     },
+    ConfigRow {
+        key: BRAINSTORM[0],
+        name: "Brainstorm chart",
+        lead: "chart",
+        section: BRAINSTORM_PAGE,
+        note: "Charts an Idea into a Map or Tickets, with you.",
+    },
+    ConfigRow {
+        key: BRAINSTORM[1],
+        name: "Brainstorm waypoint",
+        lead: "waypoint",
+        section: BRAINSTORM_PAGE,
+        note: "Works a Waypoint with you: grilling, prototype or task.",
+    },
+    ConfigRow {
+        key: BRAINSTORM[2],
+        name: "Brainstorm research",
+        lead: "research",
+        section: BRAINSTORM_PAGE,
+        note: "Researches a Research Waypoint in the background, nobody there.",
+    },
+    ConfigRow {
+        key: BRAINSTORM[3],
+        name: "Brainstorm Epics",
+        lead: "epics",
+        section: BRAINSTORM_PAGE,
+        note: "Writes the build Epics and opens the docs PR.",
+    },
 ];
 
 /// The Pipeline's sections: title, short name on the left, description.
@@ -176,13 +206,20 @@ pub(crate) const GRAPHIFY_SECTION: (&str, &str) = (
     "The code graph Orqadence keeps current with graphify, and the Docs pass, graphify's LLM pass over the docs and images, on a new major or minor tag. orqa init installs graphify; /config never installs it.",
 );
 
+/// The Brainstorm page's title and description.
+pub(crate) const BRAINSTORM_SECTION: (&str, &str) = (
+    "Brainstorm",
+    "The sessions that chart an Idea, work its Waypoints with you, research in the background and write the build Epics. The shared skills, grilling and domain modeling, run inside them.",
+);
+
 /// The Rebase, Address PR comments and Release sections, whose pages have a
 /// switch.
 pub(crate) const REBASE_PAGE: usize = 4;
 pub(crate) const ADDRESS_PR_COMMENTS_PAGE: usize = 5;
 pub(crate) const RELEASE_PAGE: usize = 6;
 /// The Apps page's place on the left, after the Pipeline's sections, and
-/// the Skills, Labels, TypeSafe, Run, On call and graphify pages' after it.
+/// the Skills, Labels, TypeSafe, Run, On call, graphify and Brainstorm
+/// pages' after it.
 pub(crate) const APPS_PAGE: usize = SECTIONS.len();
 pub(crate) const SKILLS_PAGE: usize = APPS_PAGE + 1;
 pub(crate) const LABELS_PAGE: usize = APPS_PAGE + 2;
@@ -190,6 +227,7 @@ pub(crate) const TYPESAFE_PAGE: usize = APPS_PAGE + 3;
 pub(crate) const RUN_PAGE: usize = APPS_PAGE + 4;
 pub(crate) const ON_CALL_PAGE: usize = APPS_PAGE + 5;
 pub(crate) const GRAPHIFY_PAGE: usize = APPS_PAGE + 6;
+pub(crate) const BRAINSTORM_PAGE: usize = APPS_PAGE + 7;
 /// The row the Extra review runs on: the Review's.
 pub(crate) const REVIEW_ROW: usize = 1;
 /// The Skills page's rows before its skills: the location and your
@@ -216,7 +254,7 @@ pub(crate) struct Number {
 
 /// The whole numbers the pages keep, in their order on a page; static, so a
 /// Check can borrow a key.
-pub(crate) static NUMBERS: [Number; 5] = [
+pub(crate) static NUMBERS: [Number; 6] = [
     Number {
         count: &MAX_TICKETS,
         page: RUN_PAGE,
@@ -246,6 +284,12 @@ pub(crate) static NUMBERS: [Number; 5] = [
         page: ADDRESS_PR_COMMENTS_PAGE,
         name: "bot wait minutes",
         note: "Minutes Agent merge waits for a ticked review bot's review; past it the merge is a Question.",
+    },
+    Number {
+        count: &MAX_RESEARCH,
+        page: BRAINSTORM_PAGE,
+        name: "research at once",
+        note: "Research Waypoints running at once in the background; the others wait in Map order.",
     },
 ];
 
@@ -780,9 +824,9 @@ impl Settings {
     }
 
     /// A section's line on the left: its row's App and model; the Debate's
-    /// Apps.
+    /// and the Brainstorm's Apps.
     pub(crate) fn summary(&self, section: usize) -> String {
-        if section == 2 {
+        if section == 2 || section == BRAINSTORM_PAGE {
             return distinct(rows_of(section).map(|r| self.value(r, Field::App))).join("+");
         }
         let row = rows_of(section).next().unwrap();
@@ -1858,7 +1902,7 @@ impl Screen {
         if !st.open {
             match code {
                 KeyCode::Up => st.section = st.section.saturating_sub(1),
-                KeyCode::Down => st.section = (st.section + 1).min(GRAPHIFY_PAGE),
+                KeyCode::Down => st.section = (st.section + 1).min(BRAINSTORM_PAGE),
                 KeyCode::Right | KeyCode::Enter => {
                     st.open = true;
                     st.setting = 0;

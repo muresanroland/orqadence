@@ -868,6 +868,20 @@ fn preflight_checks_the_docs_pass_app_only_while_graphify_is_on() {
     );
 }
 
+/// A Brainstorm row's App never blocks a run: its session checks it.
+#[test]
+fn preflight_leaves_the_brainstorm_rows_to_their_sessions() {
+    let (repo, home) = (TempDir::new(), TempDir::new());
+    let no_pi = Fake::new(|_, argv| match argv.join(" ").as_str() {
+        "which pi" => Err("pi not found".to_string()),
+        _ => Ok(String::new()),
+    });
+    let config = repo.path().join(".orqadence/config.json");
+    write_file(&config, r#"{"brainstorm_research": {"app": "pi"}}"#);
+    let got = preflight(repo.path(), &*no_pi, &home_env(home.path()));
+    assert!(!got.iter().any(|m| m.contains("PATH")), "{got:?}");
+}
+
 /// graphify on but not on PATH is a warning, never a block; off, nothing.
 #[test]
 fn warnings_of_graphify_on_but_not_on_path() {
