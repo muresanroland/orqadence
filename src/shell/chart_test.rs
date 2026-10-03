@@ -102,7 +102,7 @@ pub(super) fn writes(result: &'static str) -> impl Fn(&Prompt) -> (String, Strin
     }
 }
 
-fn idle(_: &Prompt) -> (String, String) {
+pub(super) fn idle(_: &Prompt) -> (String, String) {
     (String::new(), "idle".to_string())
 }
 
@@ -121,7 +121,7 @@ fn status(w: &World, id: &str) -> (String, String) {
     (t.status.clone(), t.close_reason.clone())
 }
 
-fn pane_alive(w: &World, pane: &str) -> bool {
+pub(super) fn pane_alive(w: &World, pane: &str) -> bool {
     w.lock().panes.iter().any(|p| p.pane_id == pane)
 }
 

@@ -71,6 +71,9 @@ pub(crate) struct Brainstorm {
     /// The start-Map modal's answer: the research runs in the background.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(crate) background: bool,
+    /// Start Map or Continue pressed once: a Map not started never was.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) started: bool,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub(crate) research_tab: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]

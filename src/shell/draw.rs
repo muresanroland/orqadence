@@ -885,7 +885,8 @@ fn list_lines(s: &Screen, width: usize, height: u16) -> Vec<Line<'static>> {
         .enumerate()
         .skip(start)
         .take(shown)
-        .map(|(n, &(key, mid, text))| {
+        .map(|(n, (key, mid, text))| {
+            let (key, mid) = (key.as_str(), *mid);
             let on = n == pick;
             let c = match mid {
                 "Epic" => epic_color(s, key),

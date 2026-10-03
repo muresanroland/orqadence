@@ -177,9 +177,9 @@ impl Screen {
         self.chart(b);
     }
 
-    /// The charting session for `b`, on a driver thread of its own: never
-    /// outside herdr, with no Shell's pane to split.
-    fn chart(&mut self, b: Brainstorm) {
+    /// The charting session for `b`, on a driver thread of its own, the
+    /// live Brainstorm: never outside herdr, with no Shell's pane to split.
+    pub(super) fn chart(&mut self, b: Brainstorm) {
         if self.shell_pane.is_empty() {
             let text = "charting not started: the Shell is not in a herdr pane (HERDR_PANE_ID)";
             return self.tell(Some(&b.idea), text);
@@ -193,8 +193,10 @@ impl Screen {
             self.brainstorm_sender.clone(),
             self.brainstorm_stop.clone(),
         );
+        let idea = b.idea.clone();
         let driver = thread::spawn(move || driver::chart(&cfg, &shell, b, &saved, &stop));
-        self.brainstorm_threads.retain(|t| !t.is_finished());
-        self.brainstorm_threads.push(driver);
+        self.brainstorm_threads.retain(|(_, t)| !t.is_finished());
+        self.brainstorm_threads.push((idea.clone(), driver));
+        self.live = Some(idea);
     }
 }
