@@ -18,12 +18,7 @@ You chart one Brainstorm with the user, in a fresh session inside the Brainstorm
 - **Refer by title.** Wherever the user reads an issue (your questions, the Map, a description), name it by its title, never by a bare id. The id may ride beside the title, never in its place.
 - **Never fire research.** Never start a session or background agent to resolve a Waypoint, and never resolve one yourself: charting resolves nothing. Your App's built-in subagents may look up facts for your own questions.
 - The bd commands are written out below; use them as they are. Never `bd edit`.
-- Other sessions may share this worktree, so commit only the paths you changed:
-
-  ```
-  git add -- <paths>
-  git commit -m '<message>' -- <paths>
-  ```
+- Other sessions may share this worktree: commit only the paths you changed, as orqa-brainstorm-domain-modeling's "Where you write, and committing" says.
 
 ## 1. Name the Destination
 

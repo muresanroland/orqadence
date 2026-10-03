@@ -689,6 +689,7 @@ fn the_brainstorm_chart_and_epic_skills_name_their_inputs_labels_and_results() {
         "--no-inherit-labels",
         "STATUS: done",
         "EPICS: <id> <id>",
+        "--status=closed --limit 0",
         "PR: <url>",
         "LABEL: <name> | <guidance> | skills: <a>, <b> | tickets: <ids>",
     ] {

@@ -16,18 +16,13 @@ You work a Map's last Waypoint with the user, in a fresh session inside the Brai
 - Read the repo's `CLAUDE.md` (or `AGENTS.md`), `CONTEXT.md` and `docs/adr/` if present. Use the repo's vocabulary.
 - **Refer by title.** Wherever the user reads an issue (your questions, the Map, a description), name it by its title, never by a bare id. The id may ride beside the title, never in its place.
 - The bd commands are written out below; use them as they are. Never `bd edit`.
-- Other sessions may share this worktree, so commit only the paths you changed:
-
-  ```
-  git add -- <paths>
-  git commit -m '<message>' -- <paths>
-  ```
+- Other sessions may share this worktree: commit only the paths you changed, as orqa-brainstorm-domain-modeling's "Where you write, and committing" says.
 
 ## 1. Claim and read
 
 1. Claim the WAYPOINT before anything else: `bd update <WAYPOINT> --claim`.
 2. Read the Map: `bd show <MAP>`. Its Destination, Notes and Decisions so far are the low-resolution view.
-3. List its closed Waypoints with `bd list --parent <MAP> --status=closed --json`. Read each one's resolution with `bd show <id> --json --include-comments`: its comments and close reason hold the decision. Zoom into the ones the Epics depend on. Prototype branches and research notes they link can be read with `git show`.
+3. List its closed Waypoints with `bd list --parent <MAP> --status=closed --limit 0 --json`. Read each one's resolution with `bd show <id> --json --include-comments`: its comments and close reason hold the decision. Zoom into the ones the Epics depend on. Prototype branches and research notes they link can be read with `git show`.
 4. Add to Decisions so far any closed Waypoint missing from it, from its close reason: one line each, its title and the gist of its answer. Rewrite the Map's description with `bd update <MAP> --body-file=-` and the whole new body on stdin, changing only those lines.
 
 ## 2. Write the Epics
