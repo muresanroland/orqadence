@@ -2,7 +2,8 @@
 //! Shell keeps the left 42% and the plan takes the right 58%, its markdown
 //! styled; under 110 columns it folds to a box over the dimmed Shell. A Wake
 //! and a Stage's own question dock in the same frame (harness-crk), and so
-//! do the approval modal, /manual-work and /brainstorm's idea modal.
+//! do the approval modal, /manual-work, /brainstorm's idea modal and the
+//! Tickets and start-Map modals charting opens.
 
 use std::cell::Cell;
 use std::fs;
@@ -20,7 +21,7 @@ use super::{bold, cut, fg, shell};
 use crate::orchestrator::judgment::{Action, WAITS};
 use crate::orchestrator::manual;
 use crate::orchestrator::stage::{plural, Ask};
-use crate::shell::brand::{lerp, BORDER, CYAN, GREEN, INK, MUTED, ORANGE, PURPLE, RED, TEXT};
+use crate::shell::brand::{lerp, BLUE, BORDER, CYAN, GREEN, INK, MUTED, ORANGE, PURPLE, RED, TEXT};
 use crate::shell::{About, NoticeKind, Question, Screen};
 
 /// Under this many columns the dock folds over the Shell.
@@ -1052,23 +1053,200 @@ pub(super) fn idea(f: &mut Frame, s: &Screen) {
     let muted = |t: &str| Line::from(Span::styled(t.to_string(), fg(MUTED)));
     let editor = "Ctrl+G opens it in your editor ($VISUAL, $EDITOR, else code -w, vi, nano)";
     f.render_widget(muted(editor), keys);
-    let button = |text: &str, c: Color, focused: bool| {
-        let style = match focused {
-            true => bold(INK).bg(c),
-            false => fg(c).bg(lerp((c, INK), 0.8)),
-        };
-        let mark = if focused { "›" } else { " " };
-        Span::styled(format!(" {mark} {text}   "), style)
-    };
-    let line = Line::from(vec![
-        button("Start", GREEN, idea.focus == 1),
-        Span::raw("   "),
-        button("Cancel", RED, idea.focus == 2),
-    ]);
+    let line = buttons_line("Start", true, idea.focus.checked_sub(1));
     f.render_widget(line, buttons);
     let said = "Start creates the Idea in bd and its worktree on brainstorm/<idea>.";
     f.render_widget(
         Paragraph::new(muted(said)).wrap(Wrap { trim: false }),
         about,
     );
+}
+
+/// A brainstorm modal's buttons: `green` and Cancel, filled, the focused
+/// one (0 or 1) bright with ›; `green` greyed when it cannot be pressed.
+fn buttons_line(green: &str, enabled: bool, focus: Option<usize>) -> Line<'static> {
+    let button = |text: &str, c: Color, enabled: bool, focused: bool| {
+        let style = match (enabled, focused) {
+            (false, true) => bold(TEXT).bg(BORDER),
+            (false, false) => fg(MUTED).bg(Color::Rgb(40, 46, 60)),
+            (true, true) => bold(INK).bg(c),
+            (true, false) => fg(c).bg(lerp((c, INK), 0.8)),
+        };
+        let mark = if focused { "›" } else { " " };
+        Span::styled(format!(" {mark} {text}   "), style)
+    };
+    Line::from(vec![
+        button(green, GREEN, enabled, focus == Some(0)),
+        Span::raw("   "),
+        button("Cancel", RED, true, focus == Some(1)),
+    ])
+}
+
+/// A checkbox, the cursor's marked with ›.
+fn check(on: bool, focused: bool) -> Line<'static> {
+    let mark = if focused { "› " } else { "  " };
+    let boxed = if on { "[x] " } else { "[ ] " };
+    let c = if focused { PURPLE } else { TEXT };
+    Line::from(vec![
+        Span::styled(mark, bold(PURPLE)),
+        Span::styled(boxed, bold(c)),
+    ])
+}
+
+/// The Tickets modal in the dock: what charting came out as, a checkbox
+/// row per Ticket with its description's first line under it, the
+/// /start-ticket line the checks make, the warning beside a live Epic run,
+/// then Start tickets (greyed when it cannot start) and Cancel. Unwrapped,
+/// scrolled to keep the focused row or the buttons in view.
+pub(super) fn tickets(f: &mut Frame, s: &Screen) {
+    let Some(t) = &s.tickets else {
+        return;
+    };
+    let (rect, block) = dock(f, s);
+    let n = t.rows.len();
+    let title = format!(" CHARTED · {} from {} ", plural(n, "Ticket"), t.idea);
+    let foot = " ↑↓ move · Space checks · Tab the buttons · Enter · Esc cancels ";
+    let block = block
+        .title(Span::styled(title, bold(PURPLE)))
+        .title_bottom(Span::styled(foot, fg(MUTED)));
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let muted = |t: String| Line::from(Span::styled(t, fg(MUTED)));
+    let small = format!(" came out small: {}, no Map.", plural(n, "Ticket"));
+    let mut lines = vec![
+        Line::default(),
+        Line::from(vec![
+            Span::styled(format!("{} ", t.idea), bold(BLUE)),
+            Span::styled(t.title.clone(), bold(TEXT)),
+            Span::styled(small, fg(TEXT)),
+        ]),
+        muted("Check the ones to start.".to_string()),
+        Line::default(),
+    ];
+    let mut at = 0; // the last line to keep in view: the focused row's about line
+    for (i, r) in t.rows.iter().enumerate() {
+        let focused = t.focus == i;
+        let mut row = check(r.on, focused);
+        row.spans
+            .push(Span::styled(format!("{}  ", r.id), fg(BLUE)));
+        let style = if focused { bold(TEXT) } else { fg(TEXT) };
+        row.spans.push(Span::styled(r.title.clone(), style));
+        lines.push(row);
+        lines.push(muted(format!("      {}", r.about)));
+        if focused {
+            at = lines.len() - 1;
+        }
+    }
+    lines.push(Line::default());
+    lines.push(Line::from(vec![
+        Span::styled("runs ", fg(MUTED)),
+        Span::styled(t.command(), fg(PURPLE)),
+    ]));
+    if s.epic_live() {
+        let warn = "An Epic run is live: Start tickets is refused, the Tickets stay open in bd.";
+        lines.push(Line::from(Span::styled(warn, fg(ORANGE))));
+    }
+    lines.push(Line::default());
+    let focus = t.focus.checked_sub(n);
+    lines.push(buttons_line("Start tickets", s.tickets_start(), focus));
+    if focus.is_some() {
+        at = lines.len() - 1;
+    }
+    let top = (at + 1).saturating_sub(inner.height as usize);
+    f.render_widget(Paragraph::new(lines).scroll((top as u16, 0)), inner);
+}
+
+/// The start-Map modal in the dock, or its Continue form: the Map, its
+/// Destination and counts (the Continue form's counts and its rebase
+/// line), the background checkbox and what it does, Start Map (Continue)
+/// and Cancel, and the start form's foot line. Wrapped; the form from the
+/// checkbox down keeps its rows, a long Destination cut short above it.
+pub(super) fn start_map(f: &mut Frame, s: &Screen) {
+    let Some(m) = &s.start_map else {
+        return;
+    };
+    let (rect, block) = dock(f, s);
+    let (title, foot) = match m.again {
+        true => (
+            format!(" CONTINUE · {} ", m.map),
+            " Enter keeps it · Space flips it · Esc cancels ",
+        ),
+        false => (
+            format!(" CHARTED · a Map from {} ", m.idea),
+            " Space checks · Tab moves · Enter · Esc cancels ",
+        ),
+    };
+    let block = block
+        .title(Span::styled(title, bold(PURPLE)))
+        .title_bottom(Span::styled(foot, fg(MUTED)));
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let muted = |t: String| Line::from(Span::styled(t, fg(MUTED)));
+    let named = Line::from(vec![
+        Span::styled(format!("{}  ", m.map), bold(BLUE)),
+        Span::styled(m.title.clone(), bold(TEXT)),
+    ]);
+    let mut lines = vec![Line::default()];
+    if m.again {
+        lines.extend([named, muted(m.counts.clone())]);
+        if !m.rebase.is_empty() {
+            lines.push(muted(m.rebase.clone()));
+        }
+    } else {
+        let came = format!("{} came out as a Map.", m.idea);
+        lines.extend([
+            Line::from(Span::styled(came, bold(TEXT))),
+            Line::default(),
+            named,
+        ]);
+        if !m.destination.is_empty() {
+            let text = format!("Destination: {}", m.destination);
+            lines.push(Line::from(Span::styled(text, fg(TEXT))));
+        }
+        lines.push(muted(m.counts.clone()));
+    }
+    let mut form = vec![Line::default()];
+    let focused = m.focus == 0;
+    let mut row = check(m.background, focused);
+    let style = if focused { bold(TEXT) } else { fg(TEXT) };
+    row.spans
+        .push(Span::styled("start the research in the background", style));
+    // only while the box still holds the saved answer
+    let saved = s.brainstorms.iter().find(|b| b.idea == m.idea);
+    if m.again && saved.is_some_and(|b| b.background == m.background) {
+        row.spans
+            .push(Span::styled("   your answer last time", fg(MUTED)));
+    }
+    form.push(row);
+    form.push(muted(match m.background {
+        true => format!(
+            "      {} start in tab research-{}, {} at once at most (max_research)",
+            plural(m.research, "Research Waypoint"),
+            m.map,
+            m.max_research
+        ),
+        false => "      the sessions with you take research as it reaches the frontier".to_string(),
+    }));
+    form.push(Line::default());
+    let green = if m.again { "Continue" } else { "Start Map" };
+    form.push(buttons_line(green, true, m.focus.checked_sub(1)));
+    if !m.again {
+        form.push(Line::default());
+        form.push(muted(format!(
+            "Start runs brainstorm-waypoint on the next Waypoint in a pane beside the Shell. \
+             Cancel keeps the Map: /continue @{} starts it later.",
+            m.map
+        )));
+    }
+    let wrap = Wrap { trim: false };
+    let (head, form) = (
+        Paragraph::new(lines).wrap(wrap),
+        Paragraph::new(form).wrap(wrap),
+    );
+    let form_h = (form.line_count(inner.width) as u16).min(inner.height);
+    let head_h = (head.line_count(inner.width) as u16).min(inner.height - form_h);
+    let [head_at, form_at] =
+        Layout::vertical([Constraint::Length(head_h), Constraint::Length(form_h)]).areas(inner);
+    f.render_widget(head, head_at);
+    f.render_widget(form, form_at);
 }

@@ -22,7 +22,6 @@ pub(crate) const PROTOTYPE: &str = "brainstorm:prototype";
 #[allow(dead_code)]
 pub(crate) const TASK: &str = "brainstorm:task";
 /// A Research Waypoint.
-#[allow(dead_code)]
 pub(crate) const RESEARCH: &str = "brainstorm:research";
 /// The one build-Epic Waypoint.
 pub(crate) const EPIC: &str = "brainstorm:epic";
@@ -66,6 +65,9 @@ pub(crate) struct Brainstorm {
     /// brainstorm/<idea>.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub(crate) branch: String,
+    /// The Tickets charting came out as.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) tickets: Vec<String>,
     /// The start-Map modal's answer: the research runs in the background.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(crate) background: bool,

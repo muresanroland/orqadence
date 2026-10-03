@@ -26,7 +26,7 @@ fn idea() -> BdTicket {
 }
 
 /// A Waypoint of Map hx-m.
-fn waypoint(id: &str, label: &str) -> BdTicket {
+pub(super) fn waypoint(id: &str, label: &str) -> BdTicket {
     BdTicket {
         labels: vec![label.to_string()],
         parent: "hx-m".to_string(),
@@ -35,7 +35,7 @@ fn waypoint(id: &str, label: &str) -> BdTicket {
 }
 
 /// Map hx-m with five grilling Waypoints and `epics` build-Epic ones.
-fn map(epics: usize) -> Vec<BdTicket> {
+pub(super) fn map(epics: usize) -> Vec<BdTicket> {
     let mut issues = vec![BdTicket {
         labels: vec![MAP.to_string()],
         no_epic: true,
@@ -52,7 +52,7 @@ fn map(epics: usize) -> Vec<BdTicket> {
 
 /// The world with `issues` beside the Idea, its Shell in pane w1:shell of
 /// tab w1:t0, a Ticket label configured, and charting `session`.
-fn world(
+pub(super) fn world(
     issues: Vec<BdTicket>,
     session: impl Fn(&Prompt) -> (String, String) + Send + Sync + 'static,
 ) -> Arc<World> {
@@ -84,7 +84,7 @@ fn world(
 }
 
 /// The Shell after Start on an idea, its charting session started.
-fn started(w: &Arc<World>) -> Screen {
+pub(super) fn started(w: &Arc<World>) -> Screen {
     let mut s = shell(w);
     s.shell_pane = "w1:shell".to_string();
     type_line(&mut s, "/brainstorm");
@@ -95,7 +95,7 @@ fn started(w: &Arc<World>) -> Screen {
 }
 
 /// A charting session that writes `result` and goes idle.
-fn writes(result: &'static str) -> impl Fn(&Prompt) -> (String, String) + Send + Sync {
+pub(super) fn writes(result: &'static str) -> impl Fn(&Prompt) -> (String, String) + Send + Sync {
     move |p: &Prompt| match p.stage.as_str() {
         "chart" => (result.to_string(), "idle".to_string()),
         _ => (String::new(), "idle".to_string()),
@@ -110,7 +110,7 @@ fn worktree(w: &World) -> PathBuf {
     w.repo.join(LOCAL).join("worktrees/hx-7")
 }
 
-fn saved(w: &World) -> Brainstorm {
+pub(super) fn saved(w: &World) -> Brainstorm {
     let file = w.repo.join(LOCAL).join("brainstorms/hx-7/state.json");
     serde_json::from_slice(&fs::read(file).unwrap()).unwrap()
 }
@@ -349,6 +349,29 @@ fn the_pane_closed_by_the_user_stops_the_brainstorm_saved() {
     assert_eq!(b.session.map(|s| s.app).as_deref(), Some("claude"));
     assert_eq!(status(&w, "hx-7").0, "in_progress");
     assert!(worktree(&w).exists());
+    s.close();
+}
+
+#[test]
+fn an_agent_get_failing_with_the_pane_still_there_keeps_watching() {
+    let w = world(vec![BdTicket::new("hx-1")], idle);
+    let mut s = started(&w);
+    let pane = saved(&w).pane;
+    let before = w.calls().len();
+
+    w.fail_once("herdr agent get", "herdr: timeout");
+    for _ in 0..50 {
+        if w.since(before, "herdr agent get").len() >= 2 {
+            break;
+        }
+        wait_a_while(&mut s);
+    }
+
+    assert!(!s.events.iter().any(|e| e.text.contains("charting stopped")));
+    assert_eq!(saved(&w).pane, pane);
+    let result = w.repo.join(LOCAL).join("brainstorms/hx-7/chart.md");
+    fs::write(result, "STATUS: done\nTICKETS: hx-1\n").unwrap();
+    await_line(&mut s, "hx-7 charting done: Tickets hx-1; Idea closed");
     s.close();
 }
 
