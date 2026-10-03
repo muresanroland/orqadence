@@ -8,9 +8,10 @@ use std::sync::{Arc, Mutex};
 use super::chart_test::saved;
 use super::shell_test::{await_line, key};
 use super::waypoint_test::{closed, stopped, working};
-use super::Screen;
+use super::{About, Screen};
 use crate::brainstorm::research::{self, Update};
 use crate::brainstorm::Research;
+use crate::orchestrator::stage::Ask;
 use crate::orchestrator::world::World;
 
 /// git in the Brainstorm's worktree: `behind` commits on main the branch
@@ -68,10 +69,9 @@ fn a_diverged_branch_is_rebased_before_the_session_starts() {
     s.close();
 }
 
-/// /continue @hx-m.3 over a rebase that conflicts in CONTEXT.md: the
-/// Question waits.
-fn conflicted() -> (Arc<World>, Screen) {
-    let (w, mut s) = stopped();
+/// /continue @hx-m.3 on fixture `(w, s)` over a rebase that conflicts in
+/// CONTEXT.md: the Question waits.
+fn conflicted((w, mut s): (Arc<World>, Screen)) -> (Arc<World>, Screen) {
     git(
         &w,
         "3",
@@ -88,7 +88,7 @@ fn conflicted() -> (Arc<World>, Screen) {
 
 #[test]
 fn a_rebase_that_conflicts_is_aborted_and_asks_naming_the_files() {
-    let (w, mut s) = conflicted();
+    let (w, mut s) = conflicted(stopped());
 
     assert_eq!(w.called("git rebase --abort").len(), 1);
     let q = &s.questions[0];
@@ -110,7 +110,7 @@ fn a_rebase_that_conflicts_is_aborted_and_asks_naming_the_files() {
 
 #[test]
 fn resolve_it_yourself_starts_no_session() {
-    let (w, mut s) = conflicted();
+    let (w, mut s) = conflicted(stopped());
 
     s.key(key(KeyCode::Enter));
 
@@ -123,7 +123,7 @@ fn resolve_it_yourself_starts_no_session() {
 
 #[test]
 fn carry_on_starts_the_session_on_the_old_base() {
-    let (w, mut s) = conflicted();
+    let (w, mut s) = conflicted(stopped());
     let rebases = w.called("git rebase origin/main").len();
 
     s.key(key(KeyCode::Down));
@@ -139,16 +139,15 @@ fn carry_on_starts_the_session_on_the_old_base() {
 fn a_running_research_session_skips_the_rebase_with_its_line() {
     let (w, mut s) = stopped();
     git(&w, "3", Ok(""), "");
-    let mut b = saved(&w);
-    b.research = vec![Research {
-        waypoint: "hx-m.4".to_string(),
-        pane: "w9:p9".to_string(),
-        ..Default::default()
-    }];
-    b.save(&w.repo).unwrap();
-    if let Some(saved) = s.brainstorms.iter_mut().find(|s| s.idea == b.idea) {
-        *saved = b;
-    }
+    with_research(
+        &w,
+        &mut s,
+        vec![Research {
+            waypoint: "hx-m.4".to_string(),
+            pane: "w9:p9".to_string(),
+            ..Default::default()
+        }],
+    );
 
     s.command("/continue @hx-m");
 
@@ -202,6 +201,16 @@ fn a_rebase_that_fails_without_conflicts_is_aborted_and_the_session_starts() {
     s.close();
 }
 
+/// hx-7's research set to `research`, saved and in the Shell's Brainstorms.
+fn with_research(w: &World, s: &mut Screen, research: Vec<Research>) {
+    let mut b = saved(w);
+    b.research = research;
+    b.save(&w.repo).unwrap();
+    if let Some(saved) = s.brainstorms.iter_mut().find(|s| s.idea == b.idea) {
+        *saved = b;
+    }
+}
+
 /// A parked Research Waypoint of hx-m's, its session saved.
 fn parked(id: &str) -> Research {
     let mut r = Research {
@@ -240,12 +249,7 @@ fn research_sent_during_the_rebase_is_kept_by_the_waypoint_started() {
 fn continue_at_a_parked_research_waypoint_rebases_before_it_resumes() {
     let (w, mut s) = stopped();
     git(&w, "3", Ok(""), "");
-    let mut b = saved(&w);
-    b.research = vec![parked("hx-m.3")];
-    b.save(&w.repo).unwrap();
-    if let Some(saved) = s.brainstorms.iter_mut().find(|s| s.idea == b.idea) {
-        *saved = b;
-    }
+    with_research(&w, &mut s, vec![parked("hx-m.3")]);
 
     s.command("/continue @hx-m.3");
 
@@ -293,12 +297,7 @@ fn the_fetch_and_the_rebase_hold_the_research_gate() {
 fn continue_at_parked_research_while_its_map_session_runs_skips_the_rebase() {
     let (w, mut s, _) = working();
     git(&w, "3", Ok(""), "");
-    let mut b = saved(&w);
-    b.research = vec![parked("hx-m.3")];
-    b.save(&w.repo).unwrap();
-    if let Some(saved) = s.brainstorms.iter_mut().find(|s| s.idea == b.idea) {
-        *saved = b;
-    }
+    with_research(&w, &mut s, vec![parked("hx-m.3")]);
 
     s.command("/continue @hx-m.3");
 
@@ -313,29 +312,20 @@ fn continue_at_parked_research_while_its_map_session_runs_skips_the_rebase() {
 }
 
 #[test]
-fn resolve_it_yourself_on_the_live_map_stops_it() {
-    let (w, mut s, _) = closed();
-    git(
-        &w,
-        "3",
-        Err("CONFLICT (content): Merge conflict in CONTEXT.md"),
-        "CONTEXT.md\n",
-    );
-    s.command("/continue @hx-m.3");
-    await_line(
-        &mut s,
-        "hx-m rebasing brainstorm/hx-7 on main conflicts in CONTEXT.md: aborted, asking you",
-    );
+fn a_conflict_on_the_live_map_stops_it() {
+    let (w, s, _) = closed();
+    let (w, mut s) = conflicted((w, s));
     let starts = w.called("herdr agent start").len();
-    // the rebase Question answered ahead of the pending Next Waypoint?
-    let q = s.questions.pop().unwrap();
-    s.questions.insert(0, q);
 
-    s.key(key(KeyCode::Enter));
-    assert_eq!(s.live, None);
+    assert_eq!(s.live, None, "its research admits nothing more");
+    assert!(
+        !(s.questions.iter()).any(|q| matches!(q.about, About::Asked(Ask::NextWaypoint { .. }))),
+        "no Next Waypoint? left to start a session"
+    );
     s.key(key(KeyCode::Enter));
 
-    await_line(&mut s, "hx-m not acted on: the Map is no longer live");
+    assert!(s.questions.is_empty());
+    assert_eq!(s.suggestion.as_deref(), Some("/continue @hx-m.3"));
     assert_eq!(w.called("herdr agent start").len(), starts);
     s.close();
 }

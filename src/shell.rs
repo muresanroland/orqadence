@@ -2180,15 +2180,7 @@ impl Screen {
                 let q = self.questions.remove(0);
                 self.tell(q.ticket.as_deref(), &format!("you answered: {word}"));
                 match n {
-                    0 => {
-                        // its pending Next Waypoint? and research start
-                        // nothing in the worktree you were sent to
-                        let key = q.ticket.as_deref();
-                        if self.live_brainstorm().is_some_and(|b| Some(b.key()) == key) {
-                            self.live = None;
-                        }
-                        self.suggestion = Some(line);
-                    }
+                    0 => self.suggestion = Some(line),
                     _ => {
                         self.skip_rebase = true;
                         self.command(&line);
@@ -2839,7 +2831,8 @@ impl Screen {
     /// rebased in its worktree on origin's default branch, after a fetch,
     /// when it lacks commits of it. Skipped while a research or Waypoint
     /// session of its Map runs, and on "carry on from the old base"'s run of `line`. A
-    /// conflict is aborted and asked about: None, and no session starts.
+    /// conflict is aborted and asked about: None, no session starts, and
+    /// its Map, when live, stops.
     /// Else the Continue form's rebase line, empty when nothing was tried.
     /// `b`'s research is refreshed from the research threads', for the
     /// caller to save.
@@ -2870,21 +2863,19 @@ impl Screen {
             );
             return Some(text);
         }
-        // a Waypoint session of its Map works in the worktree
-        if self.driving(&b.idea) {
-            let text = format!("rebase skipped: a Waypoint session of {key} is running");
-            self.tell(Some(&key), &text);
-            return Some(text);
-        }
-        if b.worktree.is_empty() {
-            return Some(String::new()); // never git in the user's checkout
-        }
-        let (tools, dir) = (self.cfg.tools.clone(), PathBuf::from(&b.worktree));
         let skipped = |s: &mut Self, why: String| {
             let text = format!("rebase skipped: {why}");
             s.tell(Some(&key), &text);
             Some(text)
         };
+        // a Waypoint session of its Map works in the worktree
+        if self.driving(&b.idea) {
+            return skipped(self, format!("a Waypoint session of {key} is running"));
+        }
+        if b.worktree.is_empty() {
+            return Some(String::new()); // never git in the user's checkout
+        }
+        let (tools, dir) = (self.cfg.tools.clone(), PathBuf::from(&b.worktree));
         // ponytail: git runs on the Shell's thread, which stalls the screen
         // through the fetch; a thread if that shows
         if let Err(err) = tools.run(&dir, &["git", "fetch", "origin"]) {
@@ -2919,6 +2910,14 @@ impl Screen {
         }
         let files = files.join(", ");
         let what = format!("rebasing {branch} on {main} conflicts in {files}");
+        // the live Map stops: its pending Next Waypoint? and its research
+        // start nothing in the worktree you are sent to
+        if self.live.as_ref() == Some(&b.idea) {
+            self.live = None;
+            self.questions.retain(|q| {
+                !matches!(&q.about, About::Asked(Ask::NextWaypoint { map, .. }) if *map == b.map)
+            });
+        }
         if let Err(abort) = aborted {
             // the worktree is mid-rebase: nothing to carry on from
             self.tell(Some(&key), &format!("{what}: not aborted: {abort}"));
