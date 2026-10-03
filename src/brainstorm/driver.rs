@@ -189,7 +189,7 @@ impl Driver<'_> {
     /// Each tick: a result file that checks out ends the session; one that
     /// does not says why, once per reason, the pane and the Idea left for
     /// the session to rewrite it. Its pane gone stops the Brainstorm,
-    /// saved. A new session id herdr reports is saved as the session's.
+    /// saved; a herdr read failing otherwise keeps watching. A new session id herdr reports is saved as the session's.
     fn watch(&mut self, result: &Path) {
         let name = agent_name(&self.b.idea, "chart");
         let mut said = String::new();
@@ -215,7 +215,9 @@ impl Driver<'_> {
                     Err(_) => {}
                 }
             }
-            if watched.is_none() {
+            // None is also a failed agent get: only a gone pane stops it
+            let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
+            if watched.is_none() && !pane_alive(tools, repo, &self.b.pane) {
                 return self.gone();
             }
             if !self.sleep() {
@@ -242,7 +244,7 @@ impl Driver<'_> {
         // Only a closed or already gone pane is forgotten; another
         // failure keeps its id so the pane stays tracked.
         match herdr(tools, repo, &["pane", "close", &self.b.pane]) {
-            Err(err) if !err.to_string().contains("pane_not_found") => {
+            Err(err) if !herdr::pane_gone(&err) => {
                 self.say(&format!("charting pane not closed: {err}"));
             }
             _ => self.b.pane.clear(),
@@ -309,8 +311,7 @@ fn outcome(issues: &[BdIssue], r: &StageResult) -> Result<String, String> {
 
 /// Whether herdr still has `pane`: only pane_not_found says it is gone.
 fn pane_alive(tools: &dyn Tools, repo: &Path, pane: &str) -> bool {
-    !herdr(tools, repo, &["pane", "get", pane])
-        .is_err_and(|err| err.to_string().contains("pane_not_found"))
+    !herdr(tools, repo, &["pane", "get", pane]).is_err_and(|err| herdr::pane_gone(&err))
 }
 
 /// TICKET LABELS: each label config.json configures, as "orqa:<name>

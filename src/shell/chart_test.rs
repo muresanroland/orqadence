@@ -353,6 +353,29 @@ fn the_pane_closed_by_the_user_stops_the_brainstorm_saved() {
 }
 
 #[test]
+fn an_agent_get_failing_with_the_pane_still_there_keeps_watching() {
+    let w = world(vec![BdTicket::new("hx-1")], idle);
+    let mut s = started(&w);
+    let pane = saved(&w).pane;
+    let before = w.calls().len();
+
+    w.fail_once("herdr agent get", "herdr: timeout");
+    for _ in 0..50 {
+        if w.since(before, "herdr agent get").len() >= 2 {
+            break;
+        }
+        wait_a_while(&mut s);
+    }
+
+    assert!(!s.events.iter().any(|e| e.text.contains("charting stopped")));
+    assert_eq!(saved(&w).pane, pane);
+    let result = w.repo.join(LOCAL).join("brainstorms/hx-7/chart.md");
+    fs::write(result, "STATUS: done\nTICKETS: hx-1\n").unwrap();
+    await_line(&mut s, "hx-7 charting done: Tickets hx-1; Idea closed");
+    s.close();
+}
+
+#[test]
 fn a_result_written_as_the_session_exits_is_still_taken() {
     let w = world(vec![BdTicket::new("hx-1")], idle);
     let world = Arc::downgrade(&w);

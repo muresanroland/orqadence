@@ -158,6 +158,24 @@ fn beside_a_live_epic_run_start_tickets_is_greyed_and_enter_does_nothing() {
 }
 
 #[test]
+fn at_80_by_24_the_tickets_modal_scrolls_the_focus_into_view() {
+    let (_w, mut s) = idle();
+    let ids: Vec<String> = (1..=12).map(|n| format!("hx-{n}")).collect();
+    charted(&mut s, &ids.iter().map(String::as_str).collect::<Vec<_>>());
+    let shown = |s: &Screen| rows(&render(s, 80, 24)).join("\n");
+    assert!(shown(&s).contains("› [x] hx-1 "), "{}", shown(&s));
+
+    for _ in 0..11 {
+        s.key(key(KeyCode::Down));
+    }
+    assert!(shown(&s).contains("› [x] hx-12"), "{}", shown(&s));
+
+    s.key(key(KeyCode::Tab));
+    assert!(shown(&s).contains("› Start tickets"), "{}", shown(&s));
+    s.close();
+}
+
+#[test]
 fn cancel_or_esc_leaves_the_tickets_open_and_starts_nothing() {
     let (w, mut s) = idle();
     charted(&mut s, &["hx-1"]);

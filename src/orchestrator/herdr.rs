@@ -196,6 +196,12 @@ pub(crate) fn herdr(tools: &dyn Tools, dir: &Path, args: &[&str]) -> Result<Herd
     })
 }
 
+/// Whether herdr's error says the pane is gone: pane_not_found, its only
+/// way of saying so.
+pub(crate) fn pane_gone(err: &RunError) -> bool {
+    err.to_string().contains("pane_not_found")
+}
+
 /// Gives a Brainstorm pane in the Shell's own tab. `shell` is the Shell's
 /// pane (HERDR_PANE_ID); its tab is read live, since the pane can have
 /// moved. `previous`, the last Brainstorm pane, is replaced when it is
@@ -216,7 +222,7 @@ pub(crate) fn place_beside_shell(
         && previous != shell
         && match herdr(&["pane", "get", previous]) {
             Ok(r) => r.result.pane.tab_id == tab,
-            Err(err) if err.to_string().contains("pane_not_found") => false,
+            Err(err) if pane_gone(&err) => false,
             Err(err) => return Err(err),
         };
     if beside {
@@ -226,7 +232,7 @@ pub(crate) fn place_beside_shell(
         // A previous pane left open would be untracked: take the new
         // one back so the caller still holds a valid `previous`.
         match herdr(&["pane", "close", previous]) {
-            Err(err) if !err.to_string().contains("pane_not_found") => {
+            Err(err) if !pane_gone(&err) => {
                 let _ = herdr(&["pane", "close", &pane]);
                 return Err(err);
             }

@@ -1096,7 +1096,8 @@ fn check(on: bool, focused: bool) -> [Span<'static>; 2] {
 /// The Tickets modal in the dock: what charting came out as, a checkbox
 /// row per Ticket with its description's first line under it, the
 /// /start-ticket line the checks make, the warning beside a live Epic run,
-/// then Start tickets (greyed when it cannot start) and Cancel.
+/// then Start tickets (greyed when it cannot start) and Cancel. Unwrapped,
+/// scrolled to keep the focused row or the buttons in view.
 pub(super) fn tickets(f: &mut Frame, s: &Screen) {
     let Some(t) = &s.tickets else {
         return;
@@ -1122,7 +1123,7 @@ pub(super) fn tickets(f: &mut Frame, s: &Screen) {
         muted("Check the ones to start.".to_string()),
         Line::default(),
     ];
-    // ponytail: no scrolling; charting's Tickets are few, a scroll if not
+    let mut at = 0; // the last line to keep in view: the focused row's about line
     for (i, r) in t.rows.iter().enumerate() {
         let focused = t.focus == i;
         let mut row = Line::from(check(r.on, focused).to_vec());
@@ -1132,6 +1133,9 @@ pub(super) fn tickets(f: &mut Frame, s: &Screen) {
         row.spans.push(Span::styled(r.title.clone(), style));
         lines.push(row);
         lines.push(muted(format!("      {}", r.about)));
+        if focused {
+            at = lines.len() - 1;
+        }
     }
     lines.push(Line::default());
     lines.push(Line::from(vec![
@@ -1145,7 +1149,11 @@ pub(super) fn tickets(f: &mut Frame, s: &Screen) {
     lines.push(Line::default());
     let focus = t.focus.checked_sub(n);
     lines.push(buttons_line("Start tickets", s.tickets_start(), focus));
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    if focus.is_some() {
+        at = lines.len() - 1;
+    }
+    let top = (at + 1).saturating_sub(inner.height as usize);
+    f.render_widget(Paragraph::new(lines).scroll((top as u16, 0)), inner);
 }
 
 /// The start-Map modal in the dock, or its Continue form: the Map, its
