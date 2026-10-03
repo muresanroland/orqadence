@@ -90,7 +90,7 @@ pub(crate) fn spawn(
         thread::spawn(move || {
             let mut r = Runner {
                 o,
-                idea: b.idea.clone(),
+                idea: b.idea,
                 map: b.map.clone(),
                 research: b.research.clone(),
                 running: Vec::new(),
@@ -392,8 +392,13 @@ impl Runner {
     /// The panes and sessions its Stages hold copied in, sent to the Shell
     /// when they changed or `closed` names a close.
     fn sync(&mut self, closed: Option<String>) {
+        let state = self.o.state.lock().unwrap();
         for r in self.research.iter_mut().filter(|r| !r.parked) {
-            let ts = self.o.ticket(&r.waypoint);
+            // not yet taken (one resumed waiting for a slot): its saved
+            // counters stand, not a default's
+            let Some(ts) = state.tickets.get(&r.waypoint) else {
+                continue;
+            };
             if let Some(pane) = ts.panes.get(RESEARCH.name) {
                 r.pane = pane.clone();
             }
@@ -402,6 +407,7 @@ impl Runner {
             }
             (r.retried, r.nudged, r.waits) = (ts.retried, ts.nudged, ts.waits);
         }
+        drop(state);
         let tab = self.o.place.as_ref().unwrap().tab.lock().unwrap().clone();
         if closed.is_none() && self.sent == (tab.clone(), self.research.clone()) {
             return;

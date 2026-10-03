@@ -509,6 +509,42 @@ fn a_spent_nudge_stays_spent_in_a_reopened_shell() {
     s.close();
 }
 
+#[test]
+fn a_resume_waiting_for_a_slot_keeps_its_spent_retry() {
+    let w = world(research(2), first_idles);
+    w.lock().integration = true;
+    max_research(&w, 1);
+    let mut s = mapped(&w);
+    s.key(key(KeyCode::Enter));
+    await_question(&mut s, "hx-m.1");
+    let at = s.options().iter().position(|o| o.starts_with("retry"));
+    for _ in 0..at.unwrap() {
+        s.key(key(KeyCode::Down));
+    }
+    s.key(key(KeyCode::Enter));
+    await_saved(&mut s, &w, |b| {
+        b.research.first().is_some_and(|r| r.retried)
+    });
+    // its fresh session Wakes again, and under Away parks
+    s.cfg.away.store(true, Ordering::SeqCst);
+    await_line(
+        &mut s,
+        "hx-m.1 parked: its session asked while you were Away",
+    );
+    await_line(&mut s, "hx-m.2 research started");
+
+    s.command("/continue @hx-m.1");
+
+    await_line(&mut s, "hx-m.1 waits for a research slot, 1 of 1 running");
+    wait_a_while(&mut s);
+    let r = saved(&w)
+        .research
+        .into_iter()
+        .find(|r| r.waypoint == "hx-m.1");
+    assert!(r.unwrap().retried, "its retry spent");
+    s.close();
+}
+
 /// Polls the Shell until hx-7's saved state satisfies `ok`.
 fn await_saved(s: &mut Screen, w: &World, ok: impl Fn(&Brainstorm) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(5);

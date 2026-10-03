@@ -944,17 +944,6 @@ impl Orchestrator {
                     return Err(StageError::Stopped); // a late Judgment is not acted on
                 }
                 let stuck = format!("stuck in {label}: {reason} {}", self.locate(&pane));
-                // research has nobody there: under Away it parks, as a
-                // Stage's question does, and /continue @<waypoint> asks
-                let park_away = || {
-                    let lead = format!(
-                        "{label} needed you while you were away and needs a manual resume: \
-                         /continue @{ticket} in the Orqadence Shell resumes its session and \
-                         asks you."
-                    );
-                    self.comment_away(ticket, &lead, &stuck, &[]);
-                    Err(StageError::Parked(AWAY.to_string()))
-                };
                 // At or above the floor the Judgment answers, and the hold
                 // acts on it as on the user's answer.
                 let floor = judged
@@ -994,8 +983,18 @@ impl Orchestrator {
                 held = self.hold(ticket, st, &label, &pane, &file, want, false, act);
                 match held {
                     Held::Park => return Err(StageError::Parked(format!("{label} {reason}"))),
-                    // turned on while its Wake's Question waited
-                    Held::Away => return park_away(),
+                    // Away turned on while its Wake's Question waited:
+                    // research has nobody there, so it parks, as a Stage's
+                    // question does, and /continue @<waypoint> asks
+                    Held::Away => {
+                        let lead = format!(
+                            "{label} needed you while you were away and needs a manual resume: \
+                             /continue @{ticket} in the Orqadence Shell resumes its session and \
+                             asks you."
+                        );
+                        self.comment_away(ticket, &lead, &stuck, &[]);
+                        return Err(StageError::Parked(AWAY.to_string()));
+                    }
                     _ => {}
                 }
             }
