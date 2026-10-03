@@ -24,7 +24,7 @@ use crate::orchestrator::trust::await_trust;
 use crate::shell::bd_list;
 use crate::skills::manifest::Manifest;
 use crate::skills::stage_skill;
-use crate::tools::Tools;
+use crate::tools::{RunError, Tools};
 
 /// One Brainstorm's session as the driver runs it.
 struct Driver<'a> {
@@ -36,13 +36,19 @@ struct Driver<'a> {
     stop: &'a AtomicBool,
     /// The Brainstorm charted, as last saved.
     b: Brainstorm,
+    /// A dead session's pane still open, which the next pane replaces:
+    /// kept off the saved Brainstorm meanwhile, so the Shell sees its pane
+    /// still opening and refuses to switch.
+    previous: String,
 }
 
 /// Charts the Idea of `b`: brainstorm-chart, on the brainstorm_chart row,
 /// in a pane split from the Shell's pane `shell`, cwd the Brainstorm's
-/// worktree. Done only once its result file checks out: idle never counts,
-/// and nothing is asked. Its pane gone stops the Brainstorm, saved; `stop`
-/// leaves the session running.
+/// worktree. A saved pane still alive is watched again; else a saved
+/// session is resumed by id in a fresh pane, and only when that fails does
+/// brainstorm-chart start fresh. Done only once its result file checks
+/// out: idle never counts, and nothing is asked. Its pane gone stops the
+/// Brainstorm, saved; `stop` leaves the session running.
 pub(crate) fn chart(
     cfg: &Config,
     shell: &str,
@@ -55,8 +61,50 @@ pub(crate) fn chart(
         saved,
         stop,
         b,
+        previous: String::new(),
     };
-    match d.start(shell) {
+    let (tools, repo) = (&*cfg.tools, &cfg.repo);
+    let session = d.b.session.clone().filter(|s| !s.id.is_empty());
+    // off the saved Brainstorm before the lookup, so no switch closes the
+    // pane while herdr is asked whether its agent lives
+    if !d.b.pane.is_empty() {
+        d.previous = std::mem::take(&mut d.b.pane);
+        d.save();
+    }
+    let watched = d.watched_again();
+    let started = match (watched, session) {
+        (Err(err), _) => {
+            d.b.pane = std::mem::take(&mut d.previous);
+            d.save();
+            let text = format!("charting not resumed: herdr did not answer, try again: {err}");
+            return d.say(&text);
+        }
+        (Ok(true), _) => Ok(d.result_file()),
+        (Ok(false), Some(session)) => match d.resume(shell, &session) {
+            // its new pane closed meanwhile, by a switch or the user
+            Err(why)
+                if !why.is_empty()
+                    && !d.b.pane.is_empty()
+                    && !pane_alive(tools, repo, &d.b.pane) =>
+            {
+                d.say(&format!("charting not resumed: {why}"));
+                d.gone();
+                Err(String::new())
+            }
+            Err(why) if !why.is_empty() => {
+                d.say(&format!("charting not resumed: {why}, starting it fresh"));
+                d.start(shell)
+            }
+            resumed => resumed,
+        },
+        (Ok(false), None) => d.start(shell),
+    };
+    // no new pane took its place: the old one is the Brainstorm's again
+    if !d.previous.is_empty() {
+        d.b.pane = std::mem::take(&mut d.previous);
+        d.save();
+    }
+    match started {
         Ok(result) => d.watch(&result),
         Err(why) if why.is_empty() => {} // stopped
         Err(why) => d.say(&format!("charting not started: {why}")),
@@ -94,6 +142,13 @@ impl Driver<'_> {
         self.say("charting stopped: its pane is gone; Brainstorm saved");
     }
 
+    /// Its session dead in a pane still open: the Brainstorm stopped,
+    /// saved, its pane kept so a resume replaces it.
+    fn died(&self) {
+        self.save();
+        self.say("charting stopped: its session is gone; Brainstorm saved");
+    }
+
     /// One tick. False once the Shell is closing, which it checks every
     /// 50ms so close() joins this thread promptly.
     fn sleep(&self) -> bool {
@@ -108,33 +163,58 @@ impl Driver<'_> {
         false
     }
 
-    /// The session started in its pane and prompted: its result file's
-    /// path. Why not, or empty once stopped.
-    fn start(&mut self, shell: &str) -> Result<PathBuf, String> {
+    /// Whether herdr still names its agent in its saved pane, set aside in
+    /// `previous`: the session is watched again, said so. Only
+    /// agent_not_found says it is gone; another failure is herdr's, so a
+    /// live session is never replaced.
+    fn watched_again(&self) -> Result<bool, RunError> {
+        if self.previous.is_empty() {
+            return Ok(false);
+        }
         let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
-        let row = app::row(repo, BRAINSTORM[0], &[])?;
+        let name = agent_name(&self.b.idea, "chart");
+        let alive = match herdr(tools, repo, &["agent", "get", &name]) {
+            Ok(reply) => reply.result.agent.pane_id == self.previous,
+            Err(err) if herdr::agent_gone(&err) => false,
+            Err(err) => return Err(err),
+        };
+        if alive {
+            let at = locate(tools, repo, &self.cfg.workspace, &self.previous);
+            self.say(&format!("charting watched again {at}"));
+        }
+        Ok(alive)
+    }
+
+    /// Its result file, in the Brainstorm's folder.
+    fn result_file(&self) -> PathBuf {
+        brainstorms(&self.cfg.repo)
+            .join(&self.b.idea)
+            .join("chart.md")
+    }
+
+    /// A pane beside the Shell's, cwd the worktree, saved as the
+    /// Brainstorm's with `session`; the folder trusted, then the agent
+    /// started there with `args`: where it is. Why not, or empty once
+    /// stopped.
+    fn launch(
+        &mut self,
+        shell: &str,
+        row: &app::Row,
+        session: Session,
+        args: &[String],
+    ) -> Result<String, String> {
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
         let worktree = PathBuf::from(&self.b.worktree);
-        // committed on its base, as a Stage skill is (ADR 0006)
-        let skill = stage_skill(&worktree, "orqa-brainstorm-chart").unwrap_or_else(|| {
-            Err("has no brainstorm-chart skill on its base branch: commit and merge .orqadence/skills (orqa init writes them)".to_string())
-        })?;
-        let manifest = Manifest::load(repo)?;
-        let have = manifest.have(repo, &worktree, &self.cfg.home, tools, row.app);
-        let skill = manifest
-            .fill_jobs(&skill, &have, row.app.built_in, row.app.mention)
-            .0;
-        let labels = ticket_labels(repo)?;
-        let dir = brainstorms(repo).join(&self.b.idea);
-        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
-        let result = dir.join("chart.md");
         let tree = worktree.display().to_string();
-        let pane = place_beside_shell(tools, repo, shell, &self.b.pane, &["--cwd", &tree])
+        let previous = match self.b.pane.is_empty() {
+            true => &self.previous,
+            false => &self.b.pane,
+        };
+        let pane = place_beside_shell(tools, repo, shell, previous, &["--cwd", &tree])
             .map_err(|err| format!("got no pane: {err}"))?;
+        self.previous.clear();
         self.b.pane = pane.clone();
-        self.b.session = Some(Session {
-            app: row.app.name.to_string(),
-            ..Default::default()
-        });
+        self.b.session = Some(session);
         self.save();
         let at = locate(tools, repo, &self.cfg.workspace, &pane);
         // closed during the wait, the pane stops the Brainstorm
@@ -154,10 +234,6 @@ impl Driver<'_> {
             }
             return Err(String::new());
         }
-        let _ = fs::remove_file(&result); // an earlier session's
-        let dir = dir.display().to_string();
-        let mut args = (row.app.worktree_args)(&dir);
-        args.extend(row.flags());
         let name = agent_name(&self.b.idea, "chart");
         let mut argv = vec![
             "agent",
@@ -173,6 +249,60 @@ impl Driver<'_> {
         let give_up = Instant::now() + 6 * self.cfg.tick;
         herdr::start_agent(tools, repo, &argv, give_up, || self.sleep())
             .map_err(|err| format!("session did not start: {err}"))?;
+        Ok(at)
+    }
+
+    /// The session's own args: its folder's and the row's model and effort.
+    fn args(&self, row: &app::Row) -> Vec<String> {
+        let dir = brainstorms(&self.cfg.repo).join(&self.b.idea);
+        let mut args = (row.app.worktree_args)(&dir.display().to_string());
+        args.extend(row.flags());
+        args
+    }
+
+    /// The saved `session` resumed by id in a fresh pane and told to
+    /// continue, only while the brainstorm_chart row's App is unchanged:
+    /// its result file's path. Why not, or empty once stopped.
+    fn resume(&mut self, shell: &str, session: &Session) -> Result<PathBuf, String> {
+        let row = app::row(&self.cfg.repo, BRAINSTORM[0], &[])?;
+        if row.app.name != session.app {
+            return Err(format!("its App is now {}", row.app.name));
+        }
+        let mut args = row.resume(&session.id);
+        args.extend(self.args(&row));
+        let at = self.launch(shell, &row, session.clone(), &args)?;
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
+        herdr(tools, repo, &["agent", "prompt", &self.b.pane, "continue"])
+            .map_err(|err| format!("never took continue: {err}"))?;
+        self.say(&format!("charting resumed: {} {at}", row.said()));
+        Ok(self.result_file())
+    }
+
+    /// The session started in its pane and prompted: its result file's
+    /// path. Why not, or empty once stopped.
+    fn start(&mut self, shell: &str) -> Result<PathBuf, String> {
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
+        let row = app::row(repo, BRAINSTORM[0], &[])?;
+        let worktree = PathBuf::from(&self.b.worktree);
+        // committed on its base, as a Stage skill is (ADR 0006)
+        let skill = stage_skill(&worktree, "orqa-brainstorm-chart").unwrap_or_else(|| {
+            Err("has no brainstorm-chart skill on its base branch: commit and merge .orqadence/skills (orqa init writes them)".to_string())
+        })?;
+        let manifest = Manifest::load(repo)?;
+        let have = manifest.have(repo, &worktree, &self.cfg.home, tools, row.app);
+        let skill = manifest
+            .fill_jobs(&skill, &have, row.app.built_in, row.app.mention)
+            .0;
+        let labels = ticket_labels(repo)?;
+        let result = self.result_file();
+        fs::create_dir_all(result.parent().unwrap()).map_err(|err| err.to_string())?;
+        let _ = fs::remove_file(&result); // an earlier session's
+        let session = Session {
+            app: row.app.name.to_string(),
+            ..Default::default()
+        };
+        let args = self.args(&row);
+        let at = self.launch(shell, &row, session, &args)?;
         self.say(&format!("charting started: {} {at}", row.said()));
         let shown = result.display().to_string();
         let inputs = [
@@ -181,7 +311,8 @@ impl Driver<'_> {
             ("RESULT FILE", &shown),
         ];
         let prompt = stage_prompt(&skill, &inputs);
-        herdr(tools, repo, &["agent", "prompt", &pane, &prompt])
+        let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
+        herdr(tools, repo, &["agent", "prompt", &self.b.pane, &prompt])
             .map_err(|err| format!("never took the skill: {err}"))?;
         Ok(result)
     }
@@ -189,7 +320,9 @@ impl Driver<'_> {
     /// Each tick: a result file that checks out ends the session; one that
     /// does not says why, once per reason, the pane and the Idea left for
     /// the session to rewrite it. Its pane gone stops the Brainstorm,
-    /// saved; a herdr read failing otherwise keeps watching. A new session id herdr reports is saved as the session's.
+    /// saved, and so does its agent gone from it; a herdr read failing
+    /// otherwise keeps watching. A new session id herdr reports is saved as
+    /// the session's.
     fn watch(&mut self, result: &Path) {
         let name = agent_name(&self.b.idea, "chart");
         let mut said = String::new();
@@ -215,9 +348,15 @@ impl Driver<'_> {
                     Err(_) => {}
                 }
             }
-            // None is also a failed agent get: only a gone pane stops it
-            if watched.is_none() && !pane_alive(tools, repo, &self.b.pane) {
-                return self.gone();
+            // None is also a failed agent get: only a gone pane, or a pane
+            // herdr says has no agent, stops it
+            if watched.is_none() {
+                if !pane_alive(tools, repo, &self.b.pane) {
+                    return self.gone();
+                }
+                if agent_dead(tools, repo, &self.b.pane) {
+                    return self.died();
+                }
             }
             if !self.sleep() {
                 return;
@@ -311,6 +450,11 @@ fn outcome(issues: &[BdIssue], r: &StageResult) -> Result<String, String> {
 /// Whether herdr still has `pane`: only pane_not_found says it is gone.
 fn pane_alive(tools: &dyn Tools, repo: &Path, pane: &str) -> bool {
     !herdr(tools, repo, &["pane", "get", pane]).is_err_and(|err| herdr::pane_gone(&err))
+}
+
+/// Whether herdr has no agent in `pane`: only agent_not_found says so.
+fn agent_dead(tools: &dyn Tools, repo: &Path, pane: &str) -> bool {
+    herdr(tools, repo, &["agent", "get", pane]).is_err_and(|err| herdr::agent_gone(&err))
 }
 
 /// TICKET LABELS: each label config.json configures, as "orqa:<name>

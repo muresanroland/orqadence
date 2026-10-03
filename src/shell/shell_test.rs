@@ -618,8 +618,8 @@ pub(super) fn type_in(s: &mut Screen, text: &str) {
 }
 
 /// What the open list would fill in, row by row.
-fn list_keys(s: &Screen) -> Vec<&str> {
-    s.list().iter().map(|row| row.0).collect()
+fn list_keys(s: &Screen) -> Vec<String> {
+    s.list().into_iter().map(|row| row.0).collect()
 }
 
 /// '/' with no space yet lists the commands containing it, else those it is
@@ -748,13 +748,7 @@ fn the_at_list_ranks_open_epics_and_tickets_narrowed_by_the_command() {
         "harness-rev.1",
     ];
     assert_eq!(list_keys(&s), open);
-    for name in [
-        "/start-ticket",
-        "/park",
-        "/rebase",
-        "/address-pr-comments",
-        "/continue",
-    ] {
+    for name in ["/start-ticket", "/park", "/rebase", "/address-pr-comments"] {
         s.input = format!("{name} @");
         assert_eq!(list_keys(&s), open, "{name}");
     }
@@ -772,7 +766,11 @@ fn the_at_list_ranks_open_epics_and_tickets_narrowed_by_the_command() {
     );
     assert_eq!(
         s.list()[2],
-        ("harness-7nq.5", "Ticket", "Plan review"),
+        (
+            "harness-7nq.5".to_string(),
+            "Ticket",
+            "Plan review".to_string()
+        ),
         "the row"
     );
     s.key(key(KeyCode::Down));
@@ -929,14 +927,14 @@ fn the_slash_list_renders_above_the_input_with_its_hint() {
     type_in(&mut s, "/");
     let buf = render(&s, 120, 40);
     let want = [
-        " › /start-epic           <epic>      run every Ticket of an open Epic",
-        "   /start-ticket         <ticket>…   run Tickets, or add them to the live Ticket run",
-        "   /remove-ticket        <ticket>    take a Ticket out of the live Ticket run",
-        "   /continue             [<ticket>]  resume the saved run, or unpark one Ticket",
-        "   /brainstorm                       chart an idea into Tickets or a Map, with you",
-        "   /stop-work                        stop the run, the panes stay",
-        "   /retry                <ticket>    the Ticket's Stage again, in a fresh session",
-        "   /park                 <ticket>    take a Ticket out to wait for you",
+        " › /start-epic           <epic>     run every Ticket of an open Epic",
+        "   /start-ticket         <ticket>…  run Tickets, or add them to the live Ticket run",
+        "   /remove-ticket        <ticket>   take a Ticket out of the live Ticket run",
+        "   /continue             [<id>]     resume the saved run, a Parked Ticket, or a Brainstorm",
+        "   /brainstorm                      chart an idea into Tickets or a Map, with you",
+        "   /stop-work                       stop the run, the panes stay",
+        "   /retry                <ticket>   the Ticket's Stage again, in a fresh session",
+        "   /park                 <ticket>   take a Ticket out to wait for you",
         "   ↑↓ pick · Tab or Enter fills in · Esc clears",
     ];
     let shown: Vec<String> = (29..38)
@@ -2618,8 +2616,9 @@ fn rebase_and_address_pr_comments_replace_address() {
     let mut s = shell(&w);
     type_in(&mut s, "/");
     let listed = list_keys(&s);
-    assert!(listed.contains(&"/rebase") && listed.contains(&"/address-pr-comments"));
-    assert!(!listed.contains(&"/address"));
+    let listed = |name: &str| listed.iter().any(|l| l == name);
+    assert!(listed("/rebase") && listed("/address-pr-comments"));
+    assert!(!listed("/address"));
     s.input.clear();
     s.command("/address hx-1");
     assert_eq!(notice(&s), "unknown command: /address hx-1");

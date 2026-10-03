@@ -28,7 +28,7 @@ use crate::brainstorm::{self, Brainstorm, Phase};
 use crate::graphify;
 use crate::on_call::{self, Doorbell, OnCall};
 use crate::orchestrator::app::{self, ADDRESS_PR_COMMENTS_COUNTDOWN, RELEASE_ON};
-use crate::orchestrator::herdr::herdr;
+use crate::orchestrator::herdr::{self, herdr};
 use crate::orchestrator::judgment::{self, Action};
 use crate::orchestrator::manual;
 use crate::orchestrator::pr::Item;
@@ -85,8 +85,8 @@ const COMMANDS: [(&str, &str, &str); 18] = [
     ),
     (
         "/continue",
-        "[<ticket>]",
-        "resume the saved run, or unpark one Ticket",
+        "[<id>]",
+        "resume the saved run, a Parked Ticket, or a Brainstorm",
     ),
     (
         "/brainstorm",
@@ -182,6 +182,9 @@ pub(crate) enum Pending {
     /// Run graphify's Docs pass on this new X.Y tag; no records its X.Y as
     /// handled, so the tag is skipped until the next X.Y.
     DocsPass { tag: String },
+    /// Stop the live Brainstorm, saved, then run `line`: /brainstorm or
+    /// /continue @<other>.
+    Switch { line: String },
 }
 
 /// What a Question is about, which decides its options and what an answer does.
@@ -295,9 +298,9 @@ pub(crate) struct Screen {
     brainstorm_receiver: Receiver<Brainstorm>,
     /// Set by close(): a driver's thread leaves, its pane running in herdr.
     brainstorm_stop: Arc<AtomicBool>,
-    /// The drivers' threads, joined by close() so a result being acted on
-    /// is saved before the process exits.
-    pub(crate) brainstorm_threads: Vec<JoinHandle<()>>,
+    /// The drivers' threads, by idea, joined by close() so a result being
+    /// acted on is saved before the process exits.
+    pub(crate) brainstorm_threads: Vec<(String, JoinHandle<()>)>,
     /// The suggested command, ghost text in the empty input: Tab fills it
     /// in, running any command clears it.
     pub(crate) suggestion: Option<String>,
@@ -802,7 +805,7 @@ impl Screen {
     pub(crate) fn close(&mut self) {
         // a live charting pane stays running in herdr
         self.brainstorm_stop.store(true, Ordering::SeqCst);
-        for driver in self.brainstorm_threads.drain(..) {
+        for (_, driver) in self.brainstorm_threads.drain(..) {
             let _ = driver.join();
         }
         // cancelled under the lock the pass records under: it records nothing
@@ -875,18 +878,12 @@ impl Screen {
                 self.ask_docs_pass(tag);
             }
         }
-        while let Ok(b) = self.brainstorm_receiver.try_recv() {
-            let saved = self.brainstorms.iter_mut().find(|s| s.idea == b.idea);
-            let charting = saved.as_ref().is_some_and(|s| s.phase == Phase::Charting);
-            match saved {
-                Some(saved) => *saved = b.clone(),
-                None => self.brainstorms.push(b.clone()),
-            }
-            // charting's outcome, once
-            match b.phase {
-                Phase::Map if charting => self.charted.push_back(b),
-                Phase::Done if charting && !b.tickets.is_empty() => self.charted.push_back(b),
-                _ => {}
+        self.brainstorm_updates();
+        // the live charting's driver gone: its pane closed, its session
+        // dead, or never started
+        if let Some(b) = self.live_brainstorm() {
+            if b.phase == Phase::Charting && !self.driving(&b.idea) {
+                self.live = None;
             }
         }
         self.open_charted();
@@ -1507,9 +1504,9 @@ impl Screen {
     /// lists the commands containing it, else those it is a subsequence of.
     /// '@<query>' ending the line lists the open Epics and Tickets whose id
     /// contains it, then whose title does, then whose id it is a subsequence
-    /// of; after a command, only what it takes. None opens on a prompt of
-    /// your own.
-    pub(crate) fn list(&self) -> Vec<(&str, &str, &str)> {
+    /// of; after a command, only what it takes, after /continue what it
+    /// continues. None opens on a prompt of your own.
+    pub(crate) fn list(&self) -> Vec<(String, &'static str, String)> {
         if self.composing {
             return Vec::new();
         }
@@ -1519,12 +1516,16 @@ impl Screen {
                 .into_iter()
                 .filter(|c| c.0.contains(&input))
                 .collect();
-            if !containing.is_empty() {
-                return containing;
-            }
-            return COMMANDS
+            let commands = match containing.is_empty() {
+                false => containing,
+                true => COMMANDS
+                    .into_iter()
+                    .filter(|c| subsequence(&input, c.0))
+                    .collect(),
+            };
+            return commands
                 .into_iter()
-                .filter(|c| subsequence(&input, c.0))
+                .map(|(name, args, text)| (name.to_string(), args, text.to_string()))
                 .collect();
         }
         let Some((before, q)) = input
@@ -1534,21 +1535,26 @@ impl Screen {
             return Vec::new();
         };
         // What the command before it takes, by its args in COMMANDS.
+        let command = before.split(' ').next();
         let takes = COMMANDS
             .iter()
-            .find(|c| Some(c.0) == before.split(' ').next())
+            .find(|c| Some(c.0) == command)
             .map_or("", |c| c.1);
         let (epics, tickets) = (!takes.contains("<ticket>"), !takes.contains("<epic>"));
         let mut found = Vec::new();
-        for e in &self.epics {
-            if epics && !e.id.is_empty() {
-                found.push((e.id.as_str(), "Epic", e.title.as_str()));
-            }
-            for t in e.tickets.iter().filter(|t| tickets && t.status != "closed") {
-                found.push((t.id.as_str(), "Ticket", t.title.as_str()));
+        if command == Some("/continue") {
+            found = self.continue_rows();
+        } else {
+            for e in &self.epics {
+                if epics && !e.id.is_empty() {
+                    found.push((e.id.clone(), "Epic", e.title.clone()));
+                }
+                for t in e.tickets.iter().filter(|t| tickets && t.status != "closed") {
+                    found.push((t.id.clone(), "Ticket", t.title.clone()));
+                }
             }
         }
-        let rank = |(id, _, title): &(&str, &str, &str)| {
+        let rank = |(id, _, title): &(String, &str, String)| {
             let (id, title) = (id.to_lowercase(), title.to_lowercase());
             [id.contains(q), title.contains(q), subsequence(q, &id)]
                 .iter()
@@ -1557,6 +1563,91 @@ impl Screen {
         found.retain(|row| rank(row).is_some());
         found.sort_by_key(rank);
         found
+    }
+
+    /// What /continue @ takes: each saved Map and its Waypoints, closed
+    /// ones last, each
+    /// charting Idea, then each Parked Ticket, every text ending in its
+    /// state; a Waypoint ready to take ends in its title.
+    fn continue_rows(&self) -> Vec<(String, &'static str, String)> {
+        let issues = &self.brainstorm_issues;
+        let title = |id: &str| {
+            issues
+                .iter()
+                .find(|i| i.id == id)
+                .map_or("", |i| i.title.as_str())
+        };
+        let mut rows = Vec::new();
+        let saved = self.brainstorms.iter().filter(|b| b.phase == Phase::Map);
+        for b in saved {
+            let live = self.live.as_ref() == Some(&b.idea);
+            let mut waypoints: Vec<&BdIssue> =
+                issues.iter().filter(|i| i.parent == b.map).collect();
+            waypoints.sort_by_key(|i| (i.status == "closed", suffix_order(&i.id)));
+            let left = waypoints.iter().filter(|i| i.status != "closed").count();
+            let counted = format!("{} open", plural(left, "Waypoint"));
+            let state = match (live, b.started) {
+                (true, _) => format!("{counted}, live"),
+                (false, false) => "not started".to_string(),
+                (false, true) => format!("{counted}, stopped"),
+            };
+            rows.push((b.map.clone(), "Map", format!("{} · {state}", title(&b.map))));
+            for w in waypoints {
+                let research = b.research.iter().find(|r| r.waypoint == w.id);
+                let blockers: Vec<&str> = w
+                    .blockers()
+                    .filter(|id| unfinished(&self.epics, issues, id))
+                    .map(suffix)
+                    .collect();
+                let state = if w.status == "closed" {
+                    Some("closed".to_string())
+                } else if let Some(r) = research {
+                    match r.parked {
+                        true => Some("parked, asks you".to_string()),
+                        false => Some("researching".to_string()),
+                    }
+                } else if !blockers.is_empty() {
+                    Some(format!("blocked on {}", blockers.join(", ")))
+                } else if w.labels.iter().any(|l| l == brainstorm::EPIC) && left > 1 {
+                    Some(format!("last, {} others open", left - 1))
+                } else {
+                    None // ready to take
+                };
+                let text = match state {
+                    Some(state) => format!("{} · {state}", w.title),
+                    None => w.title.clone(),
+                };
+                rows.push((w.id.clone(), "Waypoint", text));
+            }
+        }
+        for b in self
+            .brainstorms
+            .iter()
+            .filter(|b| b.phase == Phase::Charting)
+        {
+            let state = match self.live.as_ref() == Some(&b.idea) {
+                true => "charting",
+                false => "charting stopped",
+            };
+            rows.push((
+                b.idea.clone(),
+                "Idea",
+                format!("{} · {state}", title(&b.idea)),
+            ));
+        }
+        let mut parked: Vec<&String> = self
+            .state
+            .tickets
+            .iter()
+            .filter(|(_, ts)| ts.status == STATUS_PARKED)
+            .map(|(id, _)| id)
+            .collect();
+        parked.sort_by_key(|id| suffix_order(id));
+        for id in parked {
+            let text = format!("{} · parked", self.title(id).unwrap_or(id));
+            rows.push((id.clone(), "Ticket", text));
+        }
+        rows
     }
 
     /// Tab or Enter on an open list: a command fills in as '<command> ', an
@@ -1765,11 +1856,11 @@ impl Screen {
             let list = self.list();
             // a reloaded bd cache may have shortened the list under the cursor
             let pick = self.pick.min(list.len().saturating_sub(1));
-            let row = list.get(pick).copied();
+            let row = list.get(pick);
             // an optional argument ([...]) may be left out
             let whole =
-                row.is_some_and(|(name, args, _)| !args.starts_with('<') && name == self.input);
-            (list.len(), row.map(|row| row.0.to_string()), whole, pick)
+                row.is_some_and(|(name, args, _)| !args.starts_with('<') && *name == self.input);
+            (list.len(), row.map(|row| row.0.clone()), whole, pick)
         };
         self.pick = pick;
         match key.code {
@@ -2182,7 +2273,99 @@ impl Screen {
             Pending::Exit => self.quit(),
             Pending::Close { done, commented } => self.close_epic(text, done, commented),
             Pending::DocsPass { tag } => self.run_docs_pass(tag),
+            Pending::Switch { line } => {
+                if self.stop_live() {
+                    self.command(&line);
+                }
+            }
         }
+    }
+
+    /// The drivers' state changes, each Brainstorm's copy replaced.
+    fn brainstorm_updates(&mut self) {
+        while let Ok(b) = self.brainstorm_receiver.try_recv() {
+            let saved = self.brainstorms.iter_mut().find(|s| s.idea == b.idea);
+            let charting = saved.as_ref().is_some_and(|s| s.phase == Phase::Charting);
+            match saved {
+                Some(saved) => *saved = b.clone(),
+                None => self.brainstorms.push(b.clone()),
+            }
+            // charting's outcome, once; Start Map makes a Map live again
+            if charting && b.phase != Phase::Charting && self.live.as_ref() == Some(&b.idea) {
+                self.live = None;
+            }
+            match b.phase {
+                Phase::Map if charting => self.charted.push_back(b),
+                Phase::Done if charting && !b.tickets.is_empty() => self.charted.push_back(b),
+                _ => {}
+            }
+        }
+    }
+
+    /// The live Brainstorm, saved.
+    fn live_brainstorm(&self) -> Option<&Brainstorm> {
+        let live = self.live.as_ref()?;
+        self.brainstorms.iter().find(|b| &b.idea == live)
+    }
+
+    /// Whether a driver thread still runs for `idea`, live or stopping.
+    fn driving(&self, idea: &str) -> bool {
+        self.brainstorm_threads
+            .iter()
+            .any(|(i, t)| i == idea && !t.is_finished())
+    }
+
+    /// Whether `line` waits on the switch Question: a Brainstorm other
+    /// than `key` is live, and only one is at a time.
+    fn switch_asked(&mut self, key: &str, line: &str) -> bool {
+        let live = self.live_brainstorm().map(|b| b.key().to_string());
+        let Some(live) = live.filter(|l| l != key) else {
+            return false;
+        };
+        let text = format!("{line}: {live} is live. Stop {live} and start this one?");
+        self.confirm(
+            &text,
+            Pending::Switch {
+                line: line.to_string(),
+            },
+        );
+        true
+    }
+
+    /// Stops the live Brainstorm, saved: its pane closed, so a charting
+    /// driver sees it gone and saves it. False, said so, when the pane
+    /// does not close.
+    fn stop_live(&mut self) -> bool {
+        // a driver's new pane, sent but not yet taken
+        self.brainstorm_updates();
+        let Some(b) = self.live_brainstorm().cloned() else {
+            self.live = None;
+            return true;
+        };
+        // its driver between charting and its pane: that pane would open
+        // after the next Brainstorm starts
+        if b.pane.is_empty() && self.driving(&b.idea) {
+            let text = format!("refused: {}'s pane is still opening, try again", b.key());
+            self.refuse(&text);
+            return false;
+        }
+        if b.pane.is_empty() {
+            self.tell(Some(b.key()), "stopped; Brainstorm saved");
+        } else if let Err(err) = herdr(
+            &*self.cfg.tools,
+            &self.cfg.repo,
+            &["pane", "close", &b.pane],
+        ) {
+            if !herdr::pane_gone(&err) {
+                self.tell(
+                    Some(b.key()),
+                    &format!("not stopped: its pane did not close: {err}"),
+                );
+                return false;
+            }
+        }
+        self.live = None;
+        true
     }
 
     /// Asks in a yes/no Notice modal whether to close the done Epic, its
@@ -2334,7 +2517,16 @@ impl Screen {
                     }
                 }
             },
-            "/continue" if !query.is_empty() => self.continue_ticket(query),
+            "/continue" if !query.is_empty() => {
+                let saved = self
+                    .brainstorms
+                    .iter()
+                    .find(|b| b.phase != Phase::Done && b.key() == query);
+                match saved.cloned() {
+                    Some(b) => self.continue_brainstorm(b),
+                    None => self.continue_ticket(query),
+                }
+            }
             "/continue" => {
                 if self.busy() {
                     return;
@@ -2392,6 +2584,7 @@ impl Screen {
                 self.summarize(&state, &epic);
             }
             "/manual-work" => self.open_manual_work(),
+            "/brainstorm" if self.switch_asked("", "/brainstorm") => {}
             "/brainstorm" => self.idea = Some(Idea::default()),
             "/questions" => match self.questions.is_empty() {
                 true => self.notice("no questions waiting", NOTICE_WINDOW),
@@ -2451,6 +2644,24 @@ impl Screen {
                 Some(_) => self.confirm("stop the run and exit?", Pending::Exit),
             },
             _ => self.notice(&format!("unknown command: {line}"), NOTICE_WINDOW),
+        }
+    }
+
+    /// /continue @<idea> or @<map>: another Brainstorm live asks first; a
+    /// Map opens its Continue form at the saved answer, an Idea resumes its
+    /// charting.
+    fn continue_brainstorm(&mut self, b: Brainstorm) {
+        let key = b.key().to_string();
+        if self.switch_asked(&key, &format!("/continue @{key}")) {
+            return;
+        }
+        match b.phase {
+            Phase::Map => self.open_start_map(&b, true),
+            // a driver still running, live or stopping, owns its pane
+            _ if self.driving(&b.idea) => {
+                self.refuse(&format!("refused: {key} is already charting"))
+            }
+            _ => self.chart(b),
         }
     }
 
@@ -3227,6 +3438,8 @@ mod chart_test;
 mod charted_test;
 #[cfg(test)]
 mod config_test;
+#[cfg(test)]
+mod continue_test;
 #[cfg(test)]
 mod demo_test;
 #[cfg(test)]

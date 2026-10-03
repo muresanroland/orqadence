@@ -23,6 +23,7 @@ fn mapped(idea: &str, map: &str) -> Brainstorm {
         branch: format!("brainstorm/{idea}"),
         tickets: vec!["hx-1".to_string()],
         background: true,
+        started: true,
         research_tab: format!("research-{map}"),
         research: vec![Research {
             waypoint: format!("{map}.3"),

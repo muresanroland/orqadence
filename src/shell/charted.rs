@@ -138,10 +138,10 @@ impl Screen {
         let Some(b) = self.brainstorms.iter_mut().find(|b| b.idea == m.idea) else {
             return;
         };
-        let previous = b.background;
-        b.background = m.background;
+        let previous = (b.background, b.started);
+        (b.background, b.started) = (m.background, true);
         if let Err(err) = b.save(&self.cfg.repo) {
-            b.background = previous;
+            (b.background, b.started) = previous;
             self.tell(Some(&m.map), &format!("Brainstorm state not saved: {err}"));
             self.start_map = Some(m);
             return;
