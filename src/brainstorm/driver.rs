@@ -231,8 +231,14 @@ impl Driver<'_> {
         tools
             .run(repo, &["bd", "close", &self.b.idea, "--reason", &reason])
             .map_err(|err| format!("Idea not closed: {err}"))?;
-        let _ = herdr(tools, repo, &["pane", "close", &self.b.pane]);
-        self.b.pane.clear();
+        // Only a closed or already gone pane is forgotten; another
+        // failure keeps its id so the pane stays tracked.
+        match herdr(tools, repo, &["pane", "close", &self.b.pane]) {
+            Err(err) if !err.to_string().contains("pane_not_found") => {
+                self.say(&format!("charting pane not closed: {err}"));
+            }
+            _ => self.b.pane.clear(),
+        }
         self.b.label_lines = r.labels;
         let line = if r.map.is_empty() {
             let remove = ["git", "worktree", "remove", "--force", &self.b.worktree];

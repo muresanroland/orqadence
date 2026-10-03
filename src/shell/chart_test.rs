@@ -212,6 +212,34 @@ fn a_map_with_one_build_epic_waypoint_closes_the_idea_and_the_pane_and_keeps_the
 }
 
 #[test]
+fn a_pane_close_failing_otherwise_than_not_found_keeps_the_pane_id() {
+    let w = world(
+        map(1),
+        writes("STATUS: done\nMAP: hx-m\n\nthe Destination\n"),
+    );
+    w.fail_once("herdr pane close", "herdr: timeout");
+    let mut s = started(&w);
+    let pane = saved(&w).pane;
+
+    await_line(
+        &mut s,
+        "hx-7 charting done: Map hx-m, 6 Waypoints; Idea closed",
+    );
+
+    assert!(pane_alive(&w, &pane));
+    assert!(
+        s.events
+            .iter()
+            .any(|e| line(e).contains("charting pane not closed: ")
+                && line(e).contains("herdr: timeout")),
+        "{:?}",
+        s.events.iter().map(line).collect::<Vec<_>>()
+    );
+    assert_eq!(saved(&w).pane, pane);
+    s.close();
+}
+
+#[test]
 fn a_map_with_two_build_epic_waypoints_leaves_the_idea_and_the_pane_open() {
     let w = world(map(2), writes("STATUS: done\nMAP: hx-m\n"));
     let mut s = started(&w);
