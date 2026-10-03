@@ -120,7 +120,9 @@ impl Brainstorm {
         let n = WRITES.fetch_add(1, Ordering::SeqCst);
         let tmp = dir.join(format!("state.json.{n}.tmp"));
         fs::write(&tmp, raw)?;
-        fs::rename(tmp, dir.join("state.json"))
+        fs::rename(&tmp, dir.join("state.json")).inspect_err(|_| {
+            let _ = fs::remove_file(&tmp);
+        })
     }
 
     /// Done with a docs PR not yet merged.

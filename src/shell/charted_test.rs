@@ -316,6 +316,11 @@ fn start_map_whose_state_is_not_saved_keeps_the_form_open() {
         last.starts_with("hx-m Brainstorm state not saved:"),
         "{last}"
     );
+    let tmps = std::fs::read_dir(file.parent().unwrap())
+        .unwrap()
+        .filter(|e| e.as_ref().unwrap().path().extension() == Some("tmp".as_ref()))
+        .count();
+    assert_eq!(tmps, 0, "a failed save leaves no tmp file");
     s.close();
 }
 
