@@ -10,6 +10,7 @@ use super::chart_test::{map, saved, started, world, writes};
 use super::shell_test::{await_line, key, line, render, rows, shell};
 use super::Screen;
 use crate::brainstorm::{Brainstorm, Phase, IDEA, RESEARCH};
+use crate::orchestrator::state::LOCAL;
 use crate::orchestrator::world::{new_world, BdTicket, World};
 
 /// Open Ticket `id`, on its own, with a two-line description.
@@ -292,6 +293,24 @@ fn start_map_saves_the_answer_and_makes_the_map_live() {
     s.key(key(KeyCode::Enter));
     assert!(saved(&w).background, "Enter on the checkbox starts it too");
     assert!(s.brainstorms[0].background);
+    s.close();
+}
+
+#[test]
+fn start_map_whose_state_is_not_saved_keeps_the_form_open() {
+    let (w, mut s) = map_modal();
+    let tmp = w.repo.join(LOCAL).join("brainstorms/hx-7/state.json.tmp");
+    std::fs::create_dir_all(tmp).unwrap();
+    let before = s.brainstorms[0].background;
+    assert_ne!(s.start_map.as_ref().unwrap().background, before);
+
+    s.key(key(KeyCode::Enter));
+
+    assert!(s.start_map.is_some());
+    assert!(s.live.is_none());
+    assert_eq!(s.brainstorms[0].background, before, "the old answer stays");
+    let last = line(s.events.last().unwrap());
+    assert!(last.starts_with("hx-m Brainstorm state not saved:"), "{last}");
     s.close();
 }
 
