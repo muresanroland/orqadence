@@ -9,7 +9,7 @@ use std::sync::Arc;
 use super::chart_test::{map, saved, started, world, writes};
 use super::shell_test::{await_line, key, line, render, rows, shell};
 use super::Screen;
-use crate::brainstorm::{Brainstorm, IDEA, RESEARCH};
+use crate::brainstorm::{Brainstorm, Phase, IDEA, RESEARCH};
 use crate::orchestrator::world::{new_world, BdTicket, World};
 
 /// Open Ticket `id`, on its own, with a two-line description.
@@ -189,6 +189,42 @@ fn cancel_or_esc_leaves_the_tickets_open_and_starts_nothing() {
     assert!(s.tickets.is_none());
     assert!(s.run.is_none());
     assert!(w.called("bd close").is_empty());
+}
+
+#[test]
+fn outcomes_arriving_behind_an_open_modal_open_one_by_one_as_it_closes() {
+    let (_w, mut s) = idle();
+    charted(&mut s, &["hx-3"]);
+    for (idea, ticket) in [("hx-7", "hx-1"), ("hx-8", "hx-9")] {
+        s.brainstorms.push(Brainstorm {
+            idea: idea.to_string(),
+            ..Default::default()
+        });
+        let done = Brainstorm {
+            idea: idea.to_string(),
+            phase: Phase::Done,
+            tickets: vec![ticket.to_string()],
+            ..Default::default()
+        };
+        s.brainstorm_sender.send(done).unwrap();
+    }
+    let open = |s: &Screen| s.tickets.as_ref().map(|t| t.rows[0].id.clone());
+
+    s.poll();
+    assert_eq!(open(&s).as_deref(), Some("hx-3"), "the open modal stays");
+
+    s.key(key(KeyCode::Esc));
+    s.poll();
+    assert_eq!(open(&s).as_deref(), Some("hx-1"));
+
+    s.key(key(KeyCode::Esc));
+    s.poll();
+    assert_eq!(open(&s).as_deref(), Some("hx-9"));
+
+    s.key(key(KeyCode::Esc));
+    s.poll();
+    assert!(s.tickets.is_none() && s.charted.is_empty());
+    s.close();
 }
 
 /// The Shell with the start-Map modal open on Map hx-m, as charting left it.

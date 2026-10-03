@@ -6,7 +6,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use super::Screen;
-use crate::brainstorm::{Brainstorm, EPIC, RESEARCH};
+use crate::brainstorm::{Brainstorm, Phase, EPIC, RESEARCH};
 use crate::orchestrator::app::{self, MAX_RESEARCH};
 use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::plural;
@@ -176,6 +176,19 @@ impl Screen {
             Err(err) => {
                 self.say(&format!("bd show failed: {err}"));
                 Vec::new()
+            }
+        }
+    }
+
+    /// The next of charting's outcomes, once neither modal is open.
+    pub(super) fn open_charted(&mut self) {
+        while self.tickets.is_none() && self.start_map.is_none() {
+            let Some(b) = self.charted.pop_front() else {
+                return;
+            };
+            match b.phase {
+                Phase::Map => self.open_start_map(&b, false),
+                _ => self.open_tickets(&b),
             }
         }
     }

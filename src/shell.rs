@@ -8,6 +8,7 @@
 //! for that session; the Orchestrator knows no Shell type.
 
 use std::cell::{Cell, OnceCell, RefCell};
+use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -368,6 +369,9 @@ pub(crate) struct Screen {
     /// The start-Map modal, or its Continue form: it takes every key but
     /// Ctrl-C.
     pub(crate) start_map: Option<StartMap>,
+    /// Charting's outcomes waiting on the Tickets or start-Map modal open,
+    /// oldest first.
+    pub(crate) charted: VecDeque<Brainstorm>,
     /// The live Brainstorm's Idea: one at a time, and none at open.
     pub(crate) live: Option<String>,
     /// Ctrl+G on the idea modal: the run loop hands the terminal to the
@@ -501,6 +505,7 @@ impl Screen {
             idea: None,
             tickets: None,
             start_map: None,
+            charted: VecDeque::new(),
             live: None,
             editing: false,
             #[cfg(not(test))]
@@ -879,11 +884,12 @@ impl Screen {
             }
             // charting's outcome, once
             match b.phase {
-                Phase::Map if charting => self.open_start_map(&b, false),
-                Phase::Done if charting && !b.tickets.is_empty() => self.open_tickets(&b),
+                Phase::Map if charting => self.charted.push_back(b),
+                Phase::Done if charting && !b.tickets.is_empty() => self.charted.push_back(b),
                 _ => {}
             }
         }
+        self.open_charted();
         while let Ok((line, over)) = self.docs_receiver.try_recv() {
             self.say(&line);
             if over {
