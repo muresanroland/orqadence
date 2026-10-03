@@ -24,6 +24,7 @@ use crate::orchestrator::trust::await_trust;
 use crate::shell::bd_list;
 use crate::skills::manifest::Manifest;
 use crate::skills::stage_skill;
+use crate::tools::Tools;
 
 /// One Brainstorm's session as the driver runs it.
 struct Driver<'a> {
@@ -86,6 +87,13 @@ impl Driver<'_> {
         let _ = self.saved.send(self.b.clone());
     }
 
+    /// Its pane closed by the user: the Brainstorm stopped, saved.
+    fn gone(&mut self) {
+        self.b.pane.clear();
+        self.save();
+        self.say("charting stopped: its pane is gone; Brainstorm saved");
+    }
+
     /// One tick. False once the Shell is closing.
     fn sleep(&self) -> bool {
         thread::sleep(self.cfg.tick);
@@ -121,9 +129,23 @@ impl Driver<'_> {
         });
         self.save();
         let at = locate(tools, repo, &self.cfg.workspace, &pane);
-        let (home, say) = (&self.cfg.home, |text: &str| self.say(text));
-        await_trust(row.app, home, &worktree, repo, &at, say, || self.sleep())
-            .map_err(|()| String::new())?;
+        // closed during the wait, the pane stops the Brainstorm
+        let sleep = || pane_alive(tools, repo, &pane) && self.sleep();
+        let trusted = await_trust(
+            row.app,
+            &self.cfg.home,
+            &worktree,
+            repo,
+            &at,
+            |t| self.say(t),
+            sleep,
+        );
+        if trusted.is_err() {
+            if !self.stop.load(Ordering::SeqCst) {
+                self.gone();
+            }
+            return Err(String::new());
+        }
         let _ = fs::remove_file(&result); // an earlier session's
         let dir = dir.display().to_string();
         let mut args = (row.app.worktree_args)(&dir);
@@ -169,6 +191,12 @@ impl Driver<'_> {
             let (tools, repo) = (&*self.cfg.tools, &self.cfg.repo);
             let known = self.b.session.as_ref().map(|s| s.id.clone());
             let watched = herdr::watch(tools, repo, &self.b.pane, &name, known.as_deref());
+            if let Some((_, Some(id))) = &watched {
+                if let Some(session) = &mut self.b.session {
+                    session.id = id.clone();
+                }
+                self.save();
+            }
             if result.exists() {
                 match self.done(result) {
                     Ok(()) => return,
@@ -179,19 +207,8 @@ impl Driver<'_> {
                     Err(_) => {}
                 }
             }
-            match watched {
-                None => {
-                    self.b.pane.clear();
-                    self.save();
-                    return self.say("charting stopped: its pane is gone; Brainstorm saved");
-                }
-                Some((_, Some(id))) => {
-                    if let Some(session) = &mut self.b.session {
-                        session.id = id;
-                    }
-                    self.save();
-                }
-                Some(_) => {}
+            if watched.is_none() {
+                return self.gone();
             }
             if !self.sleep() {
                 return;
@@ -275,6 +292,12 @@ fn outcome(issues: &[BdIssue], r: &StageResult) -> Result<String, String> {
     Ok(format!("Tickets {}", r.tickets.join(", ")))
 }
 
+/// Whether herdr still has `pane`: only pane_not_found says it is gone.
+fn pane_alive(tools: &dyn Tools, repo: &Path, pane: &str) -> bool {
+    !herdr(tools, repo, &["pane", "get", pane])
+        .is_err_and(|err| err.to_string().contains("pane_not_found"))
+}
+
 /// TICKET LABELS: each label config.json configures, as "orqa:<name>
 /// (<kind>): <guidance>", "; " between them; "none" without one. An entry
 /// that cannot be read is left out.
@@ -288,8 +311,9 @@ fn ticket_labels(repo: &Path) -> Result<String, String> {
             guidance => format!("orqa:{name} ({}): {guidance}", l.kind),
         })
         .collect();
-    Ok(match labels.is_empty() {
-        true => "none".to_string(),
-        false => labels.join("; "),
+    Ok(if labels.is_empty() {
+        "none".to_string()
+    } else {
+        labels.join("; ")
     })
 }

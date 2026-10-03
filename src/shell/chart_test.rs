@@ -325,3 +325,47 @@ fn a_result_written_as_the_session_exits_is_still_taken() {
     assert!(!s.events.iter().any(|e| e.text.contains("charting stopped")));
     s.close();
 }
+
+#[test]
+fn a_result_ready_on_the_first_tick_still_saves_the_session_id() {
+    let w = world(
+        vec![BdTicket::new("hx-1")],
+        writes("STATUS: done\nTICKETS: hx-1\n"),
+    );
+    w.lock().integration = true;
+    let mut s = started(&w);
+
+    await_line(&mut s, "hx-7 charting done: Tickets hx-1; Idea closed");
+
+    let session = saved(&w).session.unwrap();
+    assert!(!session.id.is_empty(), "no session id saved");
+    s.close();
+}
+
+#[test]
+fn the_pane_closed_during_the_trust_wait_stops_the_brainstorm_saved() {
+    let w = world(Vec::new(), idle);
+    let projects = format!(
+        r#"{{"projects": {{"{}": {{"hasTrustDialogAccepted": false}}}}}}"#,
+        worktree(&w).display()
+    );
+    fs::write(w.home.join(".claude.json"), projects).unwrap();
+    let mut s = shell(&w);
+    s.shell_pane = "w1:shell".to_string();
+    type_line(&mut s, "/brainstorm");
+    type_in(&mut s, "Queue bd writes");
+    s.key(key(KeyCode::Enter));
+    await_line(&mut s, "hx-7 waiting: claude does not trust");
+    let pane = saved(&w).pane;
+
+    w.run(&w.repo, &["herdr", "pane", "close", &pane]).unwrap();
+    await_line(
+        &mut s,
+        "hx-7 charting stopped: its pane is gone; Brainstorm saved",
+    );
+
+    let b = saved(&w);
+    assert_eq!(b.phase, Phase::Charting);
+    assert!(b.pane.is_empty());
+    s.close();
+}

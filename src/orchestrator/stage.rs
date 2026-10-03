@@ -1111,7 +1111,11 @@ impl Orchestrator {
                 &format!("retrying {label} with a fresh session {at}"),
             );
         }
-        let Ok(waited) = self.await_trust(ticket, st, row.app, &at) else {
+        let (home, repo) = (&self.cfg.home, &self.cfg.repo);
+        let dir = self.stage_cwd(ticket, st);
+        let say = |text: &str| self.report(ticket, text);
+        let Ok(waited) = trust::await_trust(row.app, home, &dir, repo, &at, say, || self.sleep())
+        else {
             return Held::Stopped;
         };
         // The previous session can still write while its pane is closing.
@@ -1295,26 +1299,6 @@ impl Orchestrator {
     fn waits_on_you(&self, ticket: &str, st: &Stage, reason: &str) -> bool {
         let planned = reason == PLANNED && st.name == IMPLEMENT.name;
         reason == ASKED || reason == MANUAL || planned && self.writes_plan(ticket)
-    }
-
-    /// Holds a Stage until its agent trusts the directory its pane started
-    /// in. Only the user can accept a trust dialog, so the Orchestrator names
-    /// the pane, already in that directory, and waits instead of prompting
-    /// into one.
-    /// Ok(true) when it had to wait.
-    fn await_trust(&self, ticket: &str, st: &Stage, app: &App, at: &str) -> Result<bool, String> {
-        let dir = self.stage_cwd(ticket, st);
-        let (home, repo) = (&self.cfg.home, &self.cfg.repo);
-        trust::await_trust(
-            app,
-            home,
-            &dir,
-            repo,
-            at,
-            |text| self.report(ticket, text),
-            || self.sleep(),
-        )
-        .map_err(|()| "stopped".to_string())
     }
 
     /// The Stage's row with the Ticket's labels: the Extra review's is the
