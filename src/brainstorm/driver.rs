@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::{brainstorms, is_map, Brainstorm, Phase, EPIC, MAP};
 use crate::orchestrator::app::{self, BRAINSTORM};
@@ -94,10 +94,18 @@ impl Driver<'_> {
         self.say("charting stopped: its pane is gone; Brainstorm saved");
     }
 
-    /// One tick. False once the Shell is closing.
+    /// One tick. False once the Shell is closing, which it checks every
+    /// 50ms so close() joins this thread promptly.
     fn sleep(&self) -> bool {
-        thread::sleep(self.cfg.tick);
-        !self.stop.load(Ordering::SeqCst)
+        let end = Instant::now() + self.cfg.tick;
+        while !self.stop.load(Ordering::SeqCst) {
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return true;
+            }
+            thread::sleep(left.min(Duration::from_millis(50)));
+        }
+        false
     }
 
     /// The session started in its pane and prompted: its result file's

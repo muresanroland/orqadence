@@ -185,6 +185,26 @@ fn an_idle_pane_with_no_result_file_changes_nothing_and_asks_nothing() {
 }
 
 #[test]
+fn close_joins_the_driver_and_leaves_its_pane_running() {
+    let w = world(Vec::new(), idle);
+    let mut s = started(&w);
+    let pane = saved(&w).pane;
+
+    s.close();
+
+    assert!(s.brainstorm_threads.is_empty());
+    let watched = w.called("herdr agent get").len();
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        w.called("herdr agent get").len(),
+        watched,
+        "the driver still runs"
+    );
+    assert!(pane_alive(&w, &pane));
+    assert_eq!(saved(&w).phase, Phase::Charting);
+}
+
+#[test]
 fn a_map_with_one_build_epic_waypoint_closes_the_idea_and_the_pane_and_keeps_the_worktree() {
     let w = world(
         map(1),

@@ -292,6 +292,9 @@ pub(crate) struct Screen {
     brainstorm_receiver: Receiver<Brainstorm>,
     /// Set by close(): a driver's thread leaves, its pane running in herdr.
     brainstorm_stop: Arc<AtomicBool>,
+    /// The drivers' threads, joined by close() so a result being acted on
+    /// is saved before the process exits.
+    pub(crate) brainstorm_threads: Vec<JoinHandle<()>>,
     /// The suggested command, ghost text in the empty input: Tab fills it
     /// in, running any command clears it.
     pub(crate) suggestion: Option<String>,
@@ -457,6 +460,7 @@ impl Screen {
             brainstorm_sender,
             brainstorm_receiver,
             brainstorm_stop: Arc::default(),
+            brainstorm_threads: Vec::new(),
             suggestion: None,
             state,
             events: Vec::new(),
@@ -780,6 +784,9 @@ impl Screen {
     pub(crate) fn close(&mut self) {
         // a live charting pane stays running in herdr
         self.brainstorm_stop.store(true, Ordering::SeqCst);
+        for driver in self.brainstorm_threads.drain(..) {
+            let _ = driver.join();
+        }
         // cancelled under the lock the pass records under: it records nothing
         // after, and closes a tab it makes after
         let tab = {

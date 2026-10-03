@@ -193,6 +193,8 @@ impl Screen {
             self.brainstorm_sender.clone(),
             self.brainstorm_stop.clone(),
         );
-        thread::spawn(move || driver::chart(&cfg, &shell, b, &saved, &stop));
+        let driver = thread::spawn(move || driver::chart(&cfg, &shell, b, &saved, &stop));
+        self.brainstorm_threads.retain(|t| !t.is_finished());
+        self.brainstorm_threads.push(driver);
     }
 }
