@@ -1,11 +1,6 @@
-//! The skills Orqadence ships: one Stage skill per Stage, plus orqa-create-pr,
-//! orqa-infra-review with its fetch.sh, orqa-address-pr-comments with its
-//! scripts/threads.sh, orqa-manual-work with its template.sh, the Brainstorm
-//! skills orqa-brainstorm-chart and orqa-brainstorm-epic, and the two skills
-//! every Brainstorm skill loads, orqa-brainstorm-grilling and
-//! orqa-brainstorm-domain-modeling with its ADR and CONTEXT formats. 'orqa init'
-//! copies them into a Target repo. A new skill is one more line here, and
-//! one more in EXTRA_FILES for each file beside its SKILL.md.
+//! The skills Orqadence ships, which 'orqa init' copies into a Target repo.
+//! A new skill is one more line in SKILLS, and one more in EXTRA_FILES for
+//! each file beside its SKILL.md.
 
 use std::fs;
 use std::io;
@@ -35,6 +30,14 @@ pub(crate) const SKILLS: &[(&str, &str)] = &[
     (
         "orqa-brainstorm-grilling",
         include_str!("../skills/orqa-brainstorm-grilling/SKILL.md"),
+    ),
+    (
+        "orqa-brainstorm-research",
+        include_str!("../skills/orqa-brainstorm-research/SKILL.md"),
+    ),
+    (
+        "orqa-brainstorm-waypoint",
+        include_str!("../skills/orqa-brainstorm-waypoint/SKILL.md"),
     ),
     (CREATE_PR, include_str!("../skills/orqa-create-pr/SKILL.md")),
     (
@@ -93,6 +96,16 @@ pub(crate) const EXTRA_FILES: &[(&str, &str, &str)] = &[
         "orqa-brainstorm-domain-modeling",
         "CONTEXT-FORMAT.md",
         include_str!("../skills/orqa-brainstorm-domain-modeling/CONTEXT-FORMAT.md"),
+    ),
+    (
+        "orqa-brainstorm-waypoint",
+        "LOGIC.md",
+        include_str!("../skills/orqa-brainstorm-waypoint/LOGIC.md"),
+    ),
+    (
+        "orqa-brainstorm-waypoint",
+        "UI.md",
+        include_str!("../skills/orqa-brainstorm-waypoint/UI.md"),
     ),
     (
         "orqa-infra-review",
