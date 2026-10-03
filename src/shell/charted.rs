@@ -5,11 +5,13 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use super::Screen;
-use crate::brainstorm::{Brainstorm, Phase, EPIC, RESEARCH};
+use std::thread;
+
+use super::{About, Screen};
+use crate::brainstorm::{driver, Brainstorm, Phase, EPIC, RESEARCH};
 use crate::orchestrator::app::{self, MAX_RESEARCH};
 use crate::orchestrator::scheduler::BdIssue;
-use crate::orchestrator::stage::plural;
+use crate::orchestrator::stage::{plural, Ask, Config};
 
 /// One Ticket of the Tickets modal.
 pub(crate) struct Row {
@@ -130,7 +132,7 @@ impl Screen {
     }
 
     /// Start Map, or Continue: the answer in the Brainstorm's state, and
-    /// the Map the live Brainstorm.
+    /// the Map the live Brainstorm, its session with you started.
     fn start_the_map(&mut self) {
         let Some(m) = self.start_map.take() else {
             return;
@@ -146,12 +148,43 @@ impl Screen {
             self.start_map = Some(m);
             return;
         }
+        let b = b.clone();
         self.live = Some(m.idea);
         let text = match m.background {
             true => "live: research in the background",
             false => "live: research with you",
         };
         self.tell(Some(&m.map), text);
+        self.work_map(b, None, None);
+    }
+
+    /// A session with the user on the live Map of `b`, on a driver thread
+    /// of its own: its PROMPT `prompt`, its Waypoint `pick` when named. A
+    /// Next Waypoint? still waiting goes; never outside herdr, with no
+    /// Shell's pane to split.
+    pub(super) fn work_map(&mut self, b: Brainstorm, prompt: Option<String>, pick: Option<String>) {
+        let next = |about: &About| matches!(about, About::Asked(Ask::NextWaypoint { .. }));
+        self.questions.retain(|q| !next(&q.about));
+        if self.shell_pane.is_empty() {
+            let text = "Waypoint not started: the Shell is not in a herdr pane (HERDR_PANE_ID)";
+            return self.tell(Some(&b.map), text);
+        }
+        let cfg = Config {
+            events: self.sender.clone(),
+            ..self.cfg.clone()
+        };
+        let (shell, saved, stop) = (
+            self.shell_pane.clone(),
+            self.brainstorm_sender.clone(),
+            self.brainstorm_stop.clone(),
+        );
+        let idea = b.idea.clone();
+        let driver = thread::spawn(move || {
+            driver::waypoint(&cfg, &shell, b, &saved, &stop, prompt, pick);
+        });
+        self.brainstorm_threads.retain(|(_, t)| !t.is_finished());
+        self.brainstorm_threads.push((idea.clone(), driver));
+        self.live = Some(idea);
     }
 
     /// Cancel keeps the Map; the start form leaves /continue @<map> as the

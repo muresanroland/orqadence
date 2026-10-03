@@ -19,6 +19,7 @@ fn mapped(idea: &str, map: &str) -> Brainstorm {
         map: map.to_string(),
         pane: "1-2".to_string(),
         session: Some(session("s-1")),
+        result: format!("/repo/.orqadence-local/brainstorms/{idea}/waypoint-2.md"),
         worktree: format!("/repo/.orqadence-local/worktrees/{idea}"),
         branch: format!("brainstorm/{idea}"),
         tickets: vec!["hx-1".to_string()],

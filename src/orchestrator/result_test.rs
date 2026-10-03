@@ -330,3 +330,16 @@ fn a_charting_result_gives_its_map_tickets_and_label_lines() {
         ["docs | Docs only | skills: a, b | tickets: hx-2"]
     );
 }
+
+#[test]
+fn a_waypoint_result_gives_its_first_waypoint_line() {
+    let dir = TempDir::new();
+    let file = dir.path().join("waypoint-1.md");
+    write_file(
+        &file,
+        "STATUS: done\nWAYPOINT: hx-m.2\n\nWAYPOINT: hx-m.3 is next\n",
+    );
+    let (result, reason) = read_stage_result(&file, ResultRequirements::default());
+    assert_eq!(reason, "");
+    assert_eq!(result.waypoint, "hx-m.2");
+}

@@ -17,7 +17,7 @@ use crate::orchestrator::world::{BdTicket, World};
 use crate::tools::Tools;
 
 /// The Shell opened again over `w`, its Brainstorms loaded as at open.
-fn reopened(w: &Arc<World>) -> Screen {
+pub(super) fn reopened(w: &Arc<World>) -> Screen {
     let mut s = shell(w);
     s.shell_pane = "w1:shell".to_string();
     let issues = s.reload_issues().unwrap_or_default();

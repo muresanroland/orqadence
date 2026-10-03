@@ -3,6 +3,7 @@
 //! result files. Never in the run's state.json, which a run clears.
 
 use crate::orchestrator::scheduler::BdIssue;
+use crate::orchestrator::stage::plural;
 use crate::orchestrator::state::{local_dir, Session, LOCAL};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -60,6 +61,9 @@ pub(crate) struct Brainstorm {
     pub(crate) pane: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) session: Option<Session>,
+    /// A Waypoint session's result file, kept for its resume.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(crate) result: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub(crate) worktree: String,
     /// brainstorm/<idea>.
@@ -115,6 +119,11 @@ impl Brainstorm {
             &self.map
         }
     }
+}
+
+/// A Waypoint's name in a line: its id after the first '-', bsg.4.
+pub(crate) fn short(id: &str) -> &str {
+    id.split_once('-').map_or(id, |(_, s)| s)
 }
 
 /// The saved Brainstorm whose state.json changed last, a done one never.
@@ -187,6 +196,36 @@ pub(crate) fn refusal(issues: &[BdIssue], id: &str) -> Option<String> {
         Kind::Waypoint => "refused: a Waypoint never enters the Pipeline".to_string(),
         Kind::Idea => "refused: an Idea never enters the Pipeline".to_string(),
     })
+}
+
+/// Why /continue @<id>, a Waypoint of `b`'s Map among `issues`, is
+/// refused: closed, its research running in the background, the build-Epic
+/// one with others open, or blocked; None when it can be taken.
+pub(crate) fn waypoint_refusal(issues: &[BdIssue], b: &Brainstorm, id: &str) -> Option<String> {
+    let w = issues.iter().find(|i| i.id == id)?;
+    let open = |id: &str| issues.iter().any(|i| i.id == id && i.status != "closed");
+    let name = short(id);
+    if w.status == "closed" {
+        return Some(format!("refused: {name} is closed"));
+    }
+    if b.research.iter().any(|r| r.waypoint == id) {
+        return Some(format!(
+            "refused: {name} is a Research Waypoint a background session is running"
+        ));
+    }
+    let others = issues
+        .iter()
+        .filter(|i| i.parent == b.map && i.id != id && i.status != "closed")
+        .count();
+    if w.labels.iter().any(|l| l == EPIC) && others > 0 {
+        let are = if others == 1 { "is" } else { "are" };
+        let others = plural(others, "other Waypoint");
+        return Some(format!(
+            "refused: {name} writes the Epic, and {others} {are} open"
+        ));
+    }
+    let on: Vec<&str> = w.blockers().filter(|b| open(b)).map(short).collect();
+    (!on.is_empty()).then(|| format!("refused: {name} is blocked on {}", on.join(", ")))
 }
 
 pub(crate) mod driver;
