@@ -35,10 +35,10 @@ Then decide between Tickets and a Map with the **fog-or-ticket test**: can you s
 
 ## 3. No fog: Tickets
 
-1. Write the Tickets. Each Ticket is one pull request's worth of work, sized for one session. Each Ticket has a description, acceptance criteria, and at most one Area label from **TICKET LABELS** (an `area` kind), by its configured name such as `orqa:fe`. Add a `modifier` label only when its guidance says it fits. Leave `--labels` out when no label fits. Never add `orqa:release`.
+1. Write the Tickets. Each Ticket is one pull request's worth of work, sized for one session. Each Ticket has a description, acceptance criteria, and at most one Area label from **TICKET LABELS** (an `area` kind), by its configured name such as `orqa:fe`. Add a `modifier` label only when its guidance says it fits. Leave `--labels` out when no label fits. Never add `orqa:release`. Write the title and acceptance criteria inside single quotes, a `'` in them as `'\''`, and the description in the quoted heredoc, so the shell never expands any of them.
 
    ```
-   bd create --type=task --priority=2 --title="<title>" --acceptance="<criteria>" --labels=<area label> --body-file=- <<'EOF'
+   bd create --type=task --priority=2 --title='<title>' --acceptance='<criteria>' --labels=<area label> --body-file=- <<'EOF'
    <description>
    EOF
    ```
@@ -46,10 +46,10 @@ Then decide between Tickets and a Map with the **fog-or-ticket test**: can you s
 2. Work that spans areas (a screen and the API behind it, say) is an Epic with one Ticket per area. The Epic's description holds the contract each side expects of the other; Orqadence hands it to each Ticket's sessions as Epic context. Create the Epic first, then its Tickets as its children:
 
    ```
-   bd create --type=epic --priority=2 --title="<title>" --body-file=- <<'EOF'
+   bd create --type=epic --priority=2 --title='<title>' --body-file=- <<'EOF'
    <what it builds, and the contract between its Tickets>
    EOF
-   bd create --parent <epic> --no-inherit-labels --type=task --priority=2 --title="<title>" --acceptance="<criteria>" --labels=<area label> --body-file=- <<'EOF'
+   bd create --parent <epic> --no-inherit-labels --type=task --priority=2 --title='<title>' --acceptance='<criteria>' --labels=<area label> --body-file=- <<'EOF'
    <description>
    EOF
    ```
@@ -60,10 +60,10 @@ Then decide between Tickets and a Map with the **fog-or-ticket test**: can you s
 
 ## 4. Fog: a Map
 
-1. Create the Map. Its body holds five sections:
+1. Create the Map, its title and every Waypoint's quoted as in section 3. Its body holds five sections:
 
    ```
-   bd create --type=epic --priority=2 --title="<title>" --labels=brainstorm:map --body-file=- <<'EOF'
+   bd create --type=epic --priority=2 --title='<title>' --labels=brainstorm:map --body-file=- <<'EOF'
    ## Destination
 
    <what reaching the end of this Map looks like, in one or two lines>
@@ -95,7 +95,7 @@ Then decide between Tickets and a Map with the **fog-or-ticket test**: can you s
    - `brainstorm:research`: a fact that a decision waits on, found in docs, third-party APIs or the codebase, with no user needed.
 
    ```
-   bd create --parent <map> --no-inherit-labels --type=task --priority=2 --title="<title>" --labels=brainstorm:<type> --body-file=- <<'EOF'
+   bd create --parent <map> --no-inherit-labels --type=task --priority=2 --title='<title>' --labels=brainstorm:<type> --body-file=- <<'EOF'
    ## Question
 
    <the decision or investigation this Waypoint resolves>

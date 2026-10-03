@@ -29,10 +29,10 @@ You work a Map's last Waypoint with the user, in a fresh session inside the Brai
 
 Write the build Epics in build order, one per area: an Epic builds one area's part, and the Epics that come later assume the earlier ones are merged. Grill the user only on what the closed Waypoints leave open.
 
-1. Create each Epic, with no `--parent`: it is not a child of the Map. Its description says what it builds, the decisions it rests on (by Waypoint title), the contract between its Tickets, and which earlier Epics it assumes are merged.
+1. Create each Epic, with no `--parent`: it is not a child of the Map. Its description says what it builds, the decisions it rests on (by Waypoint title), the contract between its Tickets, and which earlier Epics it assumes are merged. Write the title (and a Ticket's acceptance criteria) inside single quotes, a `'` in them as `'\''`, and the description in the quoted heredoc, so the shell never expands any of them.
 
    ```
-   bd create --type=epic --priority=2 --title="<title>" --body-file=- <<'EOF'
+   bd create --type=epic --priority=2 --title='<title>' --body-file=- <<'EOF'
    <description>
    EOF
    ```
@@ -40,7 +40,7 @@ Write the build Epics in build order, one per area: an Epic builds one area's pa
 2. Create its Tickets as its children, each sized for one pull request, so /start-epic can run them. Each Ticket has a description, acceptance criteria, and at most one Area label from **TICKET LABELS** (an `area` kind), by its configured name such as `orqa:fe`. Add a `modifier` label only when its guidance says it fits. Leave `--labels` out when no label fits.
 
    ```
-   bd create --parent <epic> --no-inherit-labels --type=task --priority=2 --title="<title>" --acceptance="<criteria>" --labels=<area label> --body-file=- <<'EOF'
+   bd create --parent <epic> --no-inherit-labels --type=task --priority=2 --title='<title>' --acceptance='<criteria>' --labels=<area label> --body-file=- <<'EOF'
    <description>
    EOF
    ```
