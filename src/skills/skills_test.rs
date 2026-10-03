@@ -781,7 +781,8 @@ fn the_brainstorm_waypoint_and_research_skills_ship_with_their_rules() {
 }
 
 /// Every file ported from mattpocock/skills keeps the attribution and the
-/// licence, and only the two Waypoint skills carry job lines.
+/// licence, and only the two Waypoint skills carry job lines. LOGIC.md and
+/// UI.md keep only the attribution: they ship with SKILL.md's notice.
 #[test]
 fn the_mattpocock_derived_files_keep_their_licence() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
@@ -791,8 +792,6 @@ fn the_mattpocock_derived_files_keep_their_licence() {
         "orqa-brainstorm-domain-modeling/ADR-FORMAT.md",
         "orqa-brainstorm-domain-modeling/CONTEXT-FORMAT.md",
         "orqa-brainstorm-waypoint/SKILL.md",
-        "orqa-brainstorm-waypoint/LOGIC.md",
-        "orqa-brainstorm-waypoint/UI.md",
         "orqa-brainstorm-research/SKILL.md",
     ] {
         let body = fs::read_to_string(root.join(file)).unwrap();

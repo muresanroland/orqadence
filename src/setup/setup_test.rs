@@ -416,22 +416,15 @@ fn install_skills_writes_a_skills_other_files_beside_it_executable() {
     }
 }
 
-/// The Brainstorm skills' Markdown files go beside their SKILL.md, not
-/// executable: only a script is.
+/// A skill's Markdown files go beside its SKILL.md, not executable: only a
+/// script is.
 #[test]
-fn install_skills_writes_the_brainstorm_skills_with_their_markdown_files() {
+fn install_skills_writes_a_skills_markdown_files_beside_it() {
     let repo = TempDir::new();
     install(repo.path(), "");
-    for file in [
-        "orqa-brainstorm-domain-modeling/SKILL.md",
-        "orqa-brainstorm-domain-modeling/ADR-FORMAT.md",
-        "orqa-brainstorm-domain-modeling/CONTEXT-FORMAT.md",
-        "orqa-brainstorm-waypoint/SKILL.md",
-        "orqa-brainstorm-waypoint/LOGIC.md",
-        "orqa-brainstorm-waypoint/UI.md",
-        "orqa-brainstorm-research/SKILL.md",
-    ] {
-        let at = repo.path().join(".orqadence/skills").join(file);
+    for (skill, file, _) in EXTRA_FILES.iter().filter(|(_, f, _)| f.ends_with(".md")) {
+        let file = format!("{skill}/{file}");
+        let at = repo.path().join(".orqadence/skills").join(&file);
         let mode = fs::metadata(&at).unwrap().permissions().mode();
         assert_eq!(mode & 0o111, 0, "{file} mode {mode:o}");
     }

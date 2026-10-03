@@ -48,7 +48,7 @@ Run `bd show <MAP>`. Orient to its Destination before anything else, and load by
 List the Map's closed Waypoints:
 
 ```
-bd list --parent <MAP> --status closed --json
+bd list --parent <MAP> --status closed --limit 0 --json
 ```
 
 Each one that is in neither Decisions so far nor Out of scope gets a line in Decisions so far, from its close reason: `- <title> (<id>): <close reason>`. Research sessions never write the Map, so their Waypoints arrive here. Read the description again just before you write it, then write the whole description back:
