@@ -117,6 +117,21 @@ impl Brainstorm {
         self.phase == Phase::Done && !self.docs_pr.is_empty() && !self.docs_merged
     }
 
+    /// A done one's close in bd, and its reason: the Map its Epics close,
+    /// or the Idea its Tickets close.
+    pub(crate) fn closing(&self) -> Option<(String, String)> {
+        match self.phase {
+            Phase::Done if !self.epics.is_empty() => {
+                Some((self.map.clone(), format!("Epics {}", self.epics.join(", "))))
+            }
+            Phase::Done if !self.tickets.is_empty() => Some((
+                self.idea.clone(),
+                format!("Tickets {}", self.tickets.join(", ")),
+            )),
+            _ => None,
+        }
+    }
+
     /// What /continue @ takes: the Map once there is one, else the Idea.
     pub(crate) fn key(&self) -> &str {
         if self.map.is_empty() {

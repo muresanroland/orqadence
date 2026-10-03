@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use super::chart_test::{await_prompt, map, pane_alive, saved, world};
+use super::continue_test::reopened;
 use super::shell_test::{await_line, type_line};
 use super::waypoint_test::live_in as live;
 use crate::brainstorm::Phase;
@@ -186,6 +187,44 @@ fn the_map_not_closing_keeps_the_brainstorm_on_its_map_and_tries_again() {
 
     assert_eq!(w.called("bd close hx-m ").len(), 2);
     assert_eq!(saved(&w).phase, Phase::Done);
+    s.close();
+}
+
+#[test]
+fn a_done_brainstorm_whose_map_is_still_open_closes_it_at_open() {
+    let (w, mut s) = live(last_left("STATUS: done\nEPICS: hx-9a hx-9b\n"));
+    await_line(&mut s, "hx-m Map closed");
+    s.close();
+    // the Shell stopped between saving done and the close
+    let map = |w: &World| {
+        w.lock()
+            .tickets
+            .iter()
+            .find(|t| t.id == "hx-m")
+            .cloned()
+            .unwrap()
+    };
+    w.lock()
+        .tickets
+        .iter_mut()
+        .find(|t| t.id == "hx-m")
+        .unwrap()
+        .status = "open".to_string();
+
+    let mut s = reopened(&w);
+    let issues = s.reload_issues().unwrap_or_default();
+    s.close_pending(&issues);
+
+    assert_eq!(map(&w).status, "closed");
+    assert_eq!(map(&w).close_reason, "Epics hx-9a, hx-9b");
+    let closes = w.called("bd close hx-m ").len();
+    let issues = s.reload_issues().unwrap_or_default();
+    s.close_pending(&issues);
+    assert_eq!(
+        w.called("bd close hx-m ").len(),
+        closes,
+        "a closed Map is left"
+    );
     s.close();
 }
 

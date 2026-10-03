@@ -616,6 +616,7 @@ impl Screen {
         // every issue: a saved Brainstorm's closed issue may have lost its label
         let issues = screen.reload_issues().unwrap_or_default();
         screen.brainstorms = brainstorm::load(repo, &issues);
+        screen.close_pending(&issues);
         screen.track_docs();
         // nothing is live at open
         screen.suggestion = brainstorm::most_recent(repo, &screen.brainstorms)

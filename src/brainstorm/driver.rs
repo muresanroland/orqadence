@@ -874,7 +874,7 @@ impl Driver<'_> {
         self.b.docs_pr = r.pr;
         self.b.epics = r.epics;
         let wrote = self.b.epics.join(", ");
-        let reason = format!("Epics {wrote}");
+        let (_, reason) = self.b.closing().unwrap_or_default();
         if let Err(why) = self.close_saved(before, &map, &reason, "Map") {
             self.once(said, &map, &format!("Epics result not taken: {why}"));
             return false;

@@ -16,6 +16,7 @@ use super::{Screen, NOTICE_WINDOW};
 use crate::brainstorm::{driver, Brainstorm, IDEA};
 use crate::graphify;
 use crate::orchestrator::pipeline::origin_head;
+use crate::orchestrator::scheduler::BdIssue;
 use crate::orchestrator::stage::{worktree, Config};
 use crate::tools;
 
@@ -212,6 +213,20 @@ impl Screen {
         self.brainstorm_threads.retain(|(_, t)| !t.is_finished());
         self.brainstorm_threads.push((idea.clone(), driver));
         self.live = Some(idea);
+    }
+
+    /// Each done Brainstorm whose Map, or Idea, `issues` still shows open
+    /// closed in bd: the last Shell stopped between saving it done and the
+    /// close.
+    pub(super) fn close_pending(&mut self, issues: &[BdIssue]) {
+        let open = |id: &str| issues.iter().any(|i| i.id == id && i.status != "closed");
+        let pending = self.brainstorms.iter().filter_map(Brainstorm::closing);
+        for (id, reason) in pending.filter(|(id, _)| open(id)).collect::<Vec<_>>() {
+            let close = ["bd", "close", &id, "--reason", &reason];
+            if let Err(err) = self.cfg.tools.run(&self.cfg.repo, &close) {
+                self.say(&format!("{id} not closed: {err}"));
+            }
+        }
     }
 
     /// Each done Brainstorm's docs PR not yet merged polled on a thread of
