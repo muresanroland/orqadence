@@ -277,3 +277,34 @@ fn a_row_that_fails_keeps_its_line() {
     await_line(&mut s, "hx-7 orqa:be not added: bd label add hx-2 failed");
     s.close();
 }
+
+#[test]
+fn a_line_missing_its_guidance_reads_its_fields_by_their_keys() {
+    let w = world(
+        tickets(),
+        writes("STATUS: done\nTICKETS: hx-1 hx-2\nLABEL: docs | skills: a | tickets: hx-2\n"),
+    );
+    let s = asked(&w);
+
+    let r = &s.labels.as_ref().unwrap().rows[0];
+    assert_eq!(r.guidance, "");
+    assert_eq!(r.skills, ["a"]);
+    assert_eq!(r.tickets, ["hx-2"]);
+    let mut s = s;
+    s.close();
+}
+
+#[test]
+fn a_source_already_installed_goes_on_the_label_without_a_clone() {
+    let w = labelled();
+    w.installed("orqa-docs-pack");
+    let mut s = asked(&w);
+    s.labels.as_mut().unwrap().rows[0].skills = vec!["o/orqa-docs-pack".to_string()];
+
+    apply(&mut s);
+
+    assert!(w.called("env GIT_TERMINAL_PROMPT=0 git clone").is_empty());
+    let docs = &config_json(&w)["labels"]["docs"];
+    assert_eq!(docs["skills"], serde_json::json!(["orqa-docs-pack"]));
+    s.close();
+}

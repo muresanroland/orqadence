@@ -898,7 +898,8 @@ impl Driver<'_> {
         self.b.phase = Phase::Done;
         self.b.session = None;
         self.b.result.clear();
-        self.b.label_lines = r.labels;
+        // charting's lines not yet answered stay asked
+        self.b.label_lines.extend(r.labels);
         self.b.docs_pr = r.pr;
         self.b.epics = r.epics;
         let wrote = self.b.epics.join(", ");

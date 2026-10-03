@@ -11,7 +11,7 @@ use super::config::valid_label;
 use super::Screen;
 use crate::brainstorm::Brainstorm;
 use crate::orchestrator::app;
-use crate::skills::manifest::{self, parse_source, Added, Manifest, PREFIX};
+use crate::skills::manifest::{self, parse_source, Added, Installed, Manifest, PREFIX};
 
 /// A row's answer.
 #[derive(Clone, Debug, PartialEq)]
@@ -37,32 +37,40 @@ pub(crate) struct Row {
     pub(crate) choice: Choice,
 }
 
-/// The line read field by field; a field missing is empty.
+/// The line read: its name first, its lists by their keys, the guidance
+/// the field with none; a field missing is empty.
 fn row(line: &str) -> Row {
     let mut parts = line.split('|').map(str::trim);
-    let mut next = || parts.next().unwrap_or_default();
-    let name = next();
-    let guidance = next().to_string();
-    let list = |part: &str, key: &str| -> Vec<String> {
-        let part = part.strip_prefix(key).unwrap_or(part);
+    let name = parts.next().unwrap_or_default();
+    let mut r = Row {
+        line: line.to_string(),
+        name: name.strip_prefix("orqa:").unwrap_or(name).to_string(),
+        guidance: String::new(),
+        skills: Vec::new(),
+        tickets: Vec::new(),
+        choice: Choice::Accept,
+    };
+    let list = |part: &str| -> Vec<String> {
         let items = part.split([',', ' ']).filter(|s| !s.is_empty());
         items.map(String::from).collect()
     };
-    Row {
-        line: line.to_string(),
-        name: name.strip_prefix("orqa:").unwrap_or(name).to_string(),
-        guidance,
-        skills: list(next(), "skills:"),
-        tickets: list(next(), "tickets:"),
-        choice: Choice::Accept,
+    for part in parts {
+        if let Some(skills) = part.strip_prefix("skills:") {
+            r.skills = list(skills);
+        } else if let Some(tickets) = part.strip_prefix("tickets:") {
+            r.tickets = list(tickets);
+        } else {
+            r.guidance = part.to_string();
+        }
     }
+    r
 }
 
 /// The modal: focus on a row, then Apply, then Cancel.
 pub(crate) struct Labels {
-    /// The Brainstorm's Idea, and what RECENT calls it: its Map once
-    /// there is one.
+    /// The Brainstorm's Idea.
     pub(crate) idea: String,
+    /// What RECENT calls it: its Map once there is one.
     pub(crate) key: String,
     pub(crate) rows: Vec<Row>,
     /// config.json's labels as the modal opened, the picker's choices.
@@ -156,6 +164,12 @@ impl Screen {
             return;
         };
         let (idea, key) = (l.idea.clone(), l.key.clone());
+        // the drivers' saves taken first: its save below is then of the
+        // Brainstorm as it is now
+        self.brainstorm_updates();
+        let Some(l) = &self.labels else {
+            return;
+        };
         let rows: Vec<(String, Result<String, String>)> = l
             .rows
             .iter()
@@ -181,18 +195,20 @@ impl Screen {
     /// What `r`'s answer does, said; Err says why it did not.
     fn answer_label(&self, r: &Row) -> Result<String, String> {
         let name = &r.name;
-        fn not(label: &str) -> impl Fn(String) -> String + '_ {
+        fn failed(label: &str) -> impl Fn(String) -> String + '_ {
             move |err| format!("orqa:{label} not added: {err}")
         }
         match &r.choice {
             Choice::Skip => Ok(format!("orqa:{name} not added")),
             Choice::Existing(other) => {
-                let on = self.label_tickets(other, &r.tickets).map_err(not(other))?;
+                let on = self
+                    .label_tickets(other, &r.tickets)
+                    .map_err(failed(other))?;
                 Ok(format!("orqa:{other} in place of orqa:{name}{on}"))
             }
             Choice::Accept => {
-                let wrote = self.write_label(r).map_err(not(name))?;
-                let on = self.label_tickets(name, &r.tickets).map_err(not(name))?;
+                let wrote = self.write_label(r).map_err(failed(name))?;
+                let on = self.label_tickets(name, &r.tickets).map_err(failed(name))?;
                 Ok(format!("orqa:{name} accepted: {wrote}{on}"))
             }
         }
@@ -231,13 +247,23 @@ impl Screen {
     // screen that long; off the thread, as /config does, if that is felt.
     fn label_skills(&self, skills: &[String]) -> (Vec<String>, Vec<String>) {
         let (repo, tools) = (&self.cfg.repo, &*self.cfg.tools);
+        let have = Manifest::load(repo).unwrap_or_default();
         let mut on = Vec::new();
         let mut off = Vec::new();
         for skill in skills {
             let names = [skill.clone(), format!("{PREFIX}{skill}")];
-            let had = Manifest::load(repo)
-                .ok()
-                .and_then(|m| names.into_iter().find(|n| m.skills.contains_key(n)));
+            let mut had = names.into_iter().find(|n| have.skills.contains_key(n));
+            // a source installed already: add would refuse it
+            if let (None, Ok(source)) = (&had, parse_source(skill)) {
+                let from = |i: &Installed| {
+                    i.repo == source.repo && (source.path.is_empty() || i.path == source.path)
+                };
+                had = have
+                    .skills
+                    .iter()
+                    .find(|(_, i)| from(i))
+                    .map(|(n, _)| n.clone());
+            }
             let got = match had {
                 Some(name) => Ok(name),
                 None if parse_source(skill).is_err() => Err("not installed".to_string()),
